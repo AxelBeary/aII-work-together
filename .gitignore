@@ -1,0 +1,15 @@
+# 忽略规则
+logs/
+*.log
+node_modules/
+dist/
+build/
+.env
+*.env
+*.key
+*.pem
+.DS_Store
+Thumbs.db
+
+# 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
+.opencode/memory/
