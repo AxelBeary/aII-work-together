@@ -97,6 +97,7 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 - **E-29** 唤醒会话两点（未知 sessionID 会新建会话；重复唤醒＝重复回复）
 - **E-31** 旧 server 进程还在 8777 ⇒ 新界面配旧接口报 not found
 - **E-32** **在 UI 线程上等 WebView2 初始化＝双击卡死**（用户实报）；根教训是「自检不能另起炉灶」——现在自检与真实窗口共用 `BuildWindow + InitView`
+- **E-33** 双击等 4 秒：窗口建在等后端之后 ＋ `HttpClient` 首次探活白等 1.5 秒（改 TCP 探活后 → 窗口 0.13s／页面 1.3s）
 
 另有两条**行为**教训，不在环境文档里但在项目记忆里：
 

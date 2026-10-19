@@ -151,10 +151,16 @@ namespace BoardTray
 
         static bool ServerAlive()
         {
+            // ⛔ 别用 HttpClient 探活：.NET Framework 第一次 HTTP 请求要初始化一堆东西，
+            //    本机实测白等 1.5 秒（托盘第一次点「打开看板」就卡在这）。
             try
             {
-                var r = _http.GetAsync(BaseUrl + "api/state").Result;
-                return r.IsSuccessStatusCode;
+                using (var c = new System.Net.Sockets.TcpClient())
+                {
+                    var t = c.ConnectAsync("127.0.0.1", _port);
+                    if (!t.Wait(500)) return false;
+                    return c.Connected;
+                }
             }
             catch { return false; }
         }

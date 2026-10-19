@@ -190,3 +190,15 @@
 
 规模：`tools/`＋`tests/` 共 **28** 个 py 文件；闸门 **13 道**、回归 **24 条**、留言 16 条、界面契约 25 条。
 未验：壳的托盘菜单/最小化行为**只能人手点**；窗口与终端抽屉的**人眼观感**已出图但未由用户确认。
+
+### 图标第二版 + 启动提速（2026-10-20，用户报「图标不好看」「双击要 4 秒」）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 图标 v2（渐变底＋三列＋白卡打勾；≤32px 自动简化成三柱） | `tools/make_icon.py` → `assets/board.ico`（7 尺寸） | 已实现 | 用户已认可「挺不错」；`System.Drawing.Icon` 解析 32×32 通过 |
+| 图标候选对照图 | `assets/icon-preview.png`（三种风格 × 四种尺寸 × 深/浅底） | 已生成 | A 纯白卡 / B 白卡打勾（**采用**）/ C 卡片高光 |
+| 启动：窗口不再等后端 | `shell/BoardShell.cs`（`StartBackendAsync` + `MaybeNavigate` + 启动遮罩） | 已改 | 日志：`window shown +131ms` |
+| 启动：探活改 TCP | `shell/BoardShell.cs`、`tray/BoardTray.cs` | 已改 | `HttpClient` 首次请求白等 1.5s（E-33）；改后 `server spawned +548ms` |
+| 启动实测 | `board/shell.log` | 已测 | 窗口 **0.13s**、页面 **1.33s**（修前 3–4s） |
+
+坑记 **E-33**。

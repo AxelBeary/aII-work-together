@@ -454,6 +454,37 @@ Get-Process -Id $c.OwningProcess | Select Id,StartTime
 
 ---
 
+## E-33 · 双击要等 4 秒才见窗口：两根刺（2026-10-20 实测，用户报的「大概四秒才启动」）
+
+**症状**：双击快捷方式 → 4 秒才有反应。
+
+**刺一：窗口建在「等后端」之后。** 原流程 `EnsureServer()` 阻塞在 `Application.Run` 之前，后端没活窗口压根不出现。
+⇒ 改成：**先起后端线程、同时建窗口**，窗口立刻显示「正在启动…」，两个条件齐了再导航（`MaybeNavigate`）。
+
+**刺二：探活用 `HttpClient` ＝第一次请求白等 1.5 秒。**
+.NET Framework 的 `HttpClient` 首次请求要初始化一堆东西（代理/ServicePoint…），本地 127.0.0.1 也照等。
+实测日志：`server spawned at +548ms` 之前，整整 1.6 秒花在**探活**上，不是花在 python 上（单独 `python server.py` 只要 0.83 秒就能应答）。
+⇒ 探活改成 **TCP 连一下**（`TcpClient.ConnectAsync(...).Wait(500)`），毫秒级；HTTP 只留给真正要读数据的接口，并且**只许在后台线程调**。
+
+**修完的实测（shell.log 时间戳，真窗口）**：
+
+```
+window shown   +131ms      ← 窗口先出来
+server spawned +548ms
+webview ready  +635ms
+server alive   +1253ms     ← python 起来要 0.8s，这是硬成本
+page shown     +1336ms
+nav done       +1391ms
+```
+
+即：**窗口 0.13 秒、页面 1.3 秒**（修前窗口要 3 秒、页面要 3–4 秒）。
+想再快只能养常驻后端（用户明确不要守护进程），到这就是下限。
+
+**判据**：以后再报「启动慢」，先看 `board/shell.log` 里哪一段涨了——
+`window shown` 涨＝UI 线程被挡；`spawned→alive` 涨＝python 冷启动；`alive→page` 涨＝WebView2 初始化。
+
+---
+
 ## E-32 · 在 UI 线程上等 WebView2 初始化＝双击卡死（2026-10-20 实测，用户报的「卡死 + 初始化失败」）
 
 **现象**：双击「看板」→ 窗口白着不动（卡死）→ 弹出「WebView2 初始化失败」。

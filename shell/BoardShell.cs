@@ -142,7 +142,15 @@ namespace BoardShell
         static int Port = 8777;
         static Process Server;
         static bool StartedServer;
-        static HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        // ⛔ 别用默认的 HttpClient：.NET Framework 第一次请求会去查系统代理（IE 设置），
+        //    本机实测白等 ~2 秒。禁用代理后本地探活是毫秒级。
+        static HttpClient Http = new HttpClient(new HttpClientHandler
+        {
+            UseProxy = false,
+            UseCookies = false,
+            AllowAutoRedirect = false,
+        })
+        { Timeout = TimeSpan.FromSeconds(3) };
         static NotifyIcon Tray;
         static Form Win;
         static WebView2 View;
@@ -152,6 +160,12 @@ namespace BoardShell
         static bool TrayHintShown;
         static string ShotPath;
         static bool ShotVisible;
+        // 启动时序：窗口立刻出来，后端与 WebView2 并行准备（以前是先等后端 4 秒才建窗口）
+        static DateTime _t0 = DateTime.Now;
+        static volatile bool _serverReady;
+        static bool _serverOk;
+        static bool _navigated;
+        static Label _splash;
         // WebView2 初始化是异步的：⛔ 绝不能在 UI 线程上 .Result/.Wait —— 那会把消息循环
         // 卡住，而初始化回调恰恰要靠消息循环才能回来 ⇒ 死锁／超时（2026-10-20 实测：双击卡死）
         static bool _initDone;
@@ -208,17 +222,68 @@ namespace BoardShell
             Application.SetCompatibleTextRenderingDefault(false);
             Application.AddMessageFilter(new KeyFilter());
 
-            if (!EnsureServer(false)) return 3;
-
+            // ⭐ 窗口立刻出来，别停在“等后端”上（用户实测：以前双击要 4 秒才见窗口）
+            StartBackendAsync();          // 先让后端开跑，再慢慢搭窗口（两者互不等待）
             BuildWindow();
             BuildTray();
             WatchWake();
-            CheckBackendFreshness();
-
             Application.Run(Win);
 
             StopServerIfOwned();
             return 0;
+        }
+
+        static long Elapsed()
+        {
+            return (long)(DateTime.Now - _t0).TotalMilliseconds;
+        }
+
+        static void StartBackendAsync()
+        {
+            var t = new Thread(delegate()
+            {
+                bool ok = EnsureServerSync();
+                Log("backend ready=" + ok + " at +" + Elapsed() + "ms");
+                string stale = BackendStaleness();     // HTTP 调用，必须在后台线程
+                try
+                {
+                    if (Win == null) { MaybeNavigate(); return; }
+                    Win.BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (stale != null) Balloon("后端是旧版", stale);
+                        MaybeNavigate();
+                    });
+                }
+                catch { }
+            });
+            t.IsBackground = true;
+            t.Name = "backend";
+            t.Start();
+        }
+
+        static bool EnsureServerSync()
+        {
+            bool ok = EnsureServer(true);
+            _serverOk = ok;
+            _serverReady = true;
+            return ok;
+        }
+
+        // 两个条件都齐了才导航：后端活了 + 内核起来了
+        static void MaybeNavigate()
+        {
+            if (_navigated) return;
+            if (!_initDone || _initError != "") return;
+            if (!_serverReady) return;
+            _navigated = true;
+            if (!_serverOk)
+            {
+                ShowErrorPanel("后端没起来（python tools/server.py 没跑起来）。\n"
+                               + "先手动跑一次 board.cmd 看报错，再开看板。\n日志：" + LogFile);
+                return;
+            }
+            HideSplash();
+            View.Source = new Uri(Url);
         }
 
         // ---------- 窗口 ----------
@@ -277,8 +342,42 @@ namespace BoardShell
             Win.Shown += delegate
             {
                 DarkTitleBar(Win.Handle);
+                Log("window shown at +" + Elapsed() + "ms");
+                if (!ShotVisible && ShotPath == null) ShowSplash("正在启动…");
                 InitView();                 // async void：立刻返回，不占 UI 线程
             };
+        }
+
+        // 启动遮罩：窗口先出来，这里说一句「正在启动」，别让人对着黑屏猜
+        static void ShowSplash(string sub)
+        {
+            try
+            {
+                if (_splash == null)
+                {
+                    _splash = new Label();
+                    _splash.Dock = DockStyle.Fill;
+                    _splash.BackColor = Color.FromArgb(14, 16, 20);
+                    _splash.ForeColor = Color.FromArgb(139, 148, 161);
+                    _splash.TextAlign = ContentAlignment.MiddleCenter;
+                    _splash.Font = new Font("Microsoft YaHei UI", 11f);
+                    Win.Controls.Add(_splash);
+                }
+                _splash.Text = "看板\n" + sub;
+                _splash.Visible = true;
+                _splash.BringToFront();
+            }
+            catch { }
+        }
+
+        static void HideSplash()
+        {
+            try
+            {
+                if (_splash != null) _splash.Visible = false;
+                Log("page shown at +" + Elapsed() + "ms");
+            }
+            catch { }
         }
 
         static void DarkTitleBar(IntPtr hwnd)
@@ -330,11 +429,16 @@ namespace BoardShell
                     ShowErrorPanel("渲染进程挂了：" + e.ProcessFailedKind
                                    + "\n按 F5 或关掉重开一次看板。");
                 };
-                core.NavigationCompleted += delegate { _navDone = true; };
+                core.NavigationCompleted += delegate
+                {
+                    _navDone = true;
+                    Log("nav done at +" + Elapsed() + "ms");
+                };
 
                 _initError = "";
                 _initDone = true;
-                View.Source = new Uri(Url);
+                Log("webview ready at +" + Elapsed() + "ms");
+                MaybeNavigate();          // 后端好了就直接上页面；没好就先等
             }
             catch (Exception ex)
             {
@@ -608,10 +712,16 @@ namespace BoardShell
 
         static bool ServerAlive()
         {
+            // 用 TCP 连一下就行：⛔ 别用 HttpClient 做探活 —— .NET Framework 第一次 HTTP
+            // 请求要初始化一堆东西，本机实测白等 1.5 秒（服务端其实早就起来了）。
             try
             {
-                var r = Http.GetAsync("http://127.0.0.1:" + Port + "/api/state").Result;
-                return r.IsSuccessStatusCode;
+                using (var c = new System.Net.Sockets.TcpClient())
+                {
+                    var t = c.ConnectAsync("127.0.0.1", Port);
+                    if (!t.Wait(500)) return false;
+                    return c.Connected;
+                }
             }
             catch { return false; }
         }
@@ -634,13 +744,18 @@ namespace BoardShell
                 Server = Process.Start(psi);
                 StartedServer = true;
                 TieToMe(Server);              // 壳死了，后端跟着死（不留孤儿占端口）
+                Log("server spawned at +" + Elapsed() + "ms");
                 var logPath = Path.Combine(ProjectDir, "board", "ui-server.log");
                 Hook(Server.StandardOutput, logPath);
                 Hook(Server.StandardError, logPath);
-                for (int i = 0; i < 20; i++)
+                for (int i = 0; i < 45; i++)
                 {
-                    Thread.Sleep(400);
-                    if (ServerAlive()) return true;
+                    Thread.Sleep(80);             // 探活间隔短一点：用户等的是「4 秒」这种量级
+                    if (ServerAlive())
+                    {
+                        Log("server alive at +" + Elapsed() + "ms after " + (i + 1) + " probes");
+                        return true;
+                    }
                 }
                 Log("server did not come alive in 8s");
                 if (!quiet) MessageBox.Show("后端没起来。\n跑 board.cmd 看报错，日志：" + LogFile,
@@ -755,7 +870,7 @@ namespace BoardShell
         {
             try
             {
-                if (!EnsureServer(true)) { Say("SELFTEST FAIL: server"); return 2; }
+                if (!EnsureServerSync()) { Say("SELFTEST FAIL: server"); return 2; }
                 string why;
                 if (!BootHidden(out why))
                 {
@@ -814,7 +929,7 @@ namespace BoardShell
         {
             try
             {
-                if (!EnsureServer(true)) { Say("SHOT FAIL: server"); return 2; }
+                if (!EnsureServerSync()) { Say("SHOT FAIL: server"); return 2; }
                 string why;
                 if (!BootHidden(out why)) { Say("SHOT FAIL: " + why); return 2; }
                 Pump(delegate { return _navDone; }, 30000);
@@ -861,33 +976,34 @@ namespace BoardShell
 
         // 后端是不是「老代码」：改了 server.py 但旧的 server 进程还在 8777（E-31）
         // 旧进程配新页面 ⇒ 新接口 404，而且看起来像「路由写错了」。
-        static void CheckBackendFreshness()
+        // ⚠️ 里面有 HTTP 调用（第一次会慢 1.5 秒），所以只许在后台线程调，别放 UI 线程。
+        static string BackendStaleness()
         {
             try
             {
                 var s = Http.GetStringAsync("http://127.0.0.1:" + Port + "/api/state").Result;
                 var f = Path.Combine(ProjectDir, "tools", "server.py");
-                if (!File.Exists(f)) return;
+                if (!File.Exists(f)) return null;
                 long disk = (long)(File.GetLastWriteTimeUtc(f)
                                    - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
                 int i = s.IndexOf("\"code_mtime\":");
                 if (i < 0)
                 {
                     Log("backend has no code_mtime ⇒ 旧版本进程");
-                    Balloon("后端是旧版", "关掉看板再开一次就会用新代码；否则新接口会报 not found");
-                    return;
+                    return "后端是旧版（关掉看板再开一次就会用新代码）";
                 }
                 var digits = "";
                 for (int j = i + 13; j < s.Length && char.IsDigit(s[j]); j++) digits += s[j];
                 long running;
-                if (!long.TryParse(digits, out running)) return;
+                if (!long.TryParse(digits, out running)) return null;
                 if (running < disk - 1)
                 {
                     Log("backend stale: running=" + running + " disk=" + disk);
-                    Balloon("后端是旧版", "它比 tools\\server.py 旧；关掉看板再开一次");
+                    return "后端是旧版（它比 tools\\server.py 旧；关掉看板再开一次）";
                 }
+                return null;
             }
-            catch { }
+            catch { return null; }
         }
 
         // ---------- 日志 ----------
