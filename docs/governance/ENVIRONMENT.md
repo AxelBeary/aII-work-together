@@ -3,6 +3,7 @@
 > 规矩：只写**实测过**的事实，每条附**可复跑命令**与取证日期。踩过的新坑收工前必须补进来。
 > 本项目专用；跨项目纪律见全局 `~/.config/opencode/AGENTS.md`。
 
+
 ## E-01 · 工作区现状（取证 2026-10-19）
 
 - 工作区：`E:\GithubClone\allworktogether`。
@@ -180,24 +181,6 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 - **真跑**才暴露兼容性：真辩论跑出 2 个独立 `ses_` 会话；`--agent plan/general` 真跑成功；`--agent nope` 真被拒。
 - **做法**：凡声称「兼容/可用」的功能，**至少要有一条真引擎的实跑证据**；只有打桩的一律标 `未证`。
 
-## E-21 · 多项目与并行实测（取证 2026-10-19）
-
-**多项目**：
-- 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
-- 实测在 `C:\Users\qly19\AppData\Local\Temp\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
-- `board project ls` 能汇总两个项目各自的卡片数。
-
-**并行（worktree）**：
-- 实测 `orchestrator.py run --parallel 2`：两张卡同时跑，各在 `.worktrees/<card-id>/`，均在 14s 内完成，交付物正确拷回，worktree 自动清理。
-- **冲突检测实测**：两张卡都产出 `board/artifacts/same.md` ⇒ 后到的判 `conflict`，**未覆盖**先到的；先到的正常完成。
-- ⚠️ worktree 依赖 git；无 git 或仓库无提交时退化为「目录副本」，隔离性弱但仍不互踩。
-
-## E-22 · 拆代码的教训：渐进，不重写（取证 2026-10-19）
-
-- `board.py` 一度 1099 行／44KB。**没有**一次性拆成完整包，而是按职责抽出 `render.py`（渲染）、`projects.py`（多项目）、`parallel.py`（并行），`board.py` 保留为 CLI 入口。
-- **理由**：一次性大重构会让回归基线失效、且无法二分定位回归来源；渐进拆每次只动一块，跑完 18 条回归即知有没有坏。
-- **做法固化**：拆一个模块 → 立即跑 `run_regression.py` + `--break` → 绿了才继续下一块。
-
 ## E-20 · 三个「值得抄」的实件（取证 2026-10-19）
 
 | 件 | 是什么 | 为什么值得抄 |
@@ -209,3 +192,53 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 ⚠️ **反向警告（Metis 自评）**：其 32 个零分任务里 27 个是「跑了但跑错」，首因是**治理仪式吃掉产出**。⇒ **闸门别做成表演**。
 
 **可复跑**：`Invoke-RestMethod https://api.github.com/repos/<owner>/<repo>` 读 stars／license／pushed_at（⛔ 别信记忆里的数）。
+
+## E-22 · 拆代码的教训：渐进，不重写（取证 2026-10-19）
+
+- `board.py` 一度 1099 行／44KB。**没有**一次性拆成完整包，而是按职责抽出 `render.py`（渲染）、`projects.py`（多项目）、`parallel.py`（并行），`board.py` 保留为 CLI 入口。
+- **理由**：一次性大重构会让回归基线失效、且无法二分定位回归来源；渐进拆每次只动一块，跑完 18 条回归即知有没有坏。
+- **做法固化**：拆一个模块 → 立即跑 `run_regression.py` + `--break` → 绿了才继续下一块。
+
+## E-23 · 多项目与并行实测（取证 2026-10-19）
+
+**多项目**：
+- 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
+- 实测在 `C:\Users\qly19\AppData\Local\Temp\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
+- `board project ls` 能汇总两个项目各自的卡片数。
+
+**并行（worktree）**：
+- 实测 `orchestrator.py run --parallel 2`：两张卡同时跑，各在 `.worktrees/<card-id>/`，均在 14s 内完成，交付物正确拷回，worktree 自动清理。
+- **冲突检测实测**：两张卡都产出 `board/artifacts/same.md` ⇒ 后到的判 `conflict`，**未覆盖**先到的；先到的正常完成。
+- ⚠️ worktree 依赖 git；无 git 或仓库无提交时退化为「目录副本」，隔离性弱但仍不互踩。
+
+## E-24 · opus 评审抓出的 3 个真缺陷（取证 2026-10-20）
+
+外部专家（claude-opus-5-5）读源码评审，指出 3 个缺陷；本席**逐条复现确认属实**后修复：
+
+| # | 缺陷 | 复现方式 | 后果 | 修复 |
+|---|---|---|---|---|
+| 9 | **状态转移白名单从未被调用** | `grep TRANSITIONS` 只有定义处，零调用点 | 任何状态下追加一条 `human` 事件都能直接变「完成」——**红线被架空** | 新增 `guard_transition()`，接入 claim/submit/verify/review/human/block |
+| 10 | **长任务会被抢走** | `LEASE_TTL=600` vs `engines.run(timeout=1800)` | 引擎跑超 10 分钟 ⇒ 租约超时被回收 ⇒ 另一引擎接手同一张卡 ⇒ **同一卡双写** | 执行期后台线程按 `HB_INTERVAL` 持续心跳；提交前 `guard_holder()` 校验租约还在自己手上 |
+| 11 | **并行改已有文件必被误判冲突** | `collect()` 判据＝「工作区有该文件且内容不同」 | **所有修改旧文件的卡都被判冲突**，并行等于只能新建文件 | 改为**基线判据**：开工时记录交付物 hash，只有「我干活期间别人改过」才算冲突 |
+
+**附带修的两个隐患**：
+- **journal 并发写入分叉哈希链** ⇒ 加跨进程文件锁（Windows `msvcrt` / POSIX `fcntl`），「读 prev → 算 hash → 写」整段原子。复测：20 线程并发写，21 条事件、seq 无重复、链完整。
+- **坏行被静默丢弃** ⇒ 解析失败的行写入 `journal.corrupt`，不再吞掉。
+
+**教训（第 4 次同源）**：**「定义了」不等于「生效了」**。`TRANSITIONS` 写在文件里 66 行处，看着像防线，实际零调用。⇒ 凡声称「有某道防线」，必须有一条**测试直接调用它并证明它会拒绝**（对应回归用例 R19/R20/R21）。
+
+**可复跑**：`python tests/run_regression.py`（R19–R23 覆盖上述修复）
+
+## E-25 · opus 评审：哪些轮子该用、哪些别用（取证 2026-10-20）
+
+外部专家（claude-opus-5-5）关键判断，本席采信并已落地的部分：
+
+| 判断 | 我们的处置 |
+|---|---|
+| Temporal / Plane / CrewAI / A2A 在**单人本机**场景不划算，别引 | ✅ 维持零依赖，不引 |
+| 卡片记录建议换 SQLite（Python 自带，不算新依赖） | ⏸ **暂缓**——当前加文件锁已解决并发写；换存储是大事，留待真出问题再做 |
+| 并行收工建议改用 git 分支+合并 | ⏸ **部分采纳**——已用「基线判据」修掉误判；分支合并留待需要多文件协同改时 |
+| **ACP 官方列表已收录 opencode／qoder／hermes／codex** | 📌 **记下**：以后接新引擎优先走 ACP，不再手写回执解析器 |
+| 最该做的一件事＝「拍板收件箱」 | 📌 **记为下一步**（一次最多 3 张、人话、带可复制命令） |
+
+评审全文：`docs/design/20261020-opus-review/OPUS-设计评审__外部专家__claude-opus-5-5.md`

@@ -300,6 +300,107 @@ def k_parallel_conflict(case, cid):
     return got == case["expect"]["conflict"], f"conflicts={bool(got)}"
 
 
+def k_guard_illegal(case, cid):
+    """非法转移：待认领 → 完成 必须被拒。"""
+    new_card(cid)
+    try:
+        B.guard_transition(cid, "完成", "human")
+        rejected = False
+    except SystemExit:
+        rejected = True
+    return rejected == case["expect"]["rejected"], f"rejected={rejected}"
+
+
+def k_guard_actor(case, cid):
+    """越权：agent 不能把卡推到「拍板中→完成」这类人位。"""
+    new_card(cid)
+    B.claim(cid, "w1", "opencode")
+    B.append_event(cid, {"type": "submit", "seat": "w1", "gate": {"L1": True}})
+    B.append_event(cid, {"type": "request_human", "seat": "r1"})
+    B.release(cid)
+    st = B.replay(cid)
+    try:
+        # 卡在「拍板中」，agent 想自己推到「完成」
+        B.guard_transition(cid, "完成", "agent")
+        rejected = False
+    except SystemExit:
+        rejected = True
+    return (rejected == case["expect"]["rejected"]), f"state={st['state']} rejected={rejected}"
+
+
+def k_guard_holder(case, cid):
+    """租约被回收后，旧执行者的提交必须被拒。"""
+    new_card(cid)
+    B.claim(cid, "old", "opencode")
+    # 模拟：租约被回收，别人接手
+    lease = B.active_lease(cid)
+    B._reclaim_lease(cid, lease, reason="test")
+    B.claim(cid, "new", "opencode")
+    try:
+        B.guard_holder(cid, "old")      # 旧执行者回来提交
+        rejected = False
+    except SystemExit:
+        rejected = True
+    return rejected == case["expect"]["rejected"], f"rejected={rejected}"
+
+
+def k_parallel_edit(case, cid):
+    """并行改已有文件：不应误判冲突。"""
+    import parallel as PL
+    rel = f"tests/regression/{cid}-edit.md"
+    dst = B.WORKSPACE / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text("原始内容 1", encoding="utf-8")
+
+    wt = B.WORKSPACE / PL.WT_DIR / cid
+    wt.mkdir(parents=True, exist_ok=True)
+    # 基线在 create() 时记录；这里模拟已记录基线
+    base = PL.WORKSPACE_BASELINE_DIR if hasattr(PL, "WORKSPACE_BASELINE_DIR") else None
+    (B.WORKSPACE / PL.WT_DIR / f"{cid}.baseline.json").write_text(
+        json.dumps({rel: PL._hash(dst)}, ensure_ascii=False), encoding="utf-8")
+
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text("改后的内容 2", encoding="utf-8")
+    try:
+        copied, conflicts = PL.collect(cid, [rel])
+        got_c = bool(conflicts)
+        got_copied = bool(copied)
+        final = dst.read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(wt, ignore_errors=True)
+        (B.WORKSPACE / PL.WT_DIR / f"{cid}.baseline.json").unlink(missing_ok=True)
+        dst.unlink(missing_ok=True)
+
+    ok = (got_c == case["expect"]["conflict"]
+          and got_copied == case["expect"]["copied"]
+          and final == "改后的内容 2")
+    return ok, f"conflict={got_c} copied={got_copied} final={final[:12]!r}"
+
+
+def k_journal_lock(case, cid):
+    """并发写 journal：哈希链必须完整，无分叉。"""
+    new_card(cid)
+    n = case["expect"]["n"]
+
+    def worker(i):
+        try:
+            B.append_event(cid, {"type": "probe", "seat": f"w{i}"})
+        except SystemExit:
+            pass
+
+    ts = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    ok_chain, why = B.verify_chain(cid)
+    seqs = [e["seq"] for e in B.load_journal(cid)]
+    ok = ok_chain and len(seqs) == len(set(seqs)) and len(seqs) >= n
+    return ok == case["expect"]["chain_ok"], \
+        f"chain_ok={ok_chain} events={len(seqs)} unique_seq={len(set(seqs))}"
+
+
 HANDLERS = {
     "concurrency": k_concurrency,
     "spec_mismatch": lambda c, i: k_spec(c, i, True),
@@ -316,6 +417,11 @@ HANDLERS = {
     "project_isolation": k_project_isolation,
     "defaults_inherit": k_defaults_inherit,
     "parallel_conflict": k_parallel_conflict,
+    "guard_illegal_transition": k_guard_illegal,
+    "guard_actor": k_guard_actor,
+    "guard_holder_epoch": k_guard_holder,
+    "parallel_edit_file": k_parallel_edit,
+    "journal_lock": k_journal_lock,
 }
 
 

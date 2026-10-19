@@ -17,6 +17,7 @@ board.py — 多 agent 共享看板（单文件，零依赖，Python 3.9+）
   python tools/board.py html          # 生成看板页，双击即可看
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -36,16 +37,25 @@ except Exception:
 ROOT = Path(__file__).resolve().parent.parent
 BOARD = ROOT / "board"
 CARDS = BOARD / "cards"
+# agent 干活的地方（交付物路径相对它解析）。默认＝项目根，可由项目注册表的 workspace 覆盖。
+WORKSPACE = ROOT
 
 
 def set_root(root) -> None:
     """切换当前项目根。多项目支持的核心入口。"""
-    global ROOT, BOARD, CARDS
+    global ROOT, BOARD, CARDS, WORKSPACE
     ROOT = Path(root).resolve()
     BOARD = ROOT / "board"
     CARDS = BOARD / "cards"
     BOARD.mkdir(parents=True, exist_ok=True)
     CARDS.mkdir(parents=True, exist_ok=True)
+    WORKSPACE = ROOT
+
+
+def set_workspace(ws) -> None:
+    """指定 agent 干活的工作区（交付物路径相对于它解析）。"""
+    global WORKSPACE
+    WORKSPACE = Path(ws).resolve()
 
 # 租约参数（D2 A.5）
 LEASE_TTL = 600          # 秒，10 分钟无心跳视为超时
@@ -132,24 +142,83 @@ def _line_hash(prev: str, obj: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+@contextlib.contextmanager
+def _file_lock(path: Path, timeout: float = 10.0):
+    """跨进程文件锁（Windows 用 msvcrt，POSIX 用 fcntl）。
+
+    防的是：两个进程同时 append journal ⇒ 都读到同一个 prev ⇒ 哈希链分叉，
+    随后 audit 会把正常写入误报成「被篡改」（opus 评审指出）。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+", encoding="utf-8")
+    locked = False
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                time.sleep(0.05)
+        yield locked
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+        f.close()
+
+
 def append_event(cid: str, ev: dict) -> dict:
-    """append-only：只追加，不改写。每条带 prev/hash 形成哈希链。"""
+    """append-only：只追加，不改写。每条带 prev/hash 形成哈希链。
+
+    加锁：读 prev → 计算 hash → 写入，整段原子，防止并发分叉。
+    坏行处理：解析失败的行**不再静默丢弃**，记到 journal.corrupt 里（E-15/opus 评审）。
+    """
     d = card_dir(cid)
     jp = d / "journal.jsonl"
-    prev = ""
-    if jp.exists():
-        lines = [l for l in jp.read_text(encoding="utf-8").splitlines() if l.strip()]
-        if lines:
-            try:
-                prev = json.loads(lines[-1]).get("hash", "")
-            except json.JSONDecodeError:
-                prev = ""
-    ev = {"seq": len(load_journal(cid)) + 1, "at": ts(), "at_ms": now_ms(), **ev}
-    ev["prev"] = prev
-    ev["hash"] = _line_hash(prev, ev)
-    with jp.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-    return ev
+    lockp = d / ".journal.lock"
+    with _file_lock(lockp) as got:
+        if not got:
+            die(f"拿不到 {cid} 的 journal 锁（另一个进程正在写），稍后重试")
+        prev = ""
+        n = 0
+        bad = []
+        if jp.exists():
+            for line in jp.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    n += 1
+                    prev = obj.get("hash", prev)
+                except json.JSONDecodeError:
+                    bad.append(line[:200])
+        if bad:
+            with (d / "journal.corrupt").open("a", encoding="utf-8") as f:
+                for b in bad:
+                    f.write(b + "\n")
+        ev = {"seq": n + 1, "at": ts(), "at_ms": now_ms(), **ev}
+        ev["prev"] = prev
+        ev["hash"] = _line_hash(prev, ev)
+        with jp.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        return ev
 
 
 def verify_chain(cid: str) -> tuple:
@@ -373,7 +442,7 @@ def gate_l1(cid: str, card: dict) -> tuple:
     problems, results = [], []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (ROOT / rel) if not Path(rel).is_absolute() else Path(rel)
+        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
         if not p.exists():
             problems.append(f"缺件：{rel}")
             results.append({"path": rel, "exists": False})
@@ -390,7 +459,7 @@ def gate_l2(cid: str, card: dict) -> tuple:
     problems = []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (ROOT / rel) if not Path(rel).is_absolute() else Path(rel)
+        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
         if not p.exists():
             continue
         raw = p.read_bytes()
@@ -417,7 +486,7 @@ def gate_l3(cid: str, card: dict) -> tuple:
     TEXTY = (".md", ".txt", ".py", ".json", ".yaml", ".yml", ".html", ".css", ".js", ".ts")
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (ROOT / rel) if not Path(rel).is_absolute() else Path(rel)
+        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
         if p.exists() and p.suffix.lower() in TEXTY:
             try:
                 text_cache[rel] = p.read_text(encoding="utf-8")
@@ -623,11 +692,59 @@ def cmd_claim(a):
     print(f"  ⚠ 每 {HB_INTERVAL}s 内至少跑一次 beat，否则 {LEASE_TTL}s 后被回收")
 
 
+def guard_transition(cid: str, to_state: str, actor: str):
+    """状态转移守卫：不在白名单里的一律拒绝。
+
+    ⚠️ 2026-10-20 修：TRANSITIONS 此前只是「定义」，从未被调用
+    （opus 评审指出：任何状态下追加一条 human 事件都能直接变「完成」）。
+    """
+    st = replay(cid)
+    frm = st["state"]
+    if frm == to_state:
+        return
+    rule = TRANSITIONS.get((frm, to_state))
+    if rule is None:
+        die(f"非法状态转移：「{frm}」→「{to_state}」不在白名单里\n"
+            f"  合法去向：{_legal_from(frm)}")
+    if actor not in rule["actor"]:
+        die(f"越权：{actor} 不能把卡从「{frm}」推进到「{to_state}」\n"
+            f"  该转移只允许：{'/'.join(sorted(rule['actor']))}")
+
+
+def _legal_from(state: str) -> str:
+    outs = [t for (f, t) in TRANSITIONS if f == state]
+    return "、".join(outs) if outs else "（无，是终态）"
+
+
+def guard_holder(cid: str, seat: str):
+    """确认你是当前租约持有者，且 epoch 未被回收重置。
+
+    防的是：长任务执行中租约超时被别人回收接手，旧执行者回来提交，
+    把别人的活覆盖掉（opus 评审指出）。
+    """
+    lease = active_lease(cid)
+    if not lease:
+        die("你没有活跃租约（可能已被回收）")
+    owner = _lease_owner(lease)
+    if owner.get("seat") != seat:
+        die(f"卡片已归 {owner.get('seat')}（你的租约已被回收）")
+    st = replay(cid)
+    return st.get("epoch", 0)
+
+
+def _lease_epoch(lease) -> int:
+    try:
+        return int(_lease_owner(lease).get("epoch", 0))
+    except Exception:
+        return 0
+
+
 def cmd_beat(a):
     heartbeat(a.id, a.seat)
 
 
 def cmd_block(a):
+    guard_transition(a.id, "阻塞", "agent")
     st = replay(a.id)
     if st["holder"] != a.seat:
         die(f"你不是持有者（当前 {st['holder']}）")
@@ -664,6 +781,7 @@ def cmd_submit(a):
 
 
 def cmd_verify(a):
+    guard_transition(a.id, "核验中", "review")
     st = replay(a.id)
     if st["state"] != "待验收":
         die(f"当前状态「{st['state']}」，需先 submit")
@@ -683,6 +801,7 @@ def cmd_verify(a):
 
 
 def cmd_review(a):
+    guard_transition(a.id, "完成" if a.verdict == "pass" else "待返工", "review")
     st = replay(a.id)
     if st["state"] not in ("核验中", "待验收"):
         die(f"当前状态「{st['state']}」，不可复核")
@@ -781,6 +900,7 @@ def _verify_human_token() -> tuple:
 
 def cmd_human(a):
     # 红线②：唯一能推进人位的入口
+    guard_transition(a.id, "完成" if a.decision == "approve" else "待返工", "human")
     ok_tok, why = _verify_human_token()
     if not ok_tok:
         die(why)
@@ -796,7 +916,6 @@ def cmd_human(a):
     append_event(a.id, {"type": "human", "actor": "human", "who": a.who or "owner",
                         "decision": a.decision, "note": a.note or ""})
     ok(f"人已{a.decision}：{a.id}")
-
 
 def cmd_reclaim(a):
     n = 0
@@ -878,7 +997,7 @@ def cmd_audit(a):
         if st["state"] in ("待验收", "核验中", "完成"):
             for item in card.get("deliverables", []):
                 rel = item if isinstance(item, str) else item.get("path")
-                p = (ROOT / rel) if not Path(rel).is_absolute() else Path(rel)
+                p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
                 if not p.exists():
                     issues.append(f"{d.name}: 交付物已丢 {rel}")
     if issues:
@@ -977,9 +1096,16 @@ def cmd_project(a):
         for p in reg["projects"]:
             if Path(p["path"]).resolve() == ROOT.resolve():
                 p["defaults"] = d
+                if getattr(a, "workspace", None):
+                    ws = Path(a.workspace)
+                    if not ws.exists():
+                        die(f"工作区不存在：{ws}")
+                    p["workspace"] = str(ws.resolve())
         P._save_registry(reg)
+        wsd = P.workspace_of(ROOT)
         ok(f"本项目默认值：引擎={d.get('engine','—')} 模型={d.get('model','—')} "
            f"思考={d.get('effort','—')}")
+        print(f"  工作区：{wsd}")
         return
 
 
@@ -1024,11 +1150,11 @@ def cmd_bare(a):
 
 
 def cmd_stats(a):
+    """各状态几张、完成率。"""
     if not CARDS.exists():
         print("（看板为空）")
         return
-    counts = {}
-    total = 0
+    counts, total = {}, 0
     for d in CARDS.iterdir():
         if not d.is_dir():
             continue
@@ -1039,15 +1165,82 @@ def cmd_stats(a):
         total += 1
         counts[st["state"]] = counts.get(st["state"], 0) + 1
     print(f"项目：{ROOT.name}  （{ROOT}）")
+    if a.workspace:
+        print(f"工作区：{WORKSPACE}")
     print(f"共 {total} 张卡\n")
     for s in STATES:
         n = counts.get(s, 0)
         if n:
-            bar = "█" * min(n, 30)
-            print(f"  {s:<6} {n:>3}  {bar}")
+            print(f"  {s:<6} {n:>3}  {'█' * min(n, 30)}")
     if total:
         done = counts.get("完成", 0)
-        print(f"\n完成率 {done}/{total} = {done/total*100:.0f}%")
+        print(f"\n完成率 {done}/{total} = {done / total * 100:.0f}%")
+
+
+def cmd_cost(a):
+    """用量统计：token + 缓存 + 花费。只统计引擎真的报了数的（⛔ 不假装 0）。"""
+    if not CARDS.exists():
+        print("（看板为空）")
+        return
+
+    def newagg():
+        return {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0,
+                "cache_write": 0, "cost": 0.0, "calls": 0, "unavailable": 0}
+
+    total = newagg()
+    by_card, by_model = {}, {}
+
+    for d in sorted(CARDS.iterdir()):
+        if not d.is_dir():
+            continue
+        for ev in load_journal(d.name):
+            if ev.get("type") != "usage":
+                continue
+            u = ev.get("usage") or {}
+            key_card = d.name
+            key_model = ev.get("model") or ev.get("engine") or "?"
+            for bucket, key in ((by_card, key_card), (by_model, key_model)):
+                a_ = bucket.setdefault(key, newagg())
+                if not u.get("available"):
+                    a_["unavailable"] += 1
+                    a_["calls"] += 1
+                    continue
+                for f in ("input", "output", "reasoning", "cache_read", "cache_write"):
+                    a_[f] += int(u.get(f) or 0)
+                a_["cost"] += float(u.get("cost") or 0)
+                a_["calls"] += 1
+            if u.get("available"):
+                for f in ("input", "output", "reasoning", "cache_read", "cache_write"):
+                    total[f] += int(u.get(f) or 0)
+                total["cost"] += float(u.get("cost") or 0)
+                total["calls"] += 1
+            else:
+                total["unavailable"] += 1
+                total["calls"] += 1
+
+    def line(label, a_):
+        cache = a_["cache_read"] + a_["cache_write"]
+        return (f"{label:<22} {a_['calls']:>4} 次  "
+                f"入 {a_['input']:>9,}  出 {a_['output']:>8,}  "
+                f"缓存 {cache:>9,}  花费 ${a_['cost']:.4f}")
+
+    print(f"项目：{ROOT.name}")
+    print()
+    if not total["calls"]:
+        print("  还没有用量记录（跑过编排器后才有）")
+        return
+    print(line("合计", total))
+    if total["unavailable"]:
+        print(f"  ⚠ {total['unavailable']} 次调用引擎没报用量（已标『未知』，未计入 0）")
+    print()
+    print("按模型：")
+    for k, v in sorted(by_model.items(), key=lambda x: -x[1]["input"]):
+        print("  " + line(k[-40:], v))
+    if a.per_card:
+        print()
+        print("按卡片：")
+        for k, v in sorted(by_card.items(), key=lambda x: -x[1]["input"]):
+            print("  " + line(k, v))
 
 
 def cmd_open(a):
@@ -1082,10 +1275,16 @@ def main():
     s.add_argument("--engine")
     s.add_argument("--model")
     s.add_argument("--effort")
+    s.add_argument("--workspace", help="指定 agent 干活的工作区（默认＝项目根）")
     s.set_defaults(f=cmd_project)
 
     s = sub.add_parser("stats", help="一眼看数字")
+    s.add_argument("--workspace", action="store_true", help="同时显示工作区")
     s.set_defaults(f=cmd_stats)
+
+    s = sub.add_parser("cost", help="用量统计（token/缓存/花费）")
+    s.add_argument("--per-card", action="store_true", help="按卡片细分")
+    s.set_defaults(f=cmd_cost)
 
     s = sub.add_parser("open", help="生成并打开看板页（最常用）")
     s.add_argument("--show", action="store_true", help="生成后自动用浏览器打开")
@@ -1232,6 +1431,8 @@ def main():
 
     set_root(root)
     P.ensure_root(root)
+    # 项目工作区：注册表里设了就切过去（agent 在这里干活）
+    set_workspace(P.workspace_of(root))
     if not a.cmd:
         return cmd_bare(a)
     a.f(a)

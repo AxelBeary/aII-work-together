@@ -126,6 +126,36 @@
       "kind": "parallel_conflict",
       "desc": "并行收工：交付物冲突必须被检出",
       "expect": {"conflict": true}
+    },
+    {
+      "id": "R19",
+      "kind": "guard_illegal_transition",
+      "desc": "非法状态转移必须被拒（待认领→完成）",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R20",
+      "kind": "guard_actor",
+      "desc": "越权转移必须被拒（agent 不能推人位）",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R21",
+      "kind": "guard_holder_epoch",
+      "desc": "租约被回收后，旧执行者提交必须被拒",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R22",
+      "kind": "parallel_edit_file",
+      "desc": "并行改【已有文件】不应误判冲突（基线判据）",
+      "expect": {"conflict": false, "copied": true}
+    },
+    {
+      "id": "R23",
+      "kind": "journal_lock",
+      "desc": "并发写 journal 不得造成哈希链分叉",
+      "expect": {"chain_ok": true, "n": 20}
     }
   ]
 }

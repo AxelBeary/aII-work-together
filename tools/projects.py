@@ -59,8 +59,12 @@ def list_projects() -> list:
     return out
 
 
-def add_project(path, name=None, defaults=None) -> dict:
-    """登记一个项目（幂等）。"""
+def add_project(path, name=None, defaults=None, workspace=None) -> dict:
+    """登记一个项目（幂等）。
+
+    path      = 项目根（看板数据 board/ 放这里）
+    workspace = agent 干活的地方（默认＝项目根；可以是子目录，甚至另一个仓）
+    """
     path = Path(path).resolve()
     d = _load_registry()
     for p in d["projects"]:
@@ -69,17 +73,43 @@ def add_project(path, name=None, defaults=None) -> dict:
                 p["name"] = name
             if defaults:
                 p.setdefault("defaults", {}).update(defaults)
+            if workspace:
+                p["workspace"] = str(Path(workspace).resolve())
             _save_registry(d)
             return p
     entry = {
         "name": name or path.name,
         "path": str(path),
+        "workspace": str(Path(workspace).resolve()) if workspace else str(path),
         "added_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "defaults": defaults or {},
     }
     d["projects"].append(entry)
     _save_registry(d)
     return entry
+
+
+def workspace_of(path) -> Path:
+    """项目的工作区。没设就＝项目根。"""
+    p = find_project(str(Path(path).resolve()))
+    if p and p.get("workspace"):
+        ws = Path(p["workspace"])
+        if ws.exists():
+            return ws
+    return Path(path).resolve()
+
+
+def set_workspace(path, workspace) -> dict:
+    """改某个项目的工作区。"""
+    path = Path(path).resolve()
+    ws = Path(workspace).resolve()
+    d = _load_registry()
+    for p in d["projects"]:
+        if Path(p["path"]).resolve() == path:
+            p["workspace"] = str(ws)
+            _save_registry(d)
+            return p
+    raise KeyError(f"项目未登记：{path}")
 
 
 def remove_project(key: str) -> bool:

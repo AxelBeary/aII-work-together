@@ -15,17 +15,31 @@ board open --show
 
 ## 多项目
 
+每个项目在自己目录下有 `board/`，数据跟项目走（可 git、可搬）。**每个项目还能指定工作区**（agent 干活的地方，可以和项目根不同）：
+
 ```bash
-board project ls                 # 所有项目 + 卡片数
-board project add /其他/项目     # 登记
-board -p 其他项目 ls             # 切项目
-board overview                   # 跨项目总览页
+board project add /path/to/project --workspace /path/to/code   # 登记时指定
+board project default --workspace /path/to/code                # 之后改
+board project ls                                                # 所有项目 + 卡片数
+board -p other-project ls                                       # 切到别的项目
+board overview                                                  # 跨项目总览页
 ```
 
-**零配置**：在任意目录直接 `board add`，自动把当前目录当项目、自动建、自动登记。
-每个项目的数据在它自己的 `board/` 里——可 git、可搬、可单独备份。
+**零配置**：在任意目录直接跑 `board add ...`，它会自动把当前目录当项目、自动建看板、自动登记。
 
-**全局注册表**：`~/.allworktogether/projects.json`，只记「项目在哪」。删了不影响任何项目数据。
+**默认值**：项目级设一次引擎/模型/思考强度，之后建卡自动继承。
+
+---
+
+## 用量与花费
+
+```bash
+python tools/board.py cost            # token + 缓存 + 花费
+python tools/board.py cost --per-card # 按卡片细分
+```
+
+数据来自引擎自己报的结构化回执（opencode 的 `step_finish` 带 tokens/cache/cost）。
+**引擎没报就标「未知」，不会记成 0**——避免让你以为不要钱。
 
 ---
 

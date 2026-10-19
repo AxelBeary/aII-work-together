@@ -63,6 +63,13 @@ class Result:
         self.exit_code = None
         self.duration_ms = None
         self.parsed = {}             # 结构化字段
+        # —— 用量（能拿到多少记多少，拿不到就是 0 + 标 available=False）——
+        self.usage = {
+            "input": 0, "output": 0, "reasoning": 0,
+            "cache_read": 0, "cache_write": 0,
+            "cost": 0.0, "cost_currency": "USD",
+            "available": False,      # 引擎是否真的报了用量
+        }
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +77,7 @@ class Result:
             "session_id": self.session_id, "model_used": self.model_used,
             "text": self.text[:8000], "exit_code": self.exit_code,
             "duration_ms": self.duration_ms, "parsed": self.parsed,
+            "usage": self.usage,
         }
 
 
@@ -204,6 +212,7 @@ def _run_opencode(cmd, cwd, timeout, prompt=None) -> Result:
     r.raw = out
     # 逐行解析 JSONL：成功要见 type:"text"，失败看 type:"error"
     texts, errors, sid = [], [], None
+    u = r.usage
     for line in out.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -218,6 +227,19 @@ def _run_opencode(cmd, cwd, timeout, prompt=None) -> Result:
             part = ev.get("part") or {}
             if part.get("text"):
                 texts.append(part["text"])
+        elif t == "step_finish":
+            # opencode 把用量放在 step_finish.part：cost + tokens{input,output,reasoning,cache{read,write}}
+            part = ev.get("part") or {}
+            tok = part.get("tokens") or {}
+            cache = tok.get("cache") or {}
+            if tok or part.get("cost"):
+                u["available"] = True
+            u["input"] += int(tok.get("input") or 0)
+            u["output"] += int(tok.get("output") or 0)
+            u["reasoning"] += int(tok.get("reasoning") or 0)
+            u["cache_read"] += int(cache.get("read") or 0)
+            u["cache_write"] += int(cache.get("write") or 0)
+            u["cost"] += float(part.get("cost") or 0)
         elif t == "error":
             e = ev.get("error") or {}
             msg = e.get("message") or json.dumps(e, ensure_ascii=False)[:300]
@@ -284,6 +306,20 @@ def _run_qoder(cmd, cwd, timeout, prompt=None) -> Result:
         r.parsed["model_fallback_suspect"] = True
     r.parsed.update({"is_error": is_error, "subtype": subtype,
                      "num_turns": obj.get("num_turns")})
+    # 用量：qoderclericn 常返回全 0（实测），全 0 时标 available=False
+    u = r.usage
+    usage = obj.get("usage") or {}
+    inp = int(usage.get("input_tokens") or 0)
+    outp = int(usage.get("output_tokens") or 0)
+    cread = int(usage.get("cache_read_input_tokens") or 0)
+    cwrite = int(usage.get("cache_creation_input_tokens") or 0)
+    cost = float(obj.get("total_cost_usd") or 0)
+    if inp or outp or cread or cwrite or cost:
+        u.update({"input": inp, "output": outp, "reasoning": 0,
+                  "cache_read": cread, "cache_write": cwrite,
+                  "cost": cost, "available": True})
+    else:
+        u["available"] = False     # 引擎没报，⛔ 不假装是 0 消耗
     return r
 
 

@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -151,19 +152,37 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         return "dry"
 
     # 并行模式：在独立 worktree 里跑，避免踩别人的文件
-    work_dir = str(ROOT)
+    # 工作区：项目注册表里设的 workspace（默认＝项目根）
+    work_dir = str(B.WORKSPACE)
     if use_worktree:
         import parallel as PL
         try:
-            wt = PL.create(cid)
+            wt = PL.create(cid, card.get("deliverables", []))
             work_dir = str(wt)
-            log(f"用独立 worktree：{wt.name}", "step")
+            log(f"用独立 worktree：{wt.name}（源自 {B.WORKSPACE.name}）", "step")
         except Exception as e:
-            log(f"worktree 建不起来，退回主树：{e}", "warn")
+            log(f"worktree 建不起来，退回工作区：{e}", "warn")
 
     log(f"调 {engine}（模型 {model or '默认'}）…", "step")
+    # ⚠️ 引擎最长可跑 1800s，而租约 600s 超时 ⇒ 必须后台持续心跳，否则卡被抢走
+    hb_stop = threading.Event()
+
+    def _hb_loop():
+        while not hb_stop.wait(B.HB_INTERVAL):
+            try:
+                B.heartbeat(cid, seat)
+            except SystemExit:
+                return          # 租约已丢，停止（提交时会被 guard_holder 拦下）
+            except Exception:
+                pass
+
+    hb_thread = threading.Thread(target=_hb_loop, daemon=True)
+    hb_thread.start()
     t0 = time.time()
-    res = E.run(engine, prompt, cwd=work_dir, model=model, effort=effort)
+    try:
+        res = E.run(engine, prompt, cwd=work_dir, model=model, effort=effort)
+    finally:
+        hb_stop.set()
     dur = time.time() - t0
     log(f"{engine} 返回 ok={res.ok} 用时 {dur:.0f}s", "ok" if res.ok else "err")
 
@@ -188,6 +207,17 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     (ev_dir / f"run__{seat}__{uuid.uuid4().hex[:6]}.json").write_text(
         json.dumps(res.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 记用量（token + 缓存 + 花费）。引擎没报就标 available=False，⛔ 不记成 0
+    B.append_event(cid, {"type": "usage", "seat": seat, "engine": engine,
+                         "model": res.model_used or model,
+                         "usage": res.usage, "duration_ms": int(dur * 1000)})
+    if res.usage.get("available"):
+        u = res.usage
+        log(f"用量：入 {u['input']:,} 出 {u['output']:,} "
+            f"缓存 {u['cache_read'] + u['cache_write']:,} ${u['cost']:.4f}", "info")
+    else:
+        log("用量：引擎未报告（标未知）", "warn")
+
     if not res.ok:
         B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
                              "reason": f"引擎失败：{res.reason}"[:300]})
@@ -196,6 +226,13 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         return "engine-failed"
 
     # ---- 提交（自动过 L1-L3）----
+    # 先确认租约还在自己手上且没被回收重置（长任务安全）
+    try:
+        B.guard_holder(cid, seat)
+    except SystemExit:
+        log("租约已丢（执行期间被回收），放弃提交以免覆盖别人的活", "err")
+        return "lease-lost"
+
     ns = argparse.Namespace(id=cid, seat=seat, note=f"{engine}/{model or 'default'}")
     B.cmd_submit(ns)
     st = B.replay(cid)
