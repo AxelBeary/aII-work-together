@@ -292,6 +292,26 @@ def cmd_verify(a):
     B.ok("已进「核验中」，待复核席给结论")
 
 
+def cmd_consult(a):
+    """点对点评审：找 B1/B2 独立提意见（只准看、不准改）。"""
+    import consult as C
+    reviewers = C.parse_reviewers(a.by)
+    res = C.consult(a.id, a.q, reviewers,
+                    files=a.file or None, role=a.role, round_no=a.round,
+                    parallel=a.parallel, timeout=a.timeout, dry_run=a.dry_run)
+    if a.dry_run:
+        print(res["prompt"])
+        return
+    print(res["packet"])
+    if res["violations"]:
+        B.die("评审席改动了文件（已按原字节恢复）—— 这次评审作废，重跑")
+    fails = [r for r in res["replies"] if not r["ok"]]
+    if fails and len(fails) == len(res["replies"]):
+        B.die("所有评审席都调用失败，检查引擎/模型名")
+    B.ok(f"评审完成：{len(res['replies'])} 席（{len(fails)} 席失败）")
+    print("\n下一步：按意见改完后，正常走 submit → review 就行。")
+
+
 def cmd_review(a):
     guard_transition(a.id, "完成" if a.verdict == "pass" else "待返工", "review")
     st = B.replay(a.id)
@@ -1234,6 +1254,22 @@ def main():
     s.add_argument("id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_verify)
+
+    s = sub.add_parser("consult", help="点对点评审：B1/B2 独立提意见（只准看、不准改）")
+    s.add_argument("id")
+    s.add_argument("--by", required=True,
+                   help='评审席，逗号分隔：seat[:engine[:model[:effort]]]，'
+                        '如 "b1:opencode:claudecodesale/claude-opus-5-5,b2:qoderclicn:"')
+    s.add_argument("--q", default="", help="这一轮要评审席回答什么")
+    s.add_argument("--role", default="generic",
+                   choices=["generic", "native", "term", "faithful"],
+                   help="评审角度：通用/母语读感/术语一致/逐句对照")
+    s.add_argument("--file", action="append", help="评审哪些文件（默认用卡里的 deliverables）")
+    s.add_argument("--round", type=int, default=1)
+    s.add_argument("--parallel", type=int, default=3)
+    s.add_argument("--timeout", type=int, default=900)
+    s.add_argument("--dry-run", action="store_true", help="只打印提示词，不调模型")
+    s.set_defaults(f=cmd_consult)
 
     s = sub.add_parser("review", help="复核结论（必须异会话 + 带凭据）")
     s.add_argument("id")

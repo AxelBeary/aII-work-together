@@ -131,6 +131,11 @@ def main():
     if not ok:
         fails.append("接口契约")
 
+    # 4e 点对点评审（评审席只准看、不准改；空材料必须报错）
+    ok, _ = run("点对点评审", [PY, "tests/test_consult.py"])
+    if not ok:
+        fails.append("点对点评审")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

@@ -135,3 +135,18 @@
 | 规模压测接入自检 | `tools/check.py --perf` | 已接 | 默认轻量 20×15（重规模见 E-25 §3 的自我约束） |
 
 坑与口径：ENVIRONMENT.md **E-26**。
+
+### 点对点评审（2026-10-20）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 评审内核（并行、异构、防改文件） | `tools/consult.py` | 已实现 | 两席不同提供商实测：opus 30.1s / deepseek 28.4s，各自给出 9–10 条意见 |
+| 命令 `board consult` | `tools/cli.py` | 已实现 | `--by` 支持 `seat:engine:model:effort`，模型名带 `/` 不切坏 |
+| 编排器自动链路 | `tools/orchestrator.py`（`run --consult`） | 已实现 | 端到端：初翻 46s → 两席判 needs-work → 修改轮 29s → 过闸 → 复核 → done |
+| 评审席只准看 | `consult.snapshot/check_and_restore` | 已实现 | 改动即按原字节恢复 + `consult_violation` 事件；测试 C3 正反都验 |
+| 空材料拒绝 | `consult.consult` | 已实现 | 路径写错直接拒（测试 C5），不再空评出一份"看着正常"的结论 |
+| 留痕 | 卡片事件 + `board/evidence/<卡号>/consult-*.md` | 已实现 | 实测 2 席 → 2 份证据文件，源文件未被改动 |
+| 确定性闸门 | `tests/test_consult.py`（5 条） | PASS | 已接入 `check.py`（现 **12 道闸**） |
+| 使用文档 | `docs/点对点评审.md` + `docs/怎么用.md` 末尾 | 已写 | 含「为什么不建聊天室」与已知问题 |
+
+已知问题：反空跑闸（必须包含数字）把统计注释逼进译文正文，见 ENVIRONMENT.md **E-27**。

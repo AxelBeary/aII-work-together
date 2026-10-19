@@ -160,7 +160,8 @@ def parse_review(text: str) -> tuple:
 
 
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
-            dry: bool = False, panel: list = None, use_worktree: bool = False) -> str:
+            dry: bool = False, panel: list = None, use_worktree: bool = False,
+            consult_spec: str = None) -> str:
     """跑完一张卡的全流程。返回最终状态。"""
     card = B.get_card(cid)
 
@@ -253,6 +254,60 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         B.release(cid)
         log(f"引擎未正常结束：{res.reason[:120]}", "err")
         return "engine-failed"
+
+    # ---- 点对点评审（可选）：B 初稿 → B1/B2 独立提意见 → B 自己改一轮 ----
+    # 评审席只准看：consult.py 会在评审前后逐字节比对交付物，被改了就按原字节恢复并记违规
+    if consult_spec:
+        hb2_stop = threading.Event()
+
+        def _hb2():
+            while not hb2_stop.wait(B.HB_INTERVAL):
+                try:
+                    B.heartbeat(cid, seat)
+                except SystemExit:
+                    return
+                except Exception:
+                    pass
+
+        threading.Thread(target=_hb2, daemon=True).start()
+        try:
+            import consult as CN
+            reviewers = CN.parse_reviewers(consult_spec)
+            files = [str(Path(work_dir) / d) for d in card.get("deliverables", [])]
+            log(f"派 {len(reviewers)} 席评审："
+                f"{' / '.join(r['seat'] + '@' + (r['model'] or r['engine']) for r in reviewers)}",
+                "step")
+            cres = CN.consult(cid, card.get("goal") or "请评审这份产出", reviewers,
+                              files=files, cwd=work_dir)
+            print(cres["packet"])
+            if cres["violations"]:
+                log("评审席动了文件（已恢复原字节）：" + "；".join(cres["violations"])[:160], "err")
+            needs = [r for r in cres["replies"]
+                     if r.get("ok") and r.get("verdict") != "pass"]
+            if needs:
+                log(f"{len(needs)} 席认为要改 → {seat} 按意见再改一轮", "step")
+                fix_prompt = (
+                    f"你上一轮的产出收到 {len(needs)} 份独立评审意见（见下）。\n"
+                    "请只针对你认同的问题修改文件：不要整篇重写，不要解释，改完就停。\n"
+                    "不认同的意见不用改——但不要因为不认同就把文件改坏。\n\n"
+                    + cres["packet"]
+                )
+                t1 = time.time()
+                try:
+                    r2 = E.run(engine, fix_prompt, cwd=work_dir, model=model, effort=effort)
+                    log(f"修改轮 ok={r2.ok} 用时 {time.time() - t1:.0f}s",
+                        "ok" if r2.ok else "err")
+                    B.append_event(cid, {"type": "usage", "seat": seat, "engine": engine,
+                                         "model": r2.model_used or model,
+                                         "usage": r2.usage, "phase": "consult-fix"})
+                except Exception as e:
+                    log(f"修改轮失败（保留初稿继续走）：{e}", "warn")
+        except Exception as e:
+            log(f"评审阶段出错（不影响提交）：{e}", "warn")
+            B.append_event(cid, {"type": "consult_error", "actor": "system",
+                                 "detail": str(e)[:300]})
+        finally:
+            hb2_stop.set()
 
     # ---- 提交（自动过 L1-L3）----
     # 先确认租约还在自己手上且没被回收重置（长任务安全）
@@ -416,7 +471,7 @@ def cmd_run(a):
         log(f"并行跑 {len(targets)} 张：{', '.join(targets)}", "step")
         with ThreadPoolExecutor(max_workers=min(a.parallel, len(targets))) as ex:
             futs = {ex.submit(run_one, t, a.engine, a.seat, a.model, a.effort,
-                              a.dry_run, a.panel, True): t for t in targets}
+                              a.dry_run, a.panel, True, a.consult): t for t in targets}
             for f in as_completed(futs):
                 t = futs[f]
                 try:
@@ -435,7 +490,8 @@ def cmd_run(a):
             log(f"[{rounds}/{a.max}] 处理 {target}", "step")
             results.append((target, run_one(target, a.engine, a.seat, a.model,
                                             a.effort, a.dry_run, panel=a.panel,
-                                            use_worktree=False)))
+                                            use_worktree=False,
+                                            consult_spec=a.consult)))
             if a.dry_run:
                 break
 
@@ -575,6 +631,9 @@ def main():
     s.add_argument("--model", default=None)
     s.add_argument("--effort", default=None)
     s.add_argument("--max", type=int, default=5, help="最多处理几张卡")
+    s.add_argument("--consult", default=None,
+                   help='点对点评审席（初稿→评审→再改一轮）：'
+                        '"b1:opencode:claudecodesale/claude-opus-5-5,b2:qoderclicn:"')
     s.add_argument("--parallel", type=int, default=1,
                    help="并行数（>1 时每卡一个 git worktree）；建议 2-3，引擎会抢资源")
     s.add_argument("--dry-run", action="store_true")
