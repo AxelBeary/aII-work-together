@@ -244,6 +244,57 @@ Set-Content -Path "$HOME\.board-human.tok" -Value "human-only" -NoNewline
 
 ---
 
+## 跨会话留言（agent 之间传话）
+
+```bash
+board msg send --to w1 --from b1 --body "契约第三段改为 30 天"
+board msg inbox --as w1                  # 对方干活前收信（默认标已读）
+board msg ls --as w1 --limit 10          # ●＝还没读过
+board msg thread 12                      # 整条线
+board msg reply-to 12 --kind answer --body "..."   # 接上那句（send 时用 --reply-to 12）
+board msg wake 12 --wake-engine opencode --wake-session ses_xxx
+board msg states                         # 唤醒记录：DISPATCHED / DELIVERED / HELD / FAILED
+```
+
+| 语义 | 怎么落地 |
+|---|---|
+| 只增不改 | `messages` 表**没有** UPDATE/DELETE 接口；已读另记 `msg_reads` |
+| 可寻址 | 单调 `seq`；`--reply-to <seq>` 接任何一条 |
+| 唤不醒就说唤不醒 | 没有 sessionID ⇒ `HELD` + 退出码 **2**（不是 0） |
+| 不重发 | 已 `DELIVERED` 的直接拒；`DISPATCHED` 35 分钟内拒；要重发必须 `--force` |
+
+- 退出码：`0` 已投递 / `2` 已存但没唤醒 / `3` 没成。
+- 唤醒＝拿 `--wake-session` 续一次那个会话；它答完的内容自动写成 `kind=answer`、`reply_to` 指回原 seq。
+- 编排器开工自动收信（`orchestrator.py run` 开头就 drain 一遍并标已读）。
+
+## 桌面壳（一个窗口，没有浏览器）
+
+```cmd
+shell\build.cmd                     :: 编译（改过壳才要跑）
+shell\boardshell.exe                :: 直接开
+shell\boardshell.exe --selftest     :: 无界面自检（真起内核 + 回读 DOM）
+shell\boardshell.exe --port=8778    :: 换端口
+```
+
+- 单实例：再双击一次只是把已有窗口叫回前台。
+- 窗口位置会记住（`board/shell.txt`）。
+- 快捷键：`F5`/`Ctrl+R` 刷新，`Ctrl + / - / 0` 缩放，`F11` 最大化切换，`Ctrl+`` 开合终端；`F12` 只在 `--devtools` 时可用。
+- ⛔ 它不是浏览器：没有地址栏、没有标签、外部链接一律丢给系统默认浏览器。
+
+## 内置终端（白名单）
+
+界面底部抽屉（`Ctrl+``）。能跑：
+
+| 形状 | 例子 |
+|---|---|
+| 看板命令 | `board ls` / `board stats` / `board msg inbox --as w1` |
+| 编排 | `orch run --max 1` |
+| 自检 | `check --quick` |
+| 自己写的脚本 | `py tools/term.py "board stats"`（只允许 `tools/`、`tests/` 下的） |
+| 只读 git | `git status` / `git log -5` |
+
+⛔ 不经过 shell：管道、重定向、`&&` 一律拒绝（按空格切成数组直接执行）。`board rm` 与 `board human` 不在白名单——删卡、拍板必须走界面按钮或令牌。
+
 ## 出问题查这个
 
 ```

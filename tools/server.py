@@ -368,6 +368,79 @@ def api_run_log(q):
     return {"running": _run_state["running"], "log": ""}
 
 
+# ---------- 留言 + 内置终端（窗口里直接能用的两条）----------
+
+def api_messages(q):
+    """留言列表 + 某个身份还有多少未读。"""
+    _switch(q.get("project", [None])[0])
+    import messages as M
+    st = B._store()
+    to = q.get("to", [None])[0]
+    who = q.get("as", [None])[0]
+    limit = int(q.get("limit", ["50"])[0])
+    msgs = st.messages(to=to, limit=limit)
+    read = st.read_seqs(who) if who else set()
+    out = []
+    for m in msgs:
+        d = {k: m.get(k) for k in ("seq", "at", "sender", "recipient",
+                                   "kind", "body", "reply_to")}
+        d["unread"] = bool(who and m["recipient"] == who and m["seq"] not in read)
+        w = st.last_wake(m["seq"])
+        d["wake"] = (w or {}).get("state")
+        out.append(d)
+    counts = {}
+    for m in st.messages(limit=2000):
+        counts[m["recipient"]] = counts.get(m["recipient"], 0) + 1
+    unread = {who2: len([m for m in st.messages(limit=2000)
+                         if m["recipient"] == who2
+                         and m["seq"] not in st.read_seqs(who2)])
+              for who2 in counts}
+    return {"messages": out, "unread": unread, "total": sum(counts.values())}
+
+
+def api_message_send(body):
+    _switch(body.get("project"))
+    import messages as M
+    st = B._store()
+    msg = M.send(st, body.get("from") or "human", body.get("to") or "",
+                 body.get("body") or "", kind=body.get("kind") or "note",
+                 reply_to=body.get("reply_to") or None)
+    return {"ok": True, "message": msg}
+
+
+def api_message_ack(body):
+    _switch(body.get("project"))
+    st = B._store()
+    seq = int(body.get("seq") or 0)
+    if not st.message(seq):
+        raise ValueError(f"留言不存在：#{seq}")
+    fresh = st.mark_read(seq, body.get("as") or "human")
+    return {"ok": True, "fresh": fresh}
+
+
+def api_term_tail(q):
+    import term
+    since = int(q.get("since", ["0"])[0])
+    return term.tail(since)
+
+
+def api_term_run(body):
+    import term
+    project = body.get("project")
+    cwd = None
+    if project:
+        cwd = str(_resolve(project))
+    ok, detail = term.run(body.get("cmd") or "", cwd=cwd)
+    if not ok:
+        raise ValueError(detail)
+    return {"ok": True, "kind": detail, "state": term.state()}
+
+
+def api_term_stop(body):
+    import term
+    return {"ok": term.stop()}
+
+
 # ---------- HTTP ----------
 
 class PoolHTTPServer(ThreadingHTTPServer):
@@ -434,6 +507,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/card": api_card,
             "/api/cost": api_cost,
             "/api/run/log": api_run_log,
+            "/api/messages": api_messages,
+            "/api/term/tail": api_term_tail,
         }
         fn = routes.get(u.path)
         if not fn:
@@ -454,7 +529,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw)
         except Exception:
             return self._json({"error": "请求体不是 JSON"}, 400)
-        routes = {"/api/card": api_create, "/api/human": api_human, "/api/run": api_run}
+        routes = {"/api/card": api_create, "/api/human": api_human,
+                  "/api/run": api_run,
+                  "/api/messages": api_message_send,
+                  "/api/messages/ack": api_message_ack,
+                  "/api/term/run": api_term_run,
+                  "/api/term/stop": api_term_stop}
         fn = routes.get(u.path)
         if not fn:
             return self._json({"error": "not found"}, 404)

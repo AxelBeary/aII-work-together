@@ -147,6 +147,47 @@ def main():
            == {"D-001": "demo", "E-001": "demo2"},
            str({c["id"]: c["project"] for c in got}))
 
+        # 9 留言（跨会话传话）：形状 + 未读计数 + 已读
+        code, m = call("/api/messages", {"project": str(PROJ), "from": "b1",
+                                         "to": "w1", "body": "契约测试留言"})
+        ok("发留言返回 seq", code == 200 and m.get("message", {}).get("seq") == 1,
+           f"HTTP {code} seq={m.get('message', {}).get('seq')}")
+        code, box = call(f"/api/messages?project={PROJ}&as=w1&limit=10")
+        ok("/api/messages 带 unread 标记与未读计数",
+           code == 200 and box["messages"][0]["unread"] is True
+           and box["unread"].get("w1") == 1,
+           f"unread={box['unread']}")
+        ok("留言带 wake 字段（界面上要看唤醒结果）",
+           "wake" in box["messages"][0], str(box["messages"][0].get("wake")))
+        code, ack = call("/api/messages/ack", {"project": str(PROJ), "seq": 1, "as": "w1"})
+        ok("标已读生效", code == 200 and ack.get("fresh") is True)
+        code, box = call(f"/api/messages?project={PROJ}&as=w1&limit=10")
+        ok("已读后未读清零", box["unread"].get("w1") == 0, f"{box['unread']}")
+
+        # 10 内置终端：白名单 + 输出能取回
+        code, t = call("/api/term/run", {"project": str(PROJ), "cmd": "board stats"})
+        ok("终端能起一条白名单命令", code == 200 and t.get("ok"), f"HTTP {code}")
+        got, rc = [], None
+        for _ in range(120):
+            code, tail = call("/api/term/tail?since=0")
+            got = tail.get("lines", [])
+            if not tail.get("running"):
+                rc = tail.get("rc")
+                break
+            time.sleep(0.25)
+        text = "\n".join(l["text"] for l in got)
+        ok("终端输出取得到（含结束与退出码）",
+           "结束" in text and rc == 0, f"{len(got)} 行 rc={rc}")
+        ok("终端行号单调（界面靠 since 追）",
+           [l["n"] for l in got] == list(range(1, len(got) + 1)),
+           f"n={got[0]['n'] if got else '-'}..{got[-1]['n'] if got else '-'}")
+        code, err = call("/api/term/run", {"cmd": "del /f /s /q C:\\"})
+        ok("终端拒绝白名单外的命令", code == 400 and "白名单" in err.get("error", ""),
+           err.get("error", "")[:40])
+        code, err = call("/api/term/run", {"cmd": "board stats | more"})
+        ok("终端拒绝 shell 语法（不是 shell）",
+           code == 400 and "shell" in err.get("error", ""), err.get("error", "")[:40])
+
         print(f"\n{'=' * 50}")
         if fails:
             print(f"✗ 未通过：{'、'.join(fails)}")

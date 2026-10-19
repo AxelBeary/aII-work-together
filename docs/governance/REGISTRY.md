@@ -167,3 +167,26 @@
 | 复核席跑错目录（整盘搜的根因） | `tools/orchestrator.py` | 已修 | 复核/专家团改用卡片工作区；提示词禁止整盘搜索 |
 
 规模：`tools/`＋`tests/` 共 24 个 py 文件 ≈ 295 KB；闸门 **12 道**、回归 **24 条**。
+
+### 跨会话留言 + 桌面壳 + 内置终端（2026-10-20 第二轮收工批次）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 留言内核（append-only + 唤醒语义） | `tools/messages.py` | 已实现 | 闸 16 条；HELD 退出码 2 实测；「已回复不重发」实测挡住第二次投递 |
+| 唤醒工作者 | `tools/msgwake.py` | 已实现 | 真跑：续 opencode 会话 → 回答写成 `#6`/`#7`（重复唤醒的教训见 E-29） |
+| 命令 `board msg` | `tools/cli.py`（27 子命令） | 已实现 | `send/ls/inbox/ack/thread/wake/states` 七动作全通 |
+| 留言存储三表 | `tools/storage.py`（`messages`/`msg_reads`/`msg_wakes`） | 已实现 | **无 UPDATE/DELETE 接口**；已读另记一表（append-only） |
+| 开工收信 | `tools/orchestrator.py`（`cmd_run` 开头） | 已实现 | 沙箱实测：`📬 开工收信：1 条给 auto-worker（共 1 条，已标已读）` |
+| 留言闸 | `tests/test_messages.py`（16 条） | PASS | 已接入 `check.py`（现 **13 道闸**） |
+| 留言接口 | `server.py`（`/api/messages`、`/api/messages/ack`）＋ `ui.html`（留言抽屉） | 已实现 | 界面契约测试 25 条全过（含 unread 计数与 ack 归零） |
+| 内置终端（白名单） | `tools/term.py` | 已实现 | `board stats` 输出可取回、退出码 0；`del` 与 `\|` 均被拒（人话报错） |
+| 终端接口 | `server.py`（`/api/term/run`、`/api/term/tail`、`/api/term/stop`） | 已实现 | 行号单调 1..8；一次只许跑一条 |
+| 界面终端抽屉 | `tools/ui.html`（底部 dock，`Ctrl+\`` 开合） | 已实现 | 界面语法闸 15,744 字符过；页面内 5 列 + 抽屉均在 |
+| **桌面壳** | `shell/BoardShell.cs` + `shell/build.cmd` | 已实现 | `--selftest` PASS（真起内核、DOM 回读 `cols=5 term=true msg=true`）；`--shot` 34.9 KB；真窗截图 45.8 KB |
+| 壳的 vendored 依赖 | `shell/*.dll`（WebView2 1.0.4258.31） | 已入库 | 682/38/190 KB；来源与许可见 `shell/VENDOR.md` |
+| 一键启动改走壳 | `open-board.cmd`、`tray/BoardTray.cs` | 已改 | 壳在就用壳，没有退回浏览器 |
+| 坑记录 | `docs/governance/ENVIRONMENT.md` | 已写 | **E-28**（WebView2 五坑）、**E-29**（唤醒两点） |
+| 拍板 | `docs/governance/DECISIONS.md` | 已记 | **D-014** 留言、**D-015** 桌面壳 |
+
+规模：`tools/`＋`tests/` 共 **28** 个 py 文件；闸门 **13 道**、回归 **24 条**、留言 16 条、界面契约 25 条。
+未验：壳的托盘菜单/最小化行为**只能人手点**；窗口与终端抽屉的**人眼观感**已出图但未由用户确认。

@@ -24,8 +24,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .btn-ok:hover:not(:disabled){background:#25753f}
 .btn-err{background:#5f1d1d;color:#ffd0d0}
 .btn-err:hover:not(:disabled){background:#7a2626}
-header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);
-  background:var(--panel);position:sticky;top:0;z-index:10;flex-wrap:wrap}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);
+  background:var(--panel);position:sticky;top:0;z-index:10;flex-wrap:nowrap}
+#proj{max-width:220px}
+#projinfo{max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header button{padding:8px 14px;white-space:nowrap}
 h1{font-size:16px;font-weight:600}
 .sub{color:var(--mut);font-size:12px}
 .spacer{flex:1}
@@ -84,6 +87,45 @@ label:first-child{margin-top:0}
   font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;
   max-height:240px;overflow:auto;color:#a9b4c4}
 .pill{display:inline-block;padding:2px 9px;border-radius:20px;background:#252b35;font-size:11px;color:#a9b4c4}
+
+/* ---- 留言 ---- */
+.badge{display:none;background:var(--acc);color:#06121f;font-weight:700;border-radius:20px;
+  padding:0 6px;margin-left:7px;font-size:11px}
+.badge.on{display:inline-block}
+.msglist{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:10px;
+  background:#11141a;padding:6px;margin-bottom:6px}
+.msg{border-bottom:1px solid #1f242c;padding:9px 8px}
+.msg:last-child{border-bottom:none}
+.msg .mh{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--mut)}
+.msg .mh b{color:var(--acc);font-weight:600}
+.msg .mb{margin-top:4px;font-size:13px;white-space:pre-wrap;word-break:break-word}
+.msg.unread{background:#151d28;border-left:2px solid var(--acc);border-radius:6px}
+.msg .ma{float:right;font-size:11px;padding:3px 9px;border-radius:6px;background:#252b35;color:#a9b4c4;cursor:pointer}
+.msg .wake{font-size:10px;color:#7f8a99;border:1px solid #2a303a;border-radius:20px;padding:0 7px}
+
+/* ---- 内置终端 ---- */
+.term{position:fixed;left:0;right:0;bottom:0;height:320px;background:#0b0d11;
+  border-top:1px solid var(--line);display:flex;flex-direction:column;z-index:40;
+  box-shadow:0 -12px 40px #000a}
+.term.hide{display:none}
+.term .thead{display:flex;align-items:center;gap:8px;padding:7px 12px;
+  border-bottom:1px solid var(--line);background:var(--panel)}
+.term .thead b{font-size:12px;font-weight:600}
+.term .thead button{padding:4px 10px;font-size:12px;border-radius:6px}
+.term .tout{flex:1;overflow:auto;margin:0;padding:10px 14px;font-family:ui-monospace,Consolas,monospace;
+  font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:#a9b4c4}
+.term .tout .ok{color:#3fb950}
+.term .tout .err{color:#f85149}
+.term .tout .head{color:#5aa9ff}
+.term .tin{display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border-top:1px solid var(--line);background:var(--panel)}
+.term .tin .ps{color:var(--acc);font-family:ui-monospace,Consolas,monospace}
+.term .tin input{flex:1;border:none;background:transparent;font-family:ui-monospace,Consolas,monospace;
+  font-size:12px;padding:4px 0}
+.term .tin input:focus{border:none}
+body.term-on main{padding-bottom:340px}
+body.term-on .toast{bottom:340px}
+
 </style>
 </head>
 <body>
@@ -93,6 +135,8 @@ label:first-child{margin-top:0}
   <select id="proj" title="切换项目"></select>
   <span class="sub" id="projinfo"></span>
   <div class="spacer"></div>
+  <button class="btn" id="btn-msg">留言<span class="badge" id="msg-badge"></span></button>
+  <button class="btn" id="btn-term" title="Ctrl+` 开合">终端</button>
   <button class="btn" id="btn-refresh">刷新</button>
   <button class="btn" id="btn-run">跑一轮</button>
   <button class="btn-primary" id="btn-new">+ 新建任务</button>
@@ -160,6 +204,46 @@ label:first-child{margin-top:0}
     <button class="btn-primary" id="btn-run-start">开始</button>
   </div>
 </dialog>
+
+<dialog id="dlg-msg">
+  <div class="dhead"><h2 style="font-size:15px">留言</h2>
+    <span class="sub">跨会话传话：存住就存住，唤不醒会说唤不醒</span>
+    <div class="spacer"></div>
+    <input id="msg-as" placeholder="以谁的身份" style="width:120px" title="你是哪个席号">
+  </div>
+  <div class="dbody">
+    <div class="msglist" id="msg-list"><div class="empty">—</div></div>
+    <div class="row">
+      <div><label>发给</label><input id="msg-to" placeholder="w1 / b1 / human" style="width:100%"></div>
+      <div><label>回复哪条（可选）</label><input id="msg-reply" placeholder="留言号，如 12" style="width:100%"></div>
+    </div>
+    <label>正文</label>
+    <textarea id="msg-body" placeholder="一句话说清要对方做什么；需要它回话就把问题写明"></textarea>
+    <div class="hint">对方下次干活前跑 <code>board msg inbox --as 席号</code> 就能看到；
+      想让它在自己的会话里当场接着答，发送时要带会话号（命令行 <code>--wake-session</code>）。</div>
+  </div>
+  <div class="dfoot">
+    <button class="btn" id="btn-msg-refresh">刷新</button>
+    <button class="btn" onclick="dlgMsg.close()">关闭</button>
+    <button class="btn-primary" id="btn-msg-send">发送</button>
+  </div>
+</dialog>
+
+<section class="term hide" id="term">
+  <div class="thead">
+    <b>终端</b><span class="sub" id="term-state">空闲</span>
+    <div class="spacer"></div>
+    <button class="btn" data-cmd="board stats">状态</button>
+    <button class="btn" data-cmd="board all">全部项目</button>
+    <button class="btn" data-cmd="check --quick">自检</button>
+    <button class="btn" data-cmd="orch run --max 1">跑一张</button>
+    <button class="btn" id="term-clear">清屏</button>
+    <button class="btn" id="term-close">收起</button>
+  </div>
+  <pre class="tout" id="term-out"></pre>
+  <div class="tin"><span class="ps">❯</span>
+    <input id="term-in" placeholder="board ls ｜ board msg inbox --as w1 ｜ check --quick（↑ ↓ 翻历史）"></div>
+</section>
 
 <div class="toast" id="toast"></div>
 
@@ -413,7 +497,148 @@ $("btn-run-start").onclick = async () => {
   }catch(e){ toast(e.message, true); }
 };
 
+/* ---------- 留言（跨会话传话）---------- */
+const dlgMsg = $("dlg-msg");
+let MSG_AS = localStorage.getItem("board.as") || "human";
+$("msg-as").value = MSG_AS;
+$("msg-as").onchange = e => { MSG_AS = (e.target.value||"human").trim(); localStorage.setItem("board.as", MSG_AS); loadMsgs(); };
+
+function setBadge(n){
+  const b = $("msg-badge");
+  b.textContent = n;
+  b.className = "badge" + (n ? " on" : "");
+  $("btn-msg").title = n ? `${n} 条等 ${MSG_AS} 看` : "没有新留言";
+}
+
+async function loadMsgs(){
+  try{
+    const d = await api("/api/messages" + q() + "&as=" + encodeURIComponent(MSG_AS) + "&limit=40");
+    setBadge(d.unread && d.unread[MSG_AS] || 0);
+    const list = (d.messages||[]).slice().reverse();
+    if(!list.length){ $("msg-list").innerHTML = '<div class="empty">还没有留言</div>'; return; }
+    $("msg-list").innerHTML = list.map(m => `
+      <div class="msg ${m.unread?"unread":""}">
+        <div class="mh"><b>#${m.seq}</b> ${esc(m.sender)} → ${esc(m.recipient)}
+          ${m.reply_to?`<span>↳#${m.reply_to}</span>`:""}
+          ${m.wake?`<span class="wake">${esc(m.wake)}</span>`:""}
+          <span style="margin-left:auto">${esc((m.at||"").slice(5,16))}</span>
+          ${m.unread?`<span class="ma" data-ack="${m.seq}">标已读</span>`:""}
+        </div>
+        <div class="mb">${esc(m.body).slice(0,700)}</div>
+      </div>`).join("");
+    document.querySelectorAll("[data-ack]").forEach(el =>
+      el.onclick = async () => {
+        try{
+          await api("/api/messages/ack", {method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({project: CUR.project, seq: Number(el.dataset.ack), as: MSG_AS})});
+          loadMsgs();
+        }catch(e){ toast(e.message, true); }
+      });
+    document.querySelectorAll(".msg").forEach(el =>
+      el.onclick = e => {
+        if(e.target.dataset.ack) return;
+        const no = el.querySelector(".mh b").textContent.replace("#","");
+        $("msg-reply").value = no;
+      });
+  }catch(e){ toast("读留言失败：" + e.message, true); }
+}
+
+$("btn-msg").onclick = () => { dlgMsg.showModal(); loadMsgs(); };
+$("btn-msg-refresh").onclick = loadMsgs;
+$("btn-msg-send").onclick = async () => {
+  const to = ($("msg-to").value||"").trim();
+  const body = ($("msg-body").value||"").trim();
+  if(!to) return toast("要写发给谁", true);
+  if(!body) return toast("正文空了", true);
+  try{
+    const r = await api("/api/messages", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project: CUR.project, from: MSG_AS, to, body,
+                            reply_to: $("msg-reply").value ? Number($("msg-reply").value) : null})});
+    $("msg-body").value = ""; $("msg-reply").value = "";
+    toast("已存为 #" + r.message.seq + "（对方下次干活跑 inbox 就能看到）");
+    loadMsgs();
+  }catch(e){ toast(e.message, true); }
+};
+
+async function pollBadge(){
+  if(dlgMsg.open){ await loadMsgs(); return; }
+  try{
+    const d = await api("/api/messages" + q() + "&as=" + encodeURIComponent(MSG_AS) + "&limit=1");
+    setBadge(d.unread && d.unread[MSG_AS] || 0);
+  }catch(e){}
+}
+
+/* ---------- 内置终端 ---------- */
+let TERM_SINCE = 0, termTimer = null, termRunning = false, MSG_TERM_OPEN = false;
+const HISTORY = []; let histPos = -1;
+
+function termEl(){ return $("term-out"); }
+function termAppend(l){
+  const out = termEl();
+  const near = out.scrollTop + out.clientHeight >= out.scrollHeight - 40;
+  const span = document.createElement("span");
+  span.className = l.kind || "out";
+  span.textContent = l.text + "\n";
+  out.appendChild(span);
+  if(near) out.scrollTop = out.scrollHeight;
+}
+async function termPoll(){
+  try{
+    const d = await api("/api/term/tail?since=" + TERM_SINCE);
+    (d.lines||[]).forEach(termAppend);
+    TERM_SINCE = d.next || TERM_SINCE;
+    termRunning = !!d.running;
+    $("term-state").textContent = d.running ? "运行中… " + (d.cmd||"") :
+      (d.rc == null ? "空闲" : "上一条退出码 " + d.rc);
+    if(!d.running && !MSG_TERM_OPEN) stopTermPoll();
+  }catch(e){}
+}
+function startTermPoll(){ if(!termTimer) termTimer = setInterval(termPoll, 600); }
+function stopTermPoll(){ if(termTimer){ clearInterval(termTimer); termTimer = null; } }
+function termToggle(force){
+  const el = $("term");
+  const open = force != null ? force : el.classList.contains("hide");
+  el.classList.toggle("hide", !open);
+  document.body.classList.toggle("term-on", open);
+  MSG_TERM_OPEN = open;
+  if(open){ startTermPoll(); termPoll(); $("term-in").focus(); }
+  else if(!termRunning) stopTermPoll();
+}
+async function termRun(cmd){
+  cmd = (cmd||"").trim();
+  if(!cmd) return;
+  HISTORY.push(cmd); histPos = HISTORY.length;
+  $("term-in").value = "";
+  try{
+    await api("/api/term/run", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project: CUR.project === "__all__" ? null : CUR.project, cmd})});
+    startTermPoll();
+  }catch(e){ termAppend({kind:"err", text:"✗ " + e.message}); }
+}
+$("btn-term").onclick = () => termToggle();
+$("term-close").onclick = () => termToggle(false);
+$("term-clear").onclick = () => { termEl().innerHTML = ""; };
+document.querySelectorAll("#term [data-cmd]").forEach(b =>
+  b.onclick = () => { termToggle(true); termRun(b.dataset.cmd); });
+$("term-in").onkeydown = e => {
+  if(e.key === "Enter"){ termRun($("term-in").value); }
+  else if(e.key === "ArrowUp" && HISTORY.length){
+    histPos = Math.max(0, histPos - 1); $("term-in").value = HISTORY[histPos] || "";
+    e.preventDefault();
+  }
+  else if(e.key === "ArrowDown" && HISTORY.length){
+    histPos = Math.min(HISTORY.length, histPos + 1);
+    $("term-in").value = HISTORY[histPos] || "";
+    e.preventDefault();
+  }
+};
+document.addEventListener("keydown", e => {
+  if(e.ctrlKey && (e.key === "`" || e.code === "Backquote")){ e.preventDefault(); termToggle(); }
+});
+
 refresh().then(startPoll);
+setInterval(pollBadge, 10000);
+pollBadge();
 </script>
 </body>
 </html>

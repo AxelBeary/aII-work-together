@@ -63,7 +63,7 @@ def main():
     subs = ["init", "project", "open", "add", "new", "publish", "ready", "ls",
             "show", "claim", "beat", "block", "submit", "verify", "review",
             "human", "reclaim", "audit", "doctor", "html", "overview",
-            "inbox", "all", "stats", "cost", "rm"]
+            "inbox", "all", "stats", "cost", "rm", "msg"]
     smoke_bad = []
     for s in subs:
         p = subprocess.run([PY, "tools/board.py", s, "--help"], cwd=str(ROOT),
@@ -135,6 +135,11 @@ def main():
     ok, _ = run("点对点评审", [PY, "tests/test_consult.py"])
     if not ok:
         fails.append("点对点评审")
+
+    # 4f 跨会话留言（append-only、唤醒不假报成功、不重发）
+    ok, _ = run("留言", [PY, "tests/test_messages.py"])
+    if not ok:
+        fails.append("留言")
 
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])

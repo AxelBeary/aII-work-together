@@ -90,6 +90,42 @@ CREATE TABLE IF NOT EXISTS lease_log (
   at_ms    INTEGER,
   detail   TEXT
 );
+
+-- ⭐ 跨会话留言（吸收 ocs 的语义，2026-10-20）：append-only + 单调 seq。
+--    ⚠️ 本表**没有** UPDATE / DELETE 接口，只允许 INSERT —— 历史不可改。
+--        已读状态也不改这张表，另开 msg_reads 追加。
+CREATE TABLE IF NOT EXISTS messages (
+  seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        TEXT,
+  at_ms     INTEGER,
+  sender    TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  kind      TEXT DEFAULT 'note',
+  body      TEXT NOT NULL,
+  reply_to  INTEGER,
+  meta      TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(recipient, seq);
+CREATE INDEX IF NOT EXISTS idx_messages_re ON messages(reply_to);
+
+CREATE TABLE IF NOT EXISTS msg_reads (
+  seq     INTEGER NOT NULL,
+  reader  TEXT NOT NULL,
+  at      TEXT,
+  at_ms   INTEGER,
+  PRIMARY KEY (seq, reader)
+);
+
+-- 唤醒记录：SENT＝已投递到对方会话 / HELD＝存下了但唤不醒 / FAILED＝试过失败
+-- ⛔ 不允许把 HELD 说成成功（ocs 的核心语义）
+CREATE TABLE IF NOT EXISTS msg_wakes (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  seq     INTEGER NOT NULL,
+  state   TEXT NOT NULL,
+  at      TEXT,
+  at_ms   INTEGER,
+  detail  TEXT
+);
 """
 
 
@@ -361,6 +397,92 @@ class Store:
             rows = self._read_conn().execute(
                 "SELECT * FROM lease_log ORDER BY id").fetchall()
         return [dict(r) for r in rows]
+
+    # ---------- 跨会话留言（append-only）----------
+
+    def append_message(self, sender, recipient, body, kind="note",
+                       reply_to=None, meta=None):
+        """只增不改。seq 由 SQLite AUTOINCREMENT 保证单调。"""
+        meta = dict(meta or {})
+        with self.write() as c:
+            cur = c.execute(
+                "INSERT INTO messages(at,at_ms,sender,recipient,kind,body,reply_to,meta) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (_ts(), _now_ms(), sender, recipient, kind, body, reply_to,
+                 json.dumps(meta, ensure_ascii=False)))
+            seq = cur.lastrowid
+        return self.message(seq)
+
+    def message(self, seq):
+        r = self._read_conn().execute("SELECT * FROM messages WHERE seq=?",
+                                      (seq,)).fetchone()
+        return self._row_to_message(r) if r else None
+
+    @staticmethod
+    def _row_to_message(r):
+        d = dict(r)
+        try:
+            d["meta"] = json.loads(d.get("meta") or "{}")
+        except Exception:
+            d["meta"] = {}
+        return d
+
+    def messages(self, to=None, frm=None, limit=50, since=None, reply_to=None):
+        sql = "SELECT * FROM messages WHERE 1=1"
+        args = []
+        if to:
+            sql += " AND recipient=?"
+            args.append(to)
+        if frm:
+            sql += " AND sender=?"
+            args.append(frm)
+        if reply_to is not None:
+            sql += " AND reply_to=?"
+            args.append(reply_to)
+        if since:
+            sql += " AND seq>?"
+            args.append(int(since))
+        sql += " ORDER BY seq DESC LIMIT ?"
+        args.append(int(limit))
+        rows = self._read_conn().execute(sql, args).fetchall()
+        return [self._row_to_message(r) for r in reversed(rows)]
+
+    def mark_read(self, seq, reader):
+        """已读＝往 msg_reads 追加一行（不改 messages 本身）。返回是否新增。"""
+        with self.write() as c:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO msg_reads(seq,reader,at,at_ms) VALUES(?,?,?,?)",
+                (seq, reader, _ts(), _now_ms()))
+            return cur.rowcount > 0
+
+    def reads(self, reader=None):
+        if reader:
+            rows = self._read_conn().execute(
+                "SELECT * FROM msg_reads WHERE reader=? ORDER BY seq", (reader,)).fetchall()
+        else:
+            rows = self._read_conn().execute("SELECT * FROM msg_reads ORDER BY seq").fetchall()
+        return [dict(r) for r in rows]
+
+    def read_seqs(self, reader):
+        return {r["seq"] for r in self.reads(reader)}
+
+    def record_wake(self, seq, state, detail=""):
+        with self.write() as c:
+            c.execute("INSERT INTO msg_wakes(seq,state,at,at_ms,detail) VALUES(?,?,?,?,?)",
+                      (seq, state, _ts(), _now_ms(), detail))
+        return state
+
+    def wakes(self, seq=None):
+        if seq is not None:
+            rows = self._read_conn().execute(
+                "SELECT * FROM msg_wakes WHERE seq=? ORDER BY id", (seq,)).fetchall()
+        else:
+            rows = self._read_conn().execute("SELECT * FROM msg_wakes ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    def last_wake(self, seq):
+        w = self.wakes(seq)
+        return w[-1] if w else None
 
     # ---------- 证据 ----------
 

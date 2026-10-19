@@ -2,11 +2,21 @@
 
 > **单人／小团队用的多 agent 编排看板**：让本机所有 AI agent 在同一块板上分工协作，全程可追责。
 
-## 最快的用法：右下角托盘
+## 最快的用法：桌面窗口（双击桌面上的「看板」）
 
-双击 `tray\tray.cmd` → 右下角出现「板」图标 → 双击打开网页看板，右键可「跑一轮」。
+`open-board.cmd` 会启动 **桌面壳**：自己的图标、自己的窗口、**没有地址栏和标签页**。
 
-原生 C# 壳（14 KB），**不是 Electron**。详见 [`docs/托盘.md`](docs/托盘.md)。
+- 壳＝C# + WebView2（复用系统 Edge 内核），产物 `shell\boardshell.exe` 几十 KB，**不是 Electron**。
+- 窗口里什么都有：看板 + **内置终端**（底部抽屉，`Ctrl+`` 开合）+ **留言**（跨会话传话）。
+- **最小化 / 关闭都收进托盘**；双击托盘图标回来，真要退出走托盘右键菜单。
+- 壳没编译过会自动退回「托盘 + 默认浏览器」。
+
+```cmd
+shell\build.cmd                    :: 编译壳（要改壳才需要跑）
+shell\boardshell.exe --selftest    :: 无界面自检：真起内核、真加载页面、回读 DOM
+```
+
+托盘仍在：`tray\tray.cmd` → 右下角「板」图标 → 双击打开看板。
 
 ## 三分钟上手（命令行）
 ```bash
@@ -60,6 +70,25 @@ board -p other-project ls                   # 切到别的项目
 
 **零配置**：在任意目录直接跑 `board add ...`，它会自动把当前目录当项目、自动建看板、自动登记。
 
+## 跨会话留言（agent 之间传话）
+
+```bash
+board msg send --to w1 --from b1 --body "契约第三段改为 30 天"   # 存住，得号 #12
+board msg inbox --as w1          # 对方干活前收信（标已读）
+board msg ls --as w1             # 看全部（●＝没读过）
+board msg reply-to 12 --body "..."   # 用 --reply-to 12 接上那一句
+board msg wake 12 --wake-engine opencode --wake-session ses_xxx  # 让它当场续会话答
+```
+
+- **只保证「存住了」**：唤不醒就如实写 `HELD`（退出码 2），绝不把「存下」说成「送到」。
+- **不重发**：已回复过的拒绝再投（防对方答两遍、防重复扣费）。
+- 编排器开工会自动收信：`orchestrator.py run` 启动时先把 `--seat` 的留言打出来并标已读。
+
+## 内置终端（白名单，不是 shell）
+
+界面右下角「终端」按钮或 `Ctrl+`` 打开。能跑：`board …` / `orch …` / `check …` / `py tools|tests/xxx.py` / 只读 `git`。
+⛔ 管道、重定向、`&&` 一律拒绝（不经过 shell，按空格切数组直执行）；`board rm` / `board human` 不在白名单（拍板要走界面按钮或令牌）。
+
 ## 并行（可选，默认串行）
 
 ```bash
@@ -79,9 +108,10 @@ python tools/check.py --quick  # 跳过真调模型的
 单独跑也行：
 
 ```bash
-python tests/run_regression.py          # 23 条回归
+python tests/run_regression.py          # 24 条回归
 python tests/run_regression.py --break  # 反向测试：故意改坏必须被抓
 python tests/test_resume.py             # 断点续跑
+python tests/test_messages.py           # 留言：append-only / 唤不醒要说 / 不重发
 python tools/board.py audit             # 有没有绕过 CLI 手改
 python tools/board.py doctor            # 体检（残留租约/worktree/断链）
 python tools/board.py doctor --fix      # 自动清理可修项
@@ -101,7 +131,12 @@ python tools/board.py doctor --fix      # 自动清理可修项
 | `tools/orchestrator.py` | 自主编排 |
 | `tools/resume.py` | 断点续跑 |
 | `tools/parallel.py` | worktree 并行 |
-| `tools/check.py` | 一条命令跑完全部自检 |
+| `tools/messages.py` | 跨会话留言（append-only + 唤醒语义） |
+| `tools/msgwake.py` | 唤醒工作者（续会话并把回答写成回复留言） |
+| `tools/term.py` | 窗口内置终端（白名单执行） |
+| `tools/server.py` + `tools/ui.html` | 本地界面（看板 + 终端 + 留言） |
+| `shell/BoardShell.cs` | 桌面壳（WebView2，单 exe） |
+| `tools/check.py` | 一条命令跑完全部自检（13 道闸） |
 
 零依赖，Python 3.9+。
 

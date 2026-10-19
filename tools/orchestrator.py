@@ -453,6 +453,20 @@ def cmd_run(a):
         a.model = E.DEFAULT_MODELS.get("opencode")
         log(f"opencode 未指定模型 → 用默认 {a.model}", "warn")
 
+    # 开工先收信：跨会话留言没有推送通道，靠「每次干活前先看一眼」送到
+    try:
+        import messages as M
+        picked, total = M.inbox(B._store(), a.seat, limit=10, ack=True)
+        if picked:
+            log(f"📬 开工收信：{len(picked)} 条给 {a.seat}（共 {total} 条，已标已读）", "step")
+            for m in picked:
+                body = (m.get("body") or "").replace("\n", " ")
+                log(f"  #{m['seq']} {m['sender']} → 我：{body[:160]}", "info")
+        elif getattr(a, "verbose", False):
+            log(f"收信：{a.seat} 没有新留言（共 {total} 条）", "info")
+    except Exception as e:                        # noqa: BLE001
+        log(f"收信箱读不了（不挡干活）：{e}", "warn")
+
     results = []
 
     def pick(limit):
@@ -524,7 +538,10 @@ def cmd_run(a):
 
     # 收工：必须报度量（AGENTS.md §7 第 4 条）
     try:
-        _append_ledger(a, results)
+        if getattr(a, "dry_run", False):
+            log("dry-run：不写度量台账（没真干活，不该占一行）", "info")
+        else:
+            _append_ledger(a, results)
     except Exception as e:
         log(f"度量台账写入失败：{e}", "warn")
 
@@ -538,8 +555,14 @@ def cmd_run(a):
 
 
 def _append_ledger(a, results):
-    """把本轮派工追加到 DELEGATION-LEDGER.md（治理收工动作）。"""
-    path = ROOT / "docs" / "governance" / "DELEGATION-LEDGER.md"
+    """把本轮派工追加到 DELEGATION-LEDGER.md（治理收工动作）。
+
+    ⚠️ 写给**当前项目**，不是写给工具目录：多项目下若固定在工具根，
+       替别人跑一轮会把账记到本项目头上（2026-10-20 实测：沙箱项目 dry-run
+       往本仓台账追加了一行「部分 0/0」）。
+       当前项目没有治理台账就跳过——别代它记账。
+    """
+    path = B.ROOT / "docs" / "governance" / "DELEGATION-LEDGER.md"
     if not path.exists():
         return
     ok_n = sum(1 for _, o in results if o == "done")

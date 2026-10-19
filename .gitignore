@@ -29,5 +29,13 @@ board/tray.log
 # 托盘程序是编译产物（源码在 tray/BoardTray.cs）
 tray/boardtray.exe
 
+# 桌面壳：可执行是编译产物（源码在 shell/BoardShell.cs）；三个 DLL 是 vendored 依赖，要进库
+shell/boardshell.exe
+# WebView2 的用户数据目录、窗口位置、截图（本机运行产物）
+board/webview2/
+*.WebView2/
+board/shell.txt
+board/shots/
+
 # 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
 .opencode/memory/

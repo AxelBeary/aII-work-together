@@ -204,6 +204,17 @@ namespace BoardTray
 
         static void OpenBoard()
         {
+            // 优先用桌面壳（自带图标/无地址栏）；壳没编译过就退回浏览器
+            try
+            {
+                var shell = Path.Combine(_projectDir, "shell", "boardshell.exe");
+                if (File.Exists(shell))
+                {
+                    Process.Start(new ProcessStartInfo(shell) { UseShellExecute = true });
+                    return;
+                }
+            }
+            catch { }
             EnsureServer();
             try { Process.Start(new ProcessStartInfo(BaseUrl) { UseShellExecute = true }); }
             catch (Exception ex) { Balloon("打不开浏览器", ex.Message); }

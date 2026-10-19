@@ -7,7 +7,7 @@
 
 ## 一、一句话现状
 
-**能用了。** 看板（网页 + 托盘 + 桌面快捷方式）、自主编排、点对点评审、多项目，全部跑通并有闸门守着。
+**能用了，而且现在是一个真正的桌面应用。** 桌面壳（WebView2 单 exe，无地址栏）＋ 内置终端 ＋ 跨会话留言 ＋ 看板 ＋ 托盘 ＋ 点对点评审 ＋ 多项目，全部跑通并有闸门守着。
 剩下的是「没做」而不是「没做完」——见 §五。
 
 ---
@@ -15,10 +15,10 @@
 ## 二、五分钟跑起来
 
 ```cmd
-看板.lnk                              :: 桌面快捷方式：起托盘 + 开网页
-python tools/check.py --quick         :: 12 道闸（约 1 分钟）
+看板.lnk                              :: 桌面快捷方式：开桌面壳（壳自己起后端）
+python tools/check.py --quick         :: 13 道闸（约 1 分半）
 python tools/check.py --perf          :: 再加规模压测（轻量 20×15）
-orch run --max 3                      :: 让 agent 自己找活干
+orch run --max 3                      :: 让 agent 自己找活干（开工会先收留言）
 orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2:opencode:opencode-go/deepseek-v4.1-flash@faithful"
 ```
 
@@ -35,8 +35,13 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 | `tools/consult.py` | **点对点评审**：评审席只准看、改后核对 |
 | `tools/orchestrator.py` | 自主编排（认领 → 执行 → 评审 → 修改 → 提交 → 复核） |
 | `tools/engines.py` | 引擎适配（回执解析、会话续接、用量） |
-| `tools/server.py` + `tools/ui.html` | 本地网页界面（127.0.0.1:8777） |
-| `tools/cli.py` | 26+ 子命令 |
+| `tools/server.py` + `tools/ui.html` | 本地网页界面（127.0.0.1:8777）；含终端抽屉 + 留言抽屉 |
+| `tools/messages.py` | **跨会话留言**：append-only + 唤醒语义（抄 ocs 的四条，换掉传输层） |
+| `tools/msgwake.py` | 唤醒工作者：拿 sessionID 续会话，把回答写成回复留言 |
+| `tools/term.py` | **窗口内置终端**：白名单执行、一次一条、输出进环形缓冲 |
+| `shell/BoardShell.cs` | **桌面壳**：WebView2 单 exe（`shell\build.cmd` 编译）；`VENDOR.md` 记 vendored 依赖 |
+| `shell/boardshell.exe` | 编译产物（不进库）；`--selftest` / `--shot` 无界面自检 |
+| `tools/cli.py` | 27 子命令 |
 | `tray/BoardTray.cs` | C# 托盘（编译约 14.8 KB，非 Electron） |
 | `tools/make_icon.py` | 代码画图标（纯标准库） |
 | `assets/board.ico` | 托盘与快捷方式共用图标 |
@@ -59,9 +64,9 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 | ③ 认领即租约 | `leases.card_id` 主键；执行期后台心跳；`guard_holder` | R01、R21 |
 | ④ 完成必须异会话 | 复核席 == 执行席直接拒 | R10 |
 
-**当前数字**：闸门 **12 道**（语法 / 子命令烟测 / 界面语法 / 回归 / 反向测试 / 断点续跑 /
-多项目 / 并发隔离 / 接口契约 / 点对点评审 / 审计 / 体检），回归 **24 条**，
-`tools/`＋`tests/` 共 24 个 py 文件 ≈ 295 KB。
+**当前数字**：闸门 **13 道**（语法 / 子命令烟测 / 界面语法 / 回归 / 反向测试 / 断点续跑 /
+多项目 / 并发隔离 / 接口契约 / 点对点评审 / **留言** / 审计 / 体检），回归 **24 条**，
+`tools/`＋`tests/` 共 28 个 py 文件；界面契约 25 条；留言闸 16 条。
 
 ---
 
@@ -74,9 +79,11 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 | 3 | 无跨机同步 | 假设同一台机器 |
 | 4 | 托盘图标 / 桌面快捷方式**未被人点过** | 会往桌面弹东西，只能用户自己双击验证 |
 | 5 | `ui.html` 内联 JS 未转 TS | 转 TS 要引构建步骤，破坏零依赖，待拍板 |
-| 6 | 未吸收 `ocs` 的跨会话消息 | 见 §七 |
+| 6 | ~~未吸收 `ocs` 的跨会话消息~~ | **已做（D-014）**：语义抄全、传输换成「续会话唤醒」；见 `tools/messages.py` |
 | 7 | 改后核对只**记录**未改条数，不强制再改 | 有界设计，防无限循环；未改条数显示在看板上 |
 | 8 | 评审意见没有「必改/可选」分级 | 全局一致性（人称/时态）容易被「不要整篇重写」挡掉——实测栽过一次 |
+| 9 | 壳：无边框自绘标题栏未做 | 用户未选；现在是 Win11 原生边框 + 暗色标题栏（D-015） |
+| 10 | 壳的托盘菜单 / 最小化行为**未被人手验过** | 会弹桌面物，只能用户自己点；`--selftest` 只证明了「能起、能渲染、DOM 对」 |
 
 ---
 
@@ -97,10 +104,15 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 ## 七、下一步最值得做的（按价值排）
 
 1. **评审意见分级**（§五 #8）：让评审席输出 `MUST-FIX` / `OPTIONAL`，修改轮只许忽略 OPTIONAL。这能直接解决「人称混用改不掉」那类问题。
-2. **吸收 `ocs` 的跨会话消息**：`leeguooooo/open-cross-session`（MIT，纯 TS，90 个 .ts）解决唯一没做的协作维度——跨会话发消息并**唤醒**对方。
-   - 值得抄：append-only JSONL + 单调 seq；`wake: HELD` 语义（送达被拦要明说）；退出码分档且**一律不重发**。
-   - ⚠️ 它依赖常驻会话的唤醒通道（Claude socket / Codex IPC）。我们的引擎是「起进程等结果」，短生命周期 ⇒ **不能直接照搬**。
-3. **`ui.html` 内联 JS 转 TS**：需要引入构建步骤，与「零依赖双击就能跑」冲突，需拍板。
+2. **壳的人手验收**（§五 #10）：托盘菜单、最小化/关闭收托盘、Ctrl+` 开终端 —— 这些只能你自己点。
+3. **留言的「推送」**：现在是「开工先收信」（`orchestrator.py` 启动时 drain）。真正推送要常驻进程，用户明确暂不做守护进程。
+4. **`ui.html` 内联 JS 转 TS**：需要引入构建步骤，与「零依赖双击就能跑」冲突，需拍板。
+
+### 已做（本轮新增）
+
+- **跨会话留言**（D-014）：`messages.py` / `msgwake.py` / `board msg …` / `/api/messages*` / 界面「留言」抽屉。抄 ocs 四条语义，传输换成「续会话唤醒」（`--session` 续接），唤不醒记 HELD。
+- **桌面壳**（D-015）：`shell/`（WebView2 单 exe）、`open-board.cmd` 优先走壳、托盘「打开看板」优先走壳。
+- **内置终端**：`tools/term.py` + `/api/term/*` + 界面底部抽屉（`Ctrl+`` 开合）。白名单、不走 shell、一次一条。
 
 ---
 

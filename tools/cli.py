@@ -1119,6 +1119,128 @@ def cmd_open(a):
             pass
 
 
+# ---------- 跨会话留言（吸收 ocs 语义）----------
+
+def _seat_default():
+    return (os.environ.get("ABOARD_SEAT") or "").strip() or "human"
+
+
+def cmd_msg(a):
+    """跨会话留言：send / ls / inbox / ack / thread / wake。"""
+    import messages as M
+
+    st = B._store()
+    sender = (a.sender or "").strip() or _seat_default()
+    act = a.action
+
+    if act == "send":
+        body = a.body or ""
+        if body == "-":
+            body = sys.stdin.read()
+        if not body.strip():
+            B.die("正文空了（--body \"...\" 或 --body - 从标准输入读）")
+        meta = {}
+        if a.wake:
+            for k, v in (("wake_engine", a.wake_engine),
+                         ("wake_model", a.wake_model),
+                         ("wake_session", a.wake_session)):
+                if v:
+                    meta[k] = v
+            meta["wake_cwd"] = str(B.WORKSPACE)
+        try:
+            msg = M.send(st, sender, a.to, body, kind=a.kind,
+                         reply_to=a.reply_to, meta=meta)
+        except ValueError as e:
+            B.die(str(e))
+        if a.json:
+            print(M.dumps(msg))
+        else:
+            B.ok(f"已存为 #{msg['seq']}：{sender} → {a.to}"
+                 + (f"（回复 #{a.reply_to}）" if a.reply_to else ""))
+        if not a.wake:
+            return 0
+        state, detail = M.wake(st, msg["seq"], engine=a.wake_engine,
+                               model=a.wake_model, session=a.wake_session,
+                               force=a.force)
+        print(f"  唤醒：{state} ｜ {detail}")
+        if state == M.ST_DISPATCHED:
+            return 0
+        return M.EXIT_HELD if state == M.ST_HELD else M.EXIT_ERROR
+
+    if act == "ls":
+        msgs = st.messages(to=a.to, frm=a.sender, limit=a.limit, since=a.since)
+        if a.json:
+            print(json.dumps(msgs, ensure_ascii=False))
+            return 0
+        if not msgs:
+            print("（没有留言）")
+            return 0
+        read = st.read_seqs(a.as_seat) if a.as_seat else None
+        for m in msgs:
+            print(M.fmt(m, reader=a.as_seat, read_seqs=read))
+        return 0
+
+    if act == "inbox":
+        me = a.as_seat or _seat_default()
+        picked, total = M.inbox(st, me, limit=a.limit, ack=not a.no_ack,
+                               only_unread=not a.all)
+        if a.json:
+            print(json.dumps({"as": me, "unread": picked, "total": total},
+                             ensure_ascii=False))
+            return 0
+        if not picked:
+            if not a.quiet:
+                print(f"✓ {me} 没有新留言（共 {total} 条）")
+            return 0
+        print(f"📬 {me} 的留言：{len(picked)} 条新（共 {total} 条）")
+        for m in picked:
+            print(f"{'─'*60}")
+            print(M.fmt(m))
+        if not a.no_ack:
+            print(f"\n（已标记为已读：{len(picked)} 条）")
+        return 0
+
+    if act == "ack":
+        me = a.as_seat or _seat_default()
+        if not a.seq:
+            B.die("ack 要给留言号：board msg ack 12")
+        m = st.message(int(a.seq))
+        if not m:
+            B.die(f"留言不存在：#{a.seq}")
+        fresh = st.mark_read(int(a.seq), me)
+        B.ok(f"#{a.seq} 已标记为 {me} 已读" + ("" if fresh else "（本来就已读）"))
+        return 0
+
+    if act == "thread":
+        line = M.thread(st, int(a.seq or 0))
+        if not line:
+            B.die(f"留言不存在：#{a.seq}")
+        for m in line:
+            print(M.fmt(m))
+            print()
+        return 0
+
+    if act == "wake":
+        if not a.seq:
+            B.die("wake 要给留言号：board msg wake 12")
+        state, detail = M.wake(st, int(a.seq), engine=a.wake_engine,
+                               model=a.wake_model, session=a.wake_session,
+                               force=a.force)
+        print(f"  唤醒：{state} ｜ {detail}")
+        return 0 if state == M.ST_DISPATCHED else (
+            M.EXIT_HELD if state == M.ST_HELD else M.EXIT_ERROR)
+
+    if act == "states":
+        rows = st.wakes(int(a.seq) if a.seq else None)
+        if not rows:
+            print("（还没有唤醒记录）")
+        for r in rows:
+            print(f"#{r['seq']:<4} {r['state']:<10} {r['at'][:19]}  {r['detail'][:70]}")
+        return 0
+
+    B.die(f"未知动作：{act}")
+
+
 def main():
     p = argparse.ArgumentParser(
         prog="board",
@@ -1312,6 +1434,30 @@ def main():
     s.add_argument("--refresh", action="store_true", help="跳过缓存重新扫描")
     s.set_defaults(f=cmd_all)
 
+    s = sub.add_parser("msg", help="💬 跨会话留言（send/ls/inbox/ack/thread/wake）")
+    s.add_argument("action", choices=["send", "ls", "inbox", "ack", "thread",
+                                      "wake", "states"])
+    s.add_argument("seq", nargs="?", help="留言号（ack/thread/wake/states 用）")
+    s.add_argument("--to", help="收件人（席号/会话名/human）")
+    s.add_argument("--body", help="正文；写 - 则从标准输入读")
+    s.add_argument("--from", dest="sender", help="发件人（默认取 ABOARD_SEAT 或 human）")
+    s.add_argument("--as", dest="as_seat", help="以谁的身份收/标已读（inbox/ack/ls）")
+    s.add_argument("--reply-to", type=int, help="回复哪一条（留言号）")
+    s.add_argument("--kind", default="note", choices=["note", "ask", "answer", "wake"])
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--since", type=int, help="只看比这个号新的")
+    s.add_argument("--all", action="store_true", help="inbox 连已读一起列")
+    s.add_argument("--no-ack", action="store_true", help="inbox 只读不标已读")
+    s.add_argument("--quiet", action="store_true", help="inbox 没新留言时不吭声")
+    s.add_argument("--json", action="store_true", help="机器可读输出")
+    s.add_argument("--wake", action="store_true",
+                   help="存完立刻唤醒对方（需要 --wake-session）")
+    s.add_argument("--wake-engine", help="唤醒用哪个引擎（opencode/qoderclicn/…）")
+    s.add_argument("--wake-model", help="唤醒用哪个模型")
+    s.add_argument("--wake-session", help="唤醒要续接的会话 ID")
+    s.add_argument("--force", action="store_true", help="wake 允许重发（默认不重发）")
+    s.set_defaults(f=cmd_msg)
+
     a = p.parse_args()
 
     # 多项目解析：--root > --project > 自动向上找 > 当前目录
@@ -1334,7 +1480,9 @@ def main():
         return cmd_bare(a)
     if a.cmd == "inbox" and getattr(a, "all", False):
         return cmd_inbox_all(a)
-    a.f(a)
+    rc = a.f(a)
+    if isinstance(rc, int) and rc:      # 留言的退出码分档：0/2/3（见 messages.py）
+        sys.exit(rc)
 
 
 if __name__ == "__main__":

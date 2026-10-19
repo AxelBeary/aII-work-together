@@ -51,6 +51,7 @@
 | `src/` | 本体代码 | 工兵席（一文件一写者） |
 | `tests/` | 闸门与回归 | 工兵席写、复核席跑 |
 | `tools/` | 一次性脚本／内部工装 | 工兵席 |
+| `shell/` | 桌面壳（WebView2 单 exe）＋ vendored 依赖 | 工兵席；改完必跑 `shell\build.cmd` 与 `--selftest` |
 | `logs/` | 运行日志（默认 gitignore） | 运行件自己写 |
 
 ---
@@ -91,6 +92,10 @@
 
 - `engines.run(..., session_id=...)` **续同一个会话**，上下文全在（实测：第一轮记 42，第二轮答 42）。
 - `subagent.follow_up(...)` 可追问，不用重述背景。
+- **跨会话传话用 `board msg`**（D-014）：`send / inbox / ack / thread / wake`。
+  - 送达语义是**存住**；「唤醒」＝拿 sessionID 续一次会话（`--wake-session`），唤不醒记 `HELD` 且退出码 2，⛔ 不许把「存下」说成「送到」。
+  - **一律不重发**：已回复过的不再投递（防对方答两遍、防重复扣费）。
+  - 每个 agent 开工前先 `board msg inbox --as <席号>`（`orchestrator.py run` 已自动做）。
 - ⛔ **不得假设每次调用都是全新上下文**——这正是「续跑钥匙＝sessionID」的落地。
 
 > 详细用法见 `docs/usage.md`；引擎实测状态见 `docs/governance/ENVIRONMENT.md` E-11。

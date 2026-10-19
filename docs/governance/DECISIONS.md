@@ -242,3 +242,36 @@
 - 依据：全局规则「进新项目先查该项目 AGENTS.md 与治理层」；本项目此前无任何纪律文件。
 - 影响面：所有后续会话与派工。
 - 状态：**已拍板**（用户可随时推翻，推翻走新条）
+
+---
+
+## D-014 · 跨会话留言：吸收 ocs 的语义，不搬它的传输（**已拍板** 2026-10-20）
+
+- 日期：2026-10-20
+- 议题：`HANDOFF` §五 #6 记着「未吸收 ocs 的跨会话消息」。用户 2026-10-20：**要**。
+- 结论：抄**语义四条**，换掉**传输一层**。
+  - 抄：① append-only ＋ 单调 seq（`--reply-to <seq>` 任何会话可寻址）；② `wake: HELD`（送达被拦要明说）；③ 退出码分档 `0 已投递 / 2 已存但唤不醒 / 3 没成`；④ **一律不重发**（按 seq 查，不靠重试灌重复）。
+  - 换：ocs 靠常驻会话的唤醒通道（Claude socket / Codex IPC）；我们是「起进程等结果」，所以**唤醒＝拿 sessionID 续一次会话**（`opencode --session` / `qoderclicn --resume`），它答完的内容自动写成 `kind=answer`、`reply_to` 指回原 seq 的留言。没有 sessionID ⇒ 记 HELD，退出码 2。
+- 落地：`tools/messages.py`、`tools/msgwake.py`、`board msg send|ls|inbox|ack|thread|wake|states`、存储两张 append-only 表（`messages` / `msg_reads` + `msg_wakes`）、闸 `tests/test_messages.py`（16 条）。
+- 依据（实测，2026-10-20 56 分～58 分）：同一段流程跑通首存 → 收件箱 → 已读 → 回复链路；HELD 路径退出码 2 实测；「已回复过不重发」挡住第二次投递。
+- 影响面：`storage.py`（新增三表，无 UPDATE/DELETE 接口）、`cli.py`（新增 `msg`）、`server.py`（`/api/messages*`）、界面（留言抽屉）。
+- 已声明的边界：只保证「留言按 seq 存住了」；对方看没看只能靠它自己 `inbox`/`ack`。**同一条留言不要重复 wake**（实测重复投递会多出一条重复回复）。
+- 状态：**已拍板**
+
+---
+
+## D-015 · 桌面壳：WebView2 单 exe，终端融进同一窗口，最小化到托盘（**已拍板** 2026-10-20）
+
+- 日期：2026-10-20
+- 议题：用户「浏览器有点 low，不要 electron，要优雅要高效；终端也融合到一个窗口；做好最小化到托盘」。
+- 结论：
+  - 壳＝**C# WinForms + WebView2**（系统 Evergreen 运行时，Win11 自带），编译链与托盘同一套 `csc.exe`，产物 `shell/boardshell.exe`（几十 KB）。⛔ 不引 Electron／Tauri／Node／Rust／MSBuild。
+  - 窗口＝Win11 原生边框 + 暗色标题栏（DWM 属性改成页面同色，⛔ 不自绘边框，避免缩放手感问题）。
+  - 终端＝**页面底部抽屉**，不是另开黑窗口；后端 `tools/term.py` 白名单执行、一次一条、输出走环形缓冲 ＋ `board/term.log`。
+  - 最小化/关闭＝收进托盘；托盘双击回来；真要退出走托盘菜单。
+- 依据（实测 2026-10-20）：
+  - `--selftest` 无界面自检 PASS：真起 WebView2、加载页面、回读 DOM（`cols=5`、`term=true`、`msg=true`）。
+  - `--shot` 出图 34.9 KB；`--shot --visible` 真开窗口出图 45.8 KB（人已授权一次）。
+- 影响面：`shell/`（新）、`open-board.cmd`、`tray/BoardTray.cs`（打开看板优先走壳）、`tools/term.py`、`server.py`（`/api/term/*`）、`tools/ui.html`（终端抽屉 + 留言抽屉）。
+- 未做 / 未证：无边框自绘标题栏未做（用户未选）；壳的**托盘菜单**与人手点击未验（会弹桌面物，只能用户自己点）。
+- 状态：**已拍板**

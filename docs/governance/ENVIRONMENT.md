@@ -371,3 +371,61 @@ python tests/bench_scale.py 60 40       # 重规模，机器闲时再跑
 **暂定处置**：评审提示里明确要求删掉这类注释（评审席这次确实点了出来，说明评审能兜住）；根治要改闸门口径——**改闸门前先留档旧件**（全局规则 17），所以不在本轮动。
 
 **规矩**：以后设计任何「必须包含 X」的闸，先问一句：**这句话会把什么不该出现的东西逼进产物里？**
+
+---
+
+## E-28 · WebView2 桌面壳的五个坑（2026-10-20，实测逐条）
+
+**背景**：`shell/BoardShell.cs` 用 `csc.exe`（C# 5）编 net462 的 WebView2 封装。下列每条都是先踩后记。
+
+1. **`Main` 必须 `[STAThread]`**。否则 `CoreWebView2Environment.CreateAsync` 抛 `AggregateException` → 内层 `0x80010106 RPC_E_CHANGED_MODE`（"无法更改线程模式"）。
+2. **`EnsureCoreWebView2Async` 返回后 `wv.CoreWebView2` 仍可能是 null**。Task 完成 ≠ 属性已赋值（实测 probe 第一次就栽在这，后面 `wv.CoreWebView2.NavigationCompleted += ...` 直接 NRE）。⇒ 必须 pump 消息循环等到非空：
+   ```csharp
+   Pump(delegate { return wv.CoreWebView2 != null; }, 20000);
+   ```
+3. **WinForms 的 `WebView2` 控件不暴露 `CoreWebView2Controller`**（只有 Core 版才有 `AcceleratorKeyPressed`）。所以 F5 / Ctrl+R / 缩放 / F12 这些快捷键要在**消息循环**层拦：
+   ```csharp
+   Application.AddMessageFilter(new KeyFilter());   // 拦 0x100/0x104
+   ```
+   ⛔ 别再去找 `View.CoreWebView2Controller`，编译期就是 CS1061。
+4. **无界面自检怎么算「真的渲染了」**：`Form.Opacity = 0` 的真窗口 + `CoreWebView2.CapturePreviewAsync` / `ExecuteScriptAsync` 回读 DOM。这比「进程起来了」强得多，且人看不见。
+   ⚠️ `/target:winexe` 没有控制台：自检输出要么 `AttachConsole(-1)` 挂到父控制台，要么写文件（本项目的 `board/shell-selftest.log`）。
+5. **`ExecuteScriptAsync` 回的是 JSON 字符串字面量**：里面的引号是 `\"` 转义。直接 `raw.Contains("\"term\":true")` **永远为 false**（本席第一版就误判成「终端没挂上」）。⇒ 先 `raw.Replace("\\\"", "\"")` 再判定。
+   另：`SetForegroundWindow` 对非前台进程常被系统拒绝，要截「带标题栏的整窗图」得先 `TopMost = true`，否则截到的是压在它上面的窗口。
+
+**可复跑**：
+```cmd
+shell\build.cmd
+shell\boardshell.exe --selftest
+shell\boardshell.exe --shot=board\shots\x.png            :: 0 透明度，人看不见
+shell\boardshell.exe --shot=board\shots\x.png --visible  :: 真开窗口（要人同意）
+```
+
+---
+
+## E-29 · 唤醒会话的两个反直觉点（2026-10-20，实测）
+
+1. **`opencode --session <不存在的 id>` 不报错，它会用这个 id 新建一个会话**。实测 `ses_bogus_999` 直接成了真实会话 id（模型自己回「本会话的 id 就是 ses_bogus_999」）。
+   ⇒ 「续上了没有」**不能只看退出码/`ok`**；跨会话唤醒时的 sessionID 必须是**真的从那个会话里抄来的**，别自己编。
+2. **重复唤醒会产生重复回复**。同一留言 wake 两次，实测落了 `#6`、`#7` 两条一模一样的答复。
+   ⇒ 已加守卫：`DELIVERED` 一律不重发；`DISPATCHED` 35 分钟内不重发；要重发必须 `--force`（`tools/messages.py`）。
+   **这对应 ocs 的「一律不重发」——不是礼貌，是防重复扣费＋防对方答两遍。**
+
+---
+
+## E-30 · 在同一个 shell 会话里设 `ABOARD_REGISTRY_DIR` 会毒到后面的自检（2026-10-20 实测）
+
+**现象**：沙箱测完紧接着跑 `python tools/check.py --quick`，**回归库**整道闸变红；单独跑 `tests/run_regression.py` 又是 24/24 全过。
+
+**根因**：`$env:ABOARD_REGISTRY_DIR` 一旦在当前 shell 里设上，后面**同一个 shell 里的所有命令**都继承它。于是 check.py 里的测试拿到的是一份「已经登记过沙箱项目」的注册表 ⇒ 那些假设「注册表干净」的用例挂了。
+（同类坑：`$env:ABOARD_SEAT` 也会漏进子进程，只是目前没人断言它。）
+
+**规矩**：跑自检前**先清**隔离变量，或者干脆一条命令一个 shell：
+
+```powershell
+Remove-Item Env:ABOARD_REGISTRY_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:ABOARD_SEAT -ErrorAction SilentlyContinue
+python tools/check.py --quick
+```
+
+**判据**：闸红了先看是不是自己污染的环境，**别急着改代码**——「单独跑能过、合起来跑不过」八成是环境串味。
