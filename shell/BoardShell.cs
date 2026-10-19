@@ -50,6 +50,76 @@ namespace BoardShell
         [DllImport("kernel32.dll")]
         static extern bool AttachConsole(int dwProcessId);
 
+        // 让后端「跟着壳一起死」：壳被强杀（任务管理器/卡死）时，子进程不会变孤儿占着 8777。
+        // 靠 Job Object 的 KILL_ON_JOB_CLOSE，比在退出路径里 Kill() 靠谱（崩了也有兜底）。
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateJobObject(IntPtr a, string name);
+        [DllImport("kernel32.dll")]
+        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll")]
+        static extern bool SetInformationJobObject(IntPtr job, int infoClass,
+                                                   IntPtr info, int len);
+
+        const int JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+        const int JobObjectExtendedLimitInformation = 9;
+        static IntPtr _job = IntPtr.Zero;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JobBasicLimit
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public int LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public int ActiveProcessLimit;
+            public IntPtr Affinity;
+            public int PriorityClass;
+            public int SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JobIoCounters
+        {
+            public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount,
+                         ReadTransferCount, WriteTransferCount, OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JobExtendedLimit
+        {
+            public JobBasicLimit BasicLimitInformation;
+            public JobIoCounters IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        static void TieToMe(Process p)
+        {
+            try
+            {
+                if (_job == IntPtr.Zero)
+                {
+                    _job = CreateJobObject(IntPtr.Zero, null);
+                    if (_job == IntPtr.Zero) return;
+                    var info = new JobExtendedLimit();
+                    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    int len = Marshal.SizeOf(typeof(JobExtendedLimit));
+                    IntPtr buf = Marshal.AllocHGlobal(len);
+                    try
+                    {
+                        Marshal.StructureToPtr(info, buf, false);
+                        SetInformationJobObject(_job, JobObjectExtendedLimitInformation, buf, len);
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+                }
+                AssignProcessToJobObject(_job, p.Handle);
+            }
+            catch { }        // 拿不到也没关系：正常退出路径照样 Kill()
+        }
+
         static void Say(string line)
         {
             // winexe 没有自己的控制台：挂到父控制台上，同时留一份进日志（
@@ -563,6 +633,7 @@ namespace BoardShell
                 };
                 Server = Process.Start(psi);
                 StartedServer = true;
+                TieToMe(Server);              // 壳死了，后端跟着死（不留孤儿占端口）
                 var logPath = Path.Combine(ProjectDir, "board", "ui-server.log");
                 Hook(Server.StandardOutput, logPath);
                 Hook(Server.StandardError, logPath);

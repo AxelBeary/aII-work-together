@@ -483,6 +483,8 @@ static async void InitView()
 于是「自检全绿、双击卡死」。⇒ **自检必须和真实路径共用同一段代码**：现在自检走的就是 `BuildWindow(true) + InitView()`，
 只把窗口设成 0 透明度。⛔ 以后加自检别另起炉灶。
 
-**附带两条**：
+**附带三条**：
 - 出错**不要弹模态框**（弹框把窗口挡住，用户只会觉得「卡死」）——现在是把原因写进窗口里（`ShowErrorPanel`）。
 - 卡死的那个进程会**占着 `board/webview2` 用户数据目录**，之后每次启动都初始化失败；先 `Stop-Process -Name boardshell` 再试。
+- **壳被强杀后，它起的后端会变孤儿**（`Start-Process` 的子进程不随父进程死，实测：杀掉卡死的壳，`python server.py --port 8777` 还在）。
+  已用 **Job Object + KILL_ON_JOB_CLOSE** 兜住：实测强杀壳后 `listener8777=False`、孤儿进程 0。
