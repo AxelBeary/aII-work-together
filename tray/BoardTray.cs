@@ -105,7 +105,15 @@ namespace BoardTray
 
         static Icon MakeIcon()
         {
-            // 运行时画一个图标（不依赖外部 .ico 文件）
+            // 优先用 assets/board.ico（和桌面快捷方式是同一张图，视觉一致）
+            try
+            {
+                var p = Path.Combine(_projectDir, "assets", "board.ico");
+                if (File.Exists(p)) return new Icon(p, new Size(32, 32));
+            }
+            catch { }
+
+            // 退路：运行时画一个图标（不依赖外部文件）
             int s = 32;
             using (var bmp = new Bitmap(s, s))
             using (var g = Graphics.FromImage(bmp))

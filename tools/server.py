@@ -422,6 +422,12 @@ class Handler(BaseHTTPRequestHandler):
             if not UI.exists():
                 return self._send(500, "ui.html 缺失", "text/plain; charset=utf-8")
             return self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
+        if u.path in ("/favicon.ico", "/assets/board.png"):
+            f = ROOT / "assets" / ("board.ico" if u.path == "/favicon.ico" else "board.png")
+            if f.exists():
+                ctype = "image/x-icon" if f.suffix == ".ico" else "image/png"
+                return self._send(200, f.read_bytes(), ctype)
+            return self._send(404, "", "text/plain; charset=utf-8")
         routes = {
             "/api/state": api_state,
             "/api/cards": api_cards,
