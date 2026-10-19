@@ -16,6 +16,7 @@ __pycache__/
 # 看板运行时数据（卡片是本地状态，不进库；产出物 artifacts 保留）
 board/cards/
 board/board.html
+board/.human-token.sha
 
 # 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
 .opencode/memory/
