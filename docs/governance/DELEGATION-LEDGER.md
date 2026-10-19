@@ -12,8 +12,9 @@
 | 2026-10-19 | 本机资产侦察 | 内派（宿主子代理 general ×1，模型 opencode-go/gpt-6-luna） | 成 | 1 | 0 | 否 | P3；4 引擎/18 映射/17 约束 |
 | 2026-10-19 | 首轮派工失败（免费模型被 IP 封禁） | 内派（宿主子代理 general ×3，默认免费模型） | 败 | 1 | 0 | 否 | 3 席全失败：`abusive traffic from this IP`；改指定付费模型后一次通过 |
 | 2026-10-19 | 架构期派工失败（3 次尝试） | 内派（子代理 ×3，gpt-6-luna → claude-sonnet-5-5 → opencode/deepseek） | 败 | 3 | 0 | 否 | 依次报 `region not supported`／`当前地区暂不支持`／`Insufficient account funds` |
-| 2026-10-19 | 架构期（D1 卡片模型与状态机） | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 进行中（后台） | — | — | 否 | 文件已在盘（46,833 字节），**待回执后亲验** |
-| 2026-10-19 | 架构期（D2 租约与验收判据） | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 进行中（后台） | — | — | 否 | 文件已在盘（45,112 字节），**待回执后亲验** |
+| 2026-10-19 | 架构期（D1 卡片模型与状态机） | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 成 | 1 | 0 | 否 | 61,114 字节；亲验 5 项计数全对；**主动报 2 条冲突而非放宽红线** |
+| 2026-10-19 | 架构期（D2 租约与验收判据） | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 成 | 1 | 0 | 否 | 45,375 字节；亲验字节/MD5/行数三项全一致 |
+| 2026-10-19 | 外部调研·三个指定产品 | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 成 | 1 | 0 | 否 | P4；四仓库 API 读数逐个复核一致；「毕方」未能证实，如实报 |
 | 2026-10-19 | 架构期（D3 Symphony 规格＋MAST 映射） | 内派（宿主子代理 general ×1，`opencode-go/deepseek-v4.1-flash`） | 成 | 1 | 0 | 否 | 38,102 字节；自报计数已核（8 机制／14 失效／13 输入） |
 
 ## 引擎与模型表现观察（首批，供月度趋势表）

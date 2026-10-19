@@ -76,4 +76,28 @@
 3. **同一个模型可用性会漂**：`gpt-6-luna` 同一天内先可用后区域封禁 ⇒ **⛔ 不要把「刚才还能用」当稳态**，每次派工都要按回执判，失败即换。
 4. 失败会话 `sessionID` 会返回，但上下文已被污染，**重派比续跑划算**。
 
-**可复跑**：`tools.opencode.models({ provider: "opencode-go" })` 列出候选；派工时 `subagent` 带 `model: "opencode-go/deepseek-v4.1-flash"`。
+## E-09 · 「毕方」与「BitFun」不是同一件事（取证 2026-10-19，P4 实证）
+
+- 用户点名调查「毕方 BitFun」，但**两者没有公开关联**：
+  - `BitFun` ＝ `GCWing/OpenBitFun`（2,857★、MIT、桌面 agent 工作台）。
+  - 「毕方」＝ 广州实验室的科研多智能体平台（**无公开仓库、无许可**，仅媒体转述）。
+- **实测**：`GCWing/BitFun` 的 `README.zh-CN.md` 里「毕方」出现 **0 次**（同文件「BitFun」出现 22 次 ⇒ 尺是活的，非空跑）。
+- **教训**：**中文名与英文名撞在一起时，先证它们是一件事，再当一件事写**。⛔ 不得因为「用户这么叫」就合并成一个条目。
+- **可复跑**：
+  ```powershell
+  $t=(Invoke-WebRequest 'https://raw.githubusercontent.com/GCWing/BitFun/main/README.zh-CN.md' -UseBasicParsing).Content
+  ([regex]::Matches($t,'毕方')).Count   # 期望 0
+  ([regex]::Matches($t,'BitFun')).Count # 必须非零（22）
+  ```
+
+## E-10 · 首轮调研查到的三个「值得抄」的实件（取证 2026-10-19）
+
+| 件 | 是什么 | 为什么值得抄 |
+|---|---|---|
+| `openai/symphony` SPEC.md | Apache-2.0 的调度服务规格 | **唯一「规格级可抄」**：claim 防重复、并发上限、重试回收、状态对账、结构化日志；§17/§18 有 60+ 条断言可当回归库种子 |
+| `Wholiver/metis` | 403★ MIT，非看板 | **「完成即证据」做成了机械闸门**：G0–G7 收据状态机、`FALSE_COMPLETION_BLOCKED`（源码实测 G7 出现 45 次、该常量 1 次） |
+| `EKKOLearnAI/ekko-studio` | 11,471★，前身 Hermes Studio | 14 引擎同屏 + 看板 + 审批门 + 运行回放，**外壳最像我们要造的**；⚠️ 许可 **BSL-1.1**（非开源，2029 转 Apache） |
+
+⚠️ **反向警告（Metis 自评）**：其 32 个零分任务里 27 个是「跑了但跑错」，首因是**治理仪式吃掉产出**。⇒ **闸门别做成表演**。
+
+**可复跑**：`Invoke-RestMethod https://api.github.com/repos/<owner>/<repo>` 读 stars／license／pushed_at（⛔ 别信记忆里的数）。
