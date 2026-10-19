@@ -39,21 +39,33 @@ board human <卡号> --decision reject  --who owner --note "要改什么"
 
 ---
 
-## 多项目
-
-每个项目在自己目录下有 `board/`，数据跟项目走（可 git、可搬）。**每个项目还能指定工作区**（agent 干活的地方，可以和项目根不同）：
+## 多项目（团队 / 几十个项目）
 
 ```bash
-board project add /path/to/project --workspace /path/to/code   # 登记时指定
-board project default --workspace /path/to/code                # 之后改
-board project ls                                                # 所有项目 + 卡片数
-board -p other-project ls                                       # 切到别的项目
-board overview                                                  # 跨项目总览页
+board all                    # 🌐 跨项目总览：每个项目各状态几张
+board all --refresh          # 跳过 15 秒缓存
+board inbox --all            # 📥 所有项目里等你拍板的，汇总
+board -p 项目名 ls           # 切到某个项目
+board project add /路径      # 登记
+board project default --workspace /代码路径   # 每项目自己的工作区
 ```
 
-**零配置**：在任意目录直接跑 `board add ...`，它会自动把当前目录当项目、自动建看板、自动登记。
+**规模实测**：20 个项目 × 15 张卡 = 300 张，冷扫描 **0.21 秒**，缓存命中 0.0004 秒。
 
-**默认值**：项目级设一次引擎/模型/思考强度，之后建卡自动继承。
+### 跨项目编排
+
+```bash
+python tools/orchestrator.py run-all --max 3
+```
+
+它逐个项目找活、跑完再下一个；没活的项目自动跳过。
+Only 指定项目：`--only proj-a proj-b`
+
+### 多人
+
+- 每人一个 token：`~/.board-human-<你的名字>.tok`（用 `--who 你的名字`）
+- 归属记录进事件流：谁建的卡、谁拍的板、谁复核的
+- 也可用环境变量固定身份：`BOARD_USER=张三`
 
 ---
 

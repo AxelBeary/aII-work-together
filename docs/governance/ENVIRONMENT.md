@@ -91,7 +91,7 @@
   ([regex]::Matches($t,'BitFun')).Count # 必须非零（22）
   ```
 
-## E-11 · 四引擎无头调用实测（取证 2026-10-19，本项目现场复算）
+## E-10 · 四引擎无头调用实测（取证 2026-10-19，本项目现场复算）
 
 > 本表是**本项目现场实测**，不是技能转录。每次派工前按此复算。
 
@@ -117,7 +117,7 @@ qoderclicn -p "只回复两个字：可用" -o json --no-session-persistence
 "只回复两个字：可用" | codex exec --ephemeral --skip-git-repo-check --sandbox read-only -c approval_policy=never --json -
 ```
 
-## E-12 · opencode 默认模型池不可用（取证 2026-10-19）
+## E-11 · opencode 默认模型池不可用（取证 2026-10-19）
 
 - `opencode run` **不指定 `--model`** 时走免费池 → 返回：
   `FreeTierError: OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address`
@@ -125,7 +125,7 @@ qoderclicn -p "只回复两个字：可用" -o json --no-session-persistence
 - **处置**：编排器**必须强制给每个 opencode 任务指定模型**，默认钉 `opencode-go/deepseek-v4.1-flash`。
 - 同 E-08：子代理派工同样必须钉模型。
 
-## E-14 · 会话续接实测（取证 2026-10-19，本项目）
+## E-12 · 会话续接实测（取证 2026-10-19，本项目）
 
 **两个引擎都实测通过**：
 
@@ -149,7 +149,7 @@ qoderclicn -p "只回复两个字：可用" -o json --no-session-persistence
 python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run('qoderclicn','记住77'); r2=E.run('qoderclicn','刚才那个数？',session_id=r1.session_id); print(r2.text)"
 ```
 
-## E-15 · 原子认领必须用固定路径名（取证 2026-10-19，专家团抓出 + 本席复现）
+## E-13 · 原子认领必须用固定路径名（取证 2026-10-19，专家团抓出 + 本席复现）
 
 - **反例（已修的 bug）**：租约目录名写成 `L__<seat>__<engine>__<ms>__<uuid6>` ⇒ **每个进程创建的路径都不同**，`os.mkdir` 的 `FileExistsError` 永远不会触发，互斥退化成「先读后写」的 TOCTOU。
 - **实测**：12 线程抢同一张卡 → **3 个成功、3 个活跃租约**（红线③当场破）。
@@ -159,14 +159,14 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 
 **可复跑**：`python tools/_test_race.py`（临时件，已在收口时清理；复算口径见上）
 
-## E-16 · 「端到端跑通」不等于「防线有效」（取证 2026-10-19）
+## E-14 · 「端到端跑通」不等于「防线有效」（取证 2026-10-19）
 
 - 本项目在编排器**端到端成功**之后，派专家团审自己的代码，**又抓出 5 个真 bug**（红线③被破、返工死锁、空 token 放行、journal 可整份伪造、机器闸写死 True）。
 - **结论**：**跑通只证明「顺利路径能用」，不证明「异常路径挡得住」**。
 - **做法**：任何声称「有防线」的东西，必须配**攻击视角的反向测试**（并发、伪造、越权、空输入各来一次）；没有反向测试的防线一律按 `未证` 处理。
 - 这条与全局规则 §1「反向测试＝故意改坏一处必须被抓住」同源，此处是它的**实证**。
 
-## E-18 · 哈希链的能力边界（取证 2026-10-19，辩论中对方点出）
+## E-15 · 哈希链的能力边界（取证 2026-10-19，辩论中对方点出）
 
 - **能防**：手写插入一条事件、改动某条内容、删除中间行 → 链条断裂，`audit` 抓到。
 - **防不住**：**有权限的伪造者把整条链重算一遍**（无密钥哈希，`_hash = sha256(prev + body)` 谁都能算）。
@@ -175,13 +175,13 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 - **当前判断**：本机单用户场景下，**篡改可见已够用**——因为唯一的「攻击者」是 agent，而 agent 没有动机也没有必要做整链重算（它只要按 CLI 走就能通过）。
 - ⛔ **不得对外宣称「journal 不可篡改」**，只能说「可检测篡改」。
 
-## E-19 · 打桩测试 ≠ 真跑验证（取证 2026-10-19）
+## E-16 · 打桩测试 ≠ 真跑验证（取证 2026-10-19）
 
 - G2（辩论）与 G3（内置子代理）的单元测试**都通过**，但都是 `FakeEngine` / `E._exec` 打桩——只证明「参数拼对了、逻辑走通了」。
 - **真跑**才暴露兼容性：真辩论跑出 2 个独立 `ses_` 会话；`--agent plan/general` 真跑成功；`--agent nope` 真被拒。
 - **做法**：凡声称「兼容/可用」的功能，**至少要有一条真引擎的实跑证据**；只有打桩的一律标 `未证`。
 
-## E-20 · 三个「值得抄」的实件（取证 2026-10-19）
+## E-17 · 三个「值得抄」的实件（取证 2026-10-19）
 
 | 件 | 是什么 | 为什么值得抄 |
 |---|---|---|
@@ -193,13 +193,13 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 
 **可复跑**：`Invoke-RestMethod https://api.github.com/repos/<owner>/<repo>` 读 stars／license／pushed_at（⛔ 别信记忆里的数）。
 
-## E-22 · 拆代码的教训：渐进，不重写（取证 2026-10-19）
+## E-18 · 拆代码的教训：渐进，不重写（取证 2026-10-19）
 
 - `board.py` 一度 1099 行／44KB。**没有**一次性拆成完整包，而是按职责抽出 `render.py`（渲染）、`projects.py`（多项目）、`parallel.py`（并行），`board.py` 保留为 CLI 入口。
 - **理由**：一次性大重构会让回归基线失效、且无法二分定位回归来源；渐进拆每次只动一块，跑完 18 条回归即知有没有坏。
 - **做法固化**：拆一个模块 → 立即跑 `run_regression.py` + `--break` → 绿了才继续下一块。
 
-## E-23 · 多项目与并行实测（取证 2026-10-19）
+## E-19 · 多项目与并行实测（取证 2026-10-19）
 
 **多项目**：
 - 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
@@ -211,7 +211,29 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 - **冲突检测实测**：两张卡都产出 `board/artifacts/same.md` ⇒ 后到的判 `conflict`，**未覆盖**先到的；先到的正常完成。
 - ⚠️ worktree 依赖 git；无 git 或仓库无提交时退化为「目录副本」，隔离性弱但仍不互踩。
 
-## E-24 · opus 评审抓出的 3 个真缺陷（取证 2026-10-20）
+## E-20 · SQLite 迁移的两个真 bug（取证 2026-10-20）
+
+换存储过程中，**测试抓出 2 个真 bug**（都不是测试写错）：
+
+| # | Bug | 现象 | 根因 | 修复 |
+|---|---|---|---|---|
+| 12 | **`_store()` 无锁** | 12 线程并发首次调用 ⇒ 造出 **12 个 Store 实例**（各带一把锁）⇒ 互斥失效，**3 个 agent 同时认领成功** | 惰性单例没加锁 | 模块级 `threading.Lock` 包住创建 |
+| 13 | **SQLite 连接跨线程共享** | 压力下报 `sqlite3.InterfaceError: bad parameter or other API misuse` | sqlite3 连接不是线程安全的（`check_same_thread=False` 只是关掉检查，不是让它安全） | 读：**每线程一个连接**；写：**每次写独立连接 + BEGIN IMMEDIATE** |
+
+**教训（第 5 次同源）**：**「看起来是原子的 API」不等于「实现了原子性」**。
+`INSERT + PRIMARY KEY` 本身是对的，但被没有锁的惰性单例包住就失效了——和 E-15（`mkdir` 名字带 uuid）是同一类错：**外层封装把内层的保证吃掉了**。
+
+**做法**：任何「靠数据库/文件系统原语保证互斥」的地方，必须配一条**并发实测**（≥12 线程），且必须检查「成功次数 == 1」而不只是「没报错」。
+
+## E-21 · 几十个项目规模的实测（取证 2026-10-20）
+
+- 造 20 个项目 × 15 张卡 ＝ **300 张**，跨项目扫描 **0.21 秒**（冷）、**0.0004 秒**（15 秒缓存命中）。
+- 结论：**每项目一个 SQLite + 注册表一个 SQLite** 的架构，几十个项目量级完全够用，不需要引入服务端。
+- 缓存文件 `~/.allworktogether/summary-cache.json`，15 秒 TTL；`board all --refresh` 可强制重扫。
+
+**可复跑**：`python -c "import sys;sys.path.insert(0,'tools');import projects as P;print(len(P.project_summary(use_cache=False)))"`
+
+## E-22 · opus 评审抓出的 3 个真缺陷（取证 2026-10-20）
 
 外部专家（claude-opus-5-5）读源码评审，指出 3 个缺陷；本席**逐条复现确认属实**后修复：
 
@@ -229,7 +251,7 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 
 **可复跑**：`python tests/run_regression.py`（R19–R23 覆盖上述修复）
 
-## E-25 · opus 评审：哪些轮子该用、哪些别用（取证 2026-10-20）
+## E-23 · opus 评审：哪些轮子该用、哪些别用（取证 2026-10-20）
 
 外部专家（claude-opus-5-5）关键判断，本席采信并已落地的部分：
 

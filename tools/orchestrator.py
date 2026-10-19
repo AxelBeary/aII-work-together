@@ -477,6 +477,44 @@ def _append_ledger(a, results):
     log("度量台账已追加", "ok")
 
 
+def cmd_run_all(a):
+    """跨项目跑一轮：团队几十个项目，一次扫完。"""
+    import projects as P
+    ps = [p for p in P.list_projects() if p.get("exists")]
+    if a.only:
+        ps = [p for p in ps if p["name"] in a.only]
+    log(f"跨项目编排：{len(ps)} 个项目", "step")
+
+    old_root = B.ROOT
+    total = []
+    try:
+        for p in ps:
+            B.set_root(p["path"])
+            B.set_workspace(P.workspace_of(p["path"]))
+            # 只挑「有活」的项目，别空跑
+            todo = [cid for cid in B.card_ids()
+                    if B.replay(cid)["state"] in ("待认领", "待返工", "阻塞")]
+            if not todo:
+                continue
+            log(f"[{p['name']}] {len(todo)} 张待跑", "step")
+            ns = argparse.Namespace(engine=a.engine, seat=a.seat,
+                                    model=a.model, effort=a.effort,
+                                    max=a.max, parallel=a.parallel,
+                                    dry_run=a.dry_run, panel=a.panel)
+            try:
+                cmd_run(ns)
+                total.append((p["name"], "ok"))
+            except SystemExit:
+                total.append((p["name"], "skipped"))
+    finally:
+        B.set_root(old_root)
+
+    print()
+    log(f"跨项目完成：{len(total)} 个项目有活", "ok")
+    for name, st in total:
+        print(f"  {name:<24} {st}")
+
+
 def cmd_status(a):
     """一眼看编排状态。"""
     if not B.card_ids():
@@ -545,6 +583,18 @@ def main():
 
     s = sub.add_parser("status", help="看编排状态")
     s.set_defaults(f=cmd_status)
+
+    s = sub.add_parser("run-all", help="🌐 跨项目跑一轮（团队视角）")
+    s.add_argument("--engine", default="opencode")
+    s.add_argument("--seat", default="auto-worker")
+    s.add_argument("--model", default=None)
+    s.add_argument("--effort", default=None)
+    s.add_argument("--max", type=int, default=3, help="每个项目最多跑几张")
+    s.add_argument("--parallel", type=int, default=1)
+    s.add_argument("--panel", nargs="*", default=None)
+    s.add_argument("--only", nargs="*", default=None, help="只跑指定项目")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(f=cmd_run_all)
 
     s = sub.add_parser("resume", help="断点续跑（按 journal 状态接上）")
     s.add_argument("--engine", default="opencode")

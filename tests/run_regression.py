@@ -263,20 +263,12 @@ def k_project_isolation(case, cid):
 def k_defaults_inherit(case, cid):
     """项目默认值应被新卡继承。"""
     import projects as P
-    reg = P._load_registry()
-    entry = None
-    for p in reg["projects"]:
-        if Path(p["path"]).resolve() == B.ROOT.resolve():
-            entry = p
-            break
-    if entry is None:
-        entry = {"name": B.ROOT.name, "path": str(B.ROOT), "defaults": {}}
-        reg["projects"].append(entry)
-    old = dict(entry.get("defaults") or {})
-    entry["defaults"] = {"engine": "opencode",
-                         "model": "opencode-go/deepseek-v4.1-flash",
-                         "effort": "high"}
-    P._save_registry(reg)
+    entry = P.find_project(str(B.ROOT.resolve()))
+    old = dict((entry or {}).get("defaults") or {})
+    P.add_project(B.ROOT, defaults={"engine": "opencode",
+                                    "model": "opencode-go/deepseek-v4.1-flash",
+                                    "effort": "high"})
+    got = None
     try:
         ns = type("A", (), {
             "id": cid, "title": "t", "goal": "", "territory": [],
@@ -290,8 +282,9 @@ def k_defaults_inherit(case, cid):
         want = ("opencode", "opencode-go/deepseek-v4.1-flash", "high")
         ok = got == want
     finally:
-        entry["defaults"] = old
-        P._save_registry(reg)
+        # 还原默认值（只保留原有键）
+        P.add_project(B.ROOT, defaults=old or {"engine": "any", "model": "any",
+                                              "effort": "any"})
     return ok == case["expect"]["inherited"], f"got={got}"
 
 

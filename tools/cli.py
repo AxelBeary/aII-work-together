@@ -9,6 +9,7 @@ cli.py — 看板命令层
 """
 import argparse
 import json
+import os
 import re
 import sys
 import uuid
@@ -345,27 +346,41 @@ def _check_evidence(ev: str) -> tuple:
     return True, ""
 
 
-def human_token() -> Path:
-    """人 token 放在看板目录之外，agent 指令里明令不碰。"""
+def human_token(who: str = None) -> Path:
+    """人 token 放看板目录之外。
+
+    多人场景：每人一个 token（按 who 区分），互不顶替。
+    """
+    who = (who or os.environ.get("BOARD_USER") or "").strip()
+    if who and who not in ("owner", "human"):
+        safe = re.sub(r"[^\w\-.]", "_", who)[:40]
+        return Path.home() / f".board-human-{safe}.tok"
     return Path.home() / ".board-human.tok"
 
 
-def human_token_sha() -> Path:
-    """令牌哈希存在看板里。只存哈希 ⇒ 读到它推不出原令牌。"""
+def human_token_sha(who: str = None) -> Path:
+    """令牌哈希登记（只存哈希，推不出原令牌）。按人分开。"""
+    who = (who or os.environ.get("BOARD_USER") or "").strip()
+    if who and who not in ("owner", "human"):
+        safe = re.sub(r"[^\w\-.]", "_", who)[:40]
+        return B.BOARD / f".human-token-{safe}.sha"
     return B.BOARD / ".human-token.sha"
 
 
-def _verify_human_token() -> tuple:
-    """校验人令牌。返回 (B.ok, 原因)。
+def _verify_human_token(who: str = None) -> tuple:
+    """校验人令牌。返回 (ok, 原因)。
 
     防线（诚实标注：这是**提高门槛**，不是绝对强制，见 AGENTS.md §4.1）：
-      1. 令牌文件必须存在且内容非空（⛔ 0 字节放行）
-      2. 内容长度 ≥ 16（⛔ 一眼能猜的短串）
+      1. 令牌必须存在且内容非空（⛔ 0 字节放行）
+      2. 内容长度 ≥ 16
       3. 与首次登记时存的 sha256 一致（换令牌 = 留痕）
+      4. 多人：不同 who 用不同令牌文件，互不顶替
     """
-    tok = human_token()
+    tok = human_token(who)
     if not tok.exists():
-        return False, f"缺人令牌。首次使用请创建：{tok}（内容随意，⛔ 不要给 agent）"
+        return False, (f"缺人令牌：{tok}\n"
+                       f"  创建：Set-Content -Path \"{tok}\" "
+                       f"-Value \"<你自己定的长串>\" -NoNewline")
     try:
         content = tok.read_text(encoding="utf-8").strip()
     except Exception as e:
@@ -375,31 +390,30 @@ def _verify_human_token() -> tuple:
     if len(content) < 16:
         return False, f"人令牌太短（{len(content)} < 16 字符）—— 换一个长一点的"
     sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    reg = human_token_sha()
+    reg = human_token_sha(who)
     if not reg.exists():
-        return True, ""          # 首次登记，下方写入
+        return True, ""
     try:
         expected = reg.read_text(encoding="utf-8").strip()
     except Exception:
         return False, "令牌登记文件读不了"
     if sha != expected:
         return False, ("人令牌已变更（与登记哈希不符）。"
-                       "若这是你本人换的，删掉 board/.human-token.sha 重新登记；否则是有人动了令牌")
+                       "若这是你本人换的，删掉登记文件重新登记；否则是有人动了令牌")
     return True, ""
 
 
 def cmd_human(a):
     # 红线②：唯一能推进人位的入口
     guard_transition(a.id, "完成" if a.decision == "approve" else "待返工", "human")
-    ok_tok, why = _verify_human_token()
+    ok_tok, why = _verify_human_token(a.who)
     if not ok_tok:
         B.die(why)
     # 首次登记令牌哈希（只存哈希，推不出原值）
-    if not human_token_sha().exists():
-        content = human_token().read_text(encoding="utf-8").strip()
-        human_token_sha().write_text(
+    if not human_token_sha(a.who).exists():
+        content = human_token(a.who).read_text(encoding="utf-8").strip()
+        human_token_sha(a.who).write_text(
             hashlib.sha256(content.encode("utf-8")).hexdigest(), encoding="utf-8")
-        print(f"  · 已登记人令牌哈希 → {human_token_sha()}")
     st = B.replay(a.id)
     if st["state"] != "拍板中":
         B.die(f"当前状态「{st['state']}」，只有「拍板中」的卡需要人拍")
@@ -542,7 +556,7 @@ def cmd_project(a):
         ps = P.list_projects()
         if not ps:
             print("（还没有登记任何项目）")
-            print(f"  注册表：{P.REGISTRY}")
+            print(f"  注册表：{P.REGISTRY_DB}")
             return
         print(f"{'':2} {'项目':<20} {'卡片':>4}  {'默认引擎/模型':<38} 路径")
         print("-" * 96)
@@ -553,7 +567,7 @@ def cmd_project(a):
             d = p.get("defaults") or {}
             spec = f"{d.get('engine','—')}/{d.get('model','—')}"
             print(f"{mark:2} {p['name']:<20} {n:>4}  {spec:<38} {p['path']}")
-        print(f"\n共 {len(ps)} 个项目 ｜ 注册表：{P.REGISTRY}")
+        print(f"\n共 {len(ps)} 个项目 ｜ 注册表：{P.REGISTRY_DB}")
         return
 
     if a.action == "add":
@@ -582,16 +596,12 @@ def cmd_project(a):
         if a.effort:
             d["effort"] = a.effort
         # 写回
-        reg = P._load_registry()
-        for p in reg["projects"]:
-            if Path(p["path"]).resolve() == B.ROOT.resolve():
-                p["defaults"] = d
-                if getattr(a, "workspace", None):
-                    ws = Path(a.workspace)
-                    if not ws.exists():
-                        B.die(f"工作区不存在：{ws}")
-                    p["workspace"] = str(ws.resolve())
-        P._save_registry(reg)
+        ws = getattr(a, "workspace", None)
+        if ws:
+            wp = Path(ws)
+            if not wp.exists():
+                B.die(f"工作区不存在：{wp}")
+        P.add_project(B.ROOT, defaults=d, workspace=ws)
         wsd = P.workspace_of(B.ROOT)
         B.ok(f"本项目默认值：引擎={d.get('engine','—')} 模型={d.get('model','—')} "
            f"思考={d.get('effort','—')}")
@@ -1015,6 +1025,66 @@ def cmd_rm(a):
     B.ok(f"已删除：{a.id}")
 
 
+def cmd_all(a):
+    """跨项目总览（团队视角）：一眼看几十个项目的状态。"""
+    import projects as P
+    ps = P.project_summary(use_cache=not a.refresh)
+    if not ps:
+        print("（还没有登记任何项目）")
+        print(f"  注册表：{P.REGISTRY_DB}")
+        return
+
+    order = ["待认领", "进行中", "待返工", "阻塞", "待验收", "核验中", "拍板中", "完成"]
+    tot = {"cards": 0}
+    print(f"{'项目':<22} {'卡':>4}  " + " ".join(f"{s[:2]:>3}" for s in order))
+    print("-" * 78)
+    for p in sorted(ps, key=lambda x: x["name"]):
+        st = p.get("states") or {}
+        cells = " ".join(f"{st.get(s,0):>3}" for s in order)
+        mark = "" if p.get("ok") else "  ⚠"
+        print(f"{p['name'][:20]:<22} {p.get('cards',0):>4}  {cells}{mark}")
+        tot["cards"] += p.get("cards", 0)
+        for s in order:
+            tot[s] = tot.get(s, 0) + st.get(s, 0)
+    print("-" * 78)
+    print(f"{'合计':<22} {tot['cards']:>4}  " + " ".join(f"{tot.get(s,0):>3}" for s in order))
+    print(f"\n共 {len(ps)} 个项目 ｜ 注册表：{P.REGISTRY_DB}")
+    if tot.get("拍板中"):
+        print(f"⚠ {tot['拍板中']} 张等你拍板：board inbox --all")
+
+
+def cmd_inbox_all(a):
+    """跨项目收件箱：把所有项目里等你拍板的卡汇总。"""
+    import projects as P
+    old_root = B.ROOT
+    rows = []
+    try:
+        for p in P.list_projects():
+            if not p.get("exists"):
+                continue
+            B.set_root(p["path"])
+            for cid in B.card_ids():
+                st = B.replay(cid)
+                if st["state"] == "拍板中":
+                    rows.append((p["name"], cid, st, B.get_card(cid)))
+    finally:
+        B.set_root(old_root)
+
+    if not rows:
+        print("✓ 所有项目都没有待你拍板的卡")
+        return
+    print(f"\n📥 全部项目待拍板：{len(rows)} 张\n")
+    for i, (pname, cid, st, card) in enumerate(rows[:a.limit], 1):
+        print(f"{'─'*62}")
+        print(f"[{i}] {pname} / {cid}  {st['title']}")
+        print(f"    目标  {(card or {}).get('goal','')[:60]}")
+        print(f"    批准  board -p {pname} human {cid} --decision approve --who owner")
+        print(f"    驳回  board -p {pname} human {cid} --decision reject --who owner --note \"...\"")
+    rest = len(rows) - a.limit
+    if rest > 0:
+        print(f"\n（还有 {rest} 张未列；--limit 调整）")
+
+
 def cmd_open(a):
     """打开/刷新看板页。最常用的一条命令。"""
     cmd_html(a)
@@ -1198,7 +1268,12 @@ def main():
 
     s = sub.add_parser("inbox", help="📥 拍板收件箱（只看等你处理的）")
     s.add_argument("--limit", type=int, default=3, help="一次最多列几张（默认 3）")
+    s.add_argument("--all", action="store_true", help="汇总所有项目")
     s.set_defaults(f=cmd_inbox)
+
+    s = sub.add_parser("all", help="🌐 跨项目总览（团队视角）")
+    s.add_argument("--refresh", action="store_true", help="跳过缓存重新扫描")
+    s.set_defaults(f=cmd_all)
 
     a = p.parse_args()
 
@@ -1220,6 +1295,8 @@ def main():
     B.set_workspace(P.workspace_of(root))
     if not a.cmd:
         return cmd_bare(a)
+    if a.cmd == "inbox" and getattr(a, "all", False):
+        return cmd_inbox_all(a)
     a.f(a)
 
 
