@@ -37,6 +37,8 @@ def run(name, cmd, expect_rc=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="跳过真调模型的检查")
+    ap.add_argument("--perf", action="store_true",
+                    help="额外跑规模压测（造 1200 张卡，约 1 分钟；机器忙时别开）")
     a = ap.parse_args()
 
     print("=" * 70)
@@ -142,6 +144,13 @@ def main():
         ok, _ = run("辩论（真跑）", [PY, "tests/test_debate.py"])
         if not ok:
             fails.append("辩论")
+
+    # 7（可选）规模压测：几十个项目时界面还跟不跟得上
+    # 规模刻意轻量（20×15）：重规模会把用户机器拖慢（见 ENVIRONMENT.md E-25）
+    if a.perf:
+        ok, _ = run("规模压测", [PY, "tests/bench_scale.py"])
+        if not ok:
+            fails.append("规模压测")
 
     print("=" * 70)
     if fails:

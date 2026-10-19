@@ -30,6 +30,7 @@ import threading
 import time
 import traceback
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -112,6 +113,10 @@ def _resolve(project: str | None) -> Path:
 
 def _switch(project: str | None) -> Path:
     root = _resolve(project)
+    # 同一个项目连续来的请求是绝大多数：没变就别再 set_root
+    # （set_root 每次都要 mkdir + 检查旧数据迁移，跟数据量无关的纯开销）
+    if B.ROOT == root:
+        return root
     B.set_root(root)
     B.set_workspace(P.workspace_of(root))
     return root
@@ -265,6 +270,7 @@ def api_create(body):
                          "engine": card["engine"], "model": card["model"],
                          "effort": card["effort"],
                          "human_gate": card["human_gate"]})
+    P.invalidate_summary_cache()      # 让下拉框里的项目张数立刻更新
     return {"ok": True, "id": cid}
 
 
@@ -286,6 +292,7 @@ def api_human(body):
         raise ValueError("驳回必须写理由 —— 否则下一轮 agent 不知道要改什么")
     B.append_event(cid, {"type": "human", "actor": "human", "who": who,
                          "decision": decision, "note": (body.get("note") or "").strip()})
+    P.invalidate_summary_cache()
     return {"ok": True, "state": B.replay(cid)["state"]}
 
 
@@ -350,6 +357,33 @@ def api_run_log(q):
 
 
 # ---------- HTTP ----------
+
+class PoolHTTPServer(ThreadingHTTPServer):
+    """固定线程池的 HTTP 服务器。
+
+    为什么不用默认的「一请求一线程」：数据库连接都是 thread-local 的，
+    线程一换，连接就得重建、建表语句还得重跑一遍（实测每请求白烧约 4ms，
+    两个库就是 8ms，而一条请求总共才 20-30ms）。
+    线程池让线程复用 ⇒ 连接复用 ⇒ 这笔开销只付一次。
+    """
+
+    pool_size = 4
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pool = ThreadPoolExecutor(max_workers=self.pool_size,
+                                        thread_name_prefix="board-ui")
+
+    def process_request(self, request, client_address):
+        self._pool.submit(self.process_request_thread, request, client_address)
+
+    def server_close(self):
+        try:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:            # Python 3.8 没有 cancel_futures
+            self._pool.shutdown(wait=False)
+        super().server_close()
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "allworktogether-ui/1.0"
@@ -421,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser(description="本地看板界面")
     ap.add_argument("--port", type=int, default=8777)
+    ap.add_argument("--workers", type=int, default=4,
+                    help="线程池大小；0＝老行为（一请求一线程，仅供压测对照）")
     ap.add_argument("--open", action="store_true", help="启动后自动打开浏览器")
     a = ap.parse_args()
 
@@ -428,7 +464,11 @@ def main():
         print(f"✗ 缺界面文件：{UI}")
         return 1
 
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    if a.workers <= 0:
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    else:
+        PoolHTTPServer.pool_size = a.workers
+        srv = PoolHTTPServer(("127.0.0.1", a.port), Handler)
     url = f"http://127.0.0.1:{a.port}/"
     print(f"✓ 看板界面：{url}")
     print(f"  只在本机可访问（127.0.0.1），关掉这个窗口就停了")

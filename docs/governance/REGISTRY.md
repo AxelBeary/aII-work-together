@@ -122,3 +122,16 @@
 | 使用说明补充 | `docs/怎么用.md` | 已补 | 托盘 + 网页看板的鼠标操作 |
 
 `tools/check.py` 现为 **11 道闸**（新增「接口契约」「界面语法」）。
+
+### 连接复用与热路径（2026-10-20）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 固定线程池（线程/连接复用） | `tools/server.py`（`PoolHTTPServer`） | 已实现 | 40 项目/1200 卡：汇总冷缓存 14→4ms，看板列表 29→15ms；`--workers 0` 可 A/B |
+| 切项目不重复 set_root | `tools/server.py`（`_switch`） | 已实现 | 省掉每请求 mkdir + 迁移检查（与数据量无关的纯税） |
+| 汇总缓存可主动失效 | `projects.invalidate_summary_cache()` | 已实现 | 建卡/拍板后项目张数立刻更新，不再滞后 15 秒 |
+| 注册表目录可隔离 | `projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.allworktogether` |
+| 汇总还原工作区 + 缓存原子写 | `projects.py`（`project_summary`） | 已修 | P9 用例；临时文件 + `os.replace`，避免读到半截 JSON |
+| 规模压测接入自检 | `tools/check.py --perf` | 已接 | 默认轻量 20×15（重规模见 E-25 §3 的自我约束） |
+
+坑与口径：ENVIRONMENT.md **E-26**。

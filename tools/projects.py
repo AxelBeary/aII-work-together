@@ -258,6 +258,14 @@ def _summary_cache_file():
     return HOME_DIR / "summary-cache.json"
 
 
+def invalidate_summary_cache() -> None:
+    """写操作后调用：让界面上的计数立刻更新（否则会滞后最多 15 秒）。"""
+    try:
+        _summary_cache_file().unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def project_summary(use_cache: bool = True, ttl_s: int = 15) -> list:
     """跨项目汇总：每个项目多少张卡、各状态多少。
 
