@@ -11,4 +11,9 @@
 | 2026-10-19 | 环境事实 | `docs/governance/ENVIRONMENT.md` | 发牌席 | 已交（待验） | 每条附可复跑命令 |
 | 2026-10-19 | 派工度量台账 | `docs/governance/DELEGATION-LEDGER.md` | 发牌席 | 已交（待验） | 本轮 3 席在册 |
 | 2026-10-19 | 会话交接块 | `docs/governance/HANDOFF.md` | 发牌席 | 已交（待验） | 收工时更新 |
-| 2026-10-19 | 调研批次目录＋派工单 | `docs/research/20261019-agent-board-survey/` | 发牌席 | 进行中 | 3 席派工单已落盘 |
+| 2026-10-19 | 调研批次目录＋派工单 | `docs/research/20261019-agent-board-survey/` | 发牌席 | 已验（PASS） | 派工总单＋3 派工单＋3 交件＋抽验记录＋合并摘要齐全 |
+| 2026-10-19 | P1 开源横评（17 产品） | `docs/research/20261019-agent-board-survey/P1-开源agent看板横评__调研席A__外部公开资料.md` | 调研席 A | 已交（部分抽验） | 20,863 字节；抽验 2 条属实（Symphony/KittyClaw）；余 13 项未回源 |
+| 2026-10-19 | P2 协议与底座（16 条） | `docs/research/20261019-agent-board-survey/P2-协议与底座__调研席B__外部公开资料.md` | 调研席 B | 已交（1 处已更正） | 22,300 字节；Codex 链接 404 已修；MAST 逐字属实 |
+| 2026-10-19 | P3 本机资产与约束 | `docs/research/20261019-agent-board-survey/P3-本机可复用资产与约束__调研席C__本机实测.md` | 调研席 C | 已交（部分抽验） | 24,494 字节；AGENTS.md 三段行号锚点核对一致 |
+| 2026-10-19 | 发牌席抽验记录 | `docs/research/20261019-agent-board-survey/99_发牌席抽验记录.md` | 发牌席 | 已验（PASS） | 5 条抽验：4 属实、1 链接错 |
+| 2026-10-19 | 合并摘要（人话版） | `docs/research/20261019-agent-board-survey/98_合并摘要__发牌席__人话版.md` | 发牌席 | 已验（PASS） | 三席结论合并＋许可红线＋下一步 |

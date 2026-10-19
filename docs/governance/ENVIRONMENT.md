@@ -43,3 +43,17 @@
 - 端点 `POST https://api.rtoc.cc/v1/messages`；钥匙在 `C:\Users\qly19\Desktop\2rtoc.env`（`sk-` 开头行）。
 - **硬坑**：请求体硬上限约 46000 字节（≥64KB 静默返回空**且照样计费**）；它本质是「被套了人设的编辑器助手」，会以「请切到能生成代码的模式」拒答；成败主要取决于**时段窗口**。
 - ⛔ 明文钥匙不得出现在任何输出／日志／文件／记忆里。详见本机记忆 `rtoc-channel`。
+
+## E-06 · 子代理免费模型池不可裸派（取证 2026-10-19，本项目实测）
+
+- **现象**：3 席 `subagent` 同时派出、**未指定模型**（走默认免费池）→ **3/3 全败**，报错原文：
+  `OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address.`
+- **处置**：显式指定付费模型 `opencode-go/gpt-6-luna` 后**同一批 3 席一次全过**。
+- **教训**：派工前先确认模型可用性；**别用默认池裸派**。失败会话 `sessionID` 仍在（`ses_eacc1c5efffe…` 等），可续但上下文已污染，重派更省。
+- **可复跑**：`tools.opencode.models({ provider: "opencode-go" })` 查可用模型；或直接 `subagent` 带 `model` 参数。
+
+## E-07 · 抽验该抽什么（取证 2026-10-19）
+
+- 本项目首轮 3 席调研，发牌席抽验 5 条：**4 条属实、1 条链接路径错**（`/docs/codex/non-interactive-mode` → 404，正确为 `/docs/non-interactive-mode`），**内容本身无误**。
+- **结论**：子代理在「结论与判断」上表现好（会主动标「未见」「未证」），**易错点是可机械核对的字串**——链接路径、星数、版本号。
+- **做法**：抽验优先抽**数字与 URL**（机器可判、成本低），不必重读其论证过程。
