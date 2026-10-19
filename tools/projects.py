@@ -166,6 +166,24 @@ def workspace_of(path) -> Path:
     return Path(path).resolve()
 
 
+def set_defaults(path, defaults: dict) -> dict:
+    """整体替换项目默认值（测试还原用；add_project 是合并语义）。"""
+    path = Path(path).resolve()
+    c = _conn()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        n = c.execute("UPDATE projects SET defaults=? WHERE path=?",
+                      (json.dumps(defaults or {}, ensure_ascii=False),
+                       str(path))).rowcount
+        c.execute("COMMIT")
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
+    if not n:
+        raise KeyError(f"项目未登记：{path}")
+    return find_project(str(path))
+
+
 def set_workspace(path, workspace) -> dict:
     path = Path(path).resolve()
     ws = Path(workspace).resolve()

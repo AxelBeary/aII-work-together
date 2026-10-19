@@ -8,6 +8,7 @@ cli.py — 看板命令层
    直接 import 名字会拿到切换项目前的旧值）。
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -1204,7 +1205,7 @@ def main():
     s.add_argument("--events", action="store_true")
     s.set_defaults(f=cmd_show)
 
-    s = sub.add_parser("B.claim", help="认领（原子 + 规格匹配）")
+    s = sub.add_parser("claim", help="认领（原子 + 规格匹配）")
     s.add_argument("id")
     s.add_argument("--seat", required=True)
     s.add_argument("--engine", default="any")

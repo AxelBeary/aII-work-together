@@ -57,6 +57,23 @@ def main():
     if bad:
         fails.append("语法")
 
+    # 1b 子命令烟测：每条 --help 都要能起来（抓「导入漏了 / 参数写坏」）
+    subs = ["init", "project", "open", "add", "new", "publish", "ready", "ls",
+            "show", "claim", "beat", "block", "submit", "verify", "review",
+            "human", "reclaim", "audit", "doctor", "html", "overview",
+            "inbox", "all", "stats", "cost", "rm"]
+    smoke_bad = []
+    for s in subs:
+        p = subprocess.run([PY, "tools/board.py", s, "--help"], cwd=str(ROOT),
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        if p.returncode != 0:
+            smoke_bad.append(s)
+    print(f"  {'✓' if not smoke_bad else '✗'} {'子命令烟测':<10} "
+          + (f"{len(subs)} 条" if not smoke_bad else f"失败：{smoke_bad[:5]}"))
+    if smoke_bad:
+        fails.append("子命令烟测")
+
     # 2 回归
     ok, _ = run("回归库", [PY, "tests/run_regression.py"])
     if not ok:

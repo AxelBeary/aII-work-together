@@ -265,9 +265,9 @@ def k_defaults_inherit(case, cid):
     import projects as P
     entry = P.find_project(str(B.ROOT.resolve()))
     old = dict((entry or {}).get("defaults") or {})
-    P.add_project(B.ROOT, defaults={"engine": "opencode",
-                                    "model": "opencode-go/deepseek-v4.1-flash",
-                                    "effort": "high"})
+    P.set_defaults(B.ROOT, {"engine": "opencode",
+                            "model": "opencode-go/deepseek-v4.1-flash",
+                            "effort": "high"})
     got = None
     try:
         ns = type("A", (), {
@@ -282,9 +282,8 @@ def k_defaults_inherit(case, cid):
         want = ("opencode", "opencode-go/deepseek-v4.1-flash", "high")
         ok = got == want
     finally:
-        # 还原默认值（只保留原有键）
-        P.add_project(B.ROOT, defaults=old or {"engine": "any", "model": "any",
-                                              "effort": "any"})
+        # ⚠️ 必须**整体还原**成测试前的值（合并语义会把真实默认值冲成 any）
+        P.set_defaults(B.ROOT, old)
     return ok == case["expect"]["inherited"], f"got={got}"
 
 
