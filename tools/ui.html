@@ -228,6 +228,10 @@ function cardHtml(c){
   if(c.rework) tags.push(`<span class="tag rw">返工 ${c.rework}</span>`);
   if(c.created_kind==="agent") tags.push(`<span class="tag ai">AI 发布</span>`);
   if(c.usage && c.usage.available) tags.push(`<span class="tag cost">$${c.usage.cost.toFixed(4)}</span>`);
+  const cs = c.consult || {};
+  if(cs.seats && cs.seats.length) tags.push(`<span class="tag">评审 ${cs.seats.length}</span>`);
+  if(cs.unfixed > 0) tags.push(`<span class="tag rw">未改 ${cs.unfixed}</span>`);
+  else if(cs.unfixed === -1) tags.push(`<span class="tag rw">未改?</span>`);
   const blk = c.blocked_reason ? `<div class="g" style="color:#d9a441">${esc(c.blocked_reason).slice(0,60)}</div>` : "";
   return `<div class="card" data-id="${c.id}">
     <div class="id">${c.id}</div>
@@ -296,6 +300,15 @@ async function openCard(id){
     if(c.holder) kv.push(["当前执行", c.holder]);
     if(c.deliverables && c.deliverables.length) kv.push(["产出", c.deliverables.join("、")]);
     if(c.review_verdict) kv.push(["复核", `${c.review_verdict}（${c.review_seat}）`]);
+    if(c.consult && c.consult.seats && c.consult.seats.length){
+      const line = c.consult.seats
+        .map(x => `${x.seat}·${x.model || x.seat} ${x.verdict || "?"} ${x.problems}条`)
+        .join(" ｜ ");
+      const u = c.consult.unfixed;
+      const tail = u === -1 ? " → 改后未改：未知"
+                 : (u == null ? "" : ` → 改后剩 ${u} 条未改`);
+      kv.push(["评审", line + tail]);
+    }
     if(c.review_evidence) kv.push(["凭据", c.review_evidence]);
     if(c.gate_problems && c.gate_problems.length) kv.push(["未过项", c.gate_problems.join("；")]);
     if(c.usage && c.usage.available)

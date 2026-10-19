@@ -68,15 +68,26 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
              "cost": 0.0, "available": False}
     submit = st.get("submit") or {}
-    if not light:
-        for ev in events:
-            if ev.get("type") == "usage":
-                u = ev.get("usage") or {}
-                if u.get("available"):
-                    usage["available"] = True
-                    for k in ("input", "output", "cache_read", "cache_write"):
-                        usage[k] += int(u.get(k) or 0)
-                    usage["cost"] += float(u.get("cost") or 0)
+    seats, unfixed = [], None
+    for ev in events:
+        t = ev.get("type")
+        if t == "usage" and not light:
+            u = ev.get("usage") or {}
+            if u.get("available"):
+                usage["available"] = True
+                for k in ("input", "output", "cache_read", "cache_write"):
+                    usage[k] += int(u.get(k) or 0)
+                usage["cost"] += float(u.get("cost") or 0)
+        elif t == "consult_reply":
+            seats.append({"seat": ev.get("seat"),
+                          "model": (ev.get("model") or "").split("/")[-1],
+                          "verdict": ev.get("verdict"),
+                          "problems": ev.get("problems") or 0})
+        elif t == "consult_verify":
+            if ev.get("unfixed") is not None:
+                unfixed = (unfixed or 0) + int(ev["unfixed"])
+            elif unfixed is None:
+                unfixed = -1          # 有席位说不清 ⇒ 未知，不当作 0
     return {
         "id": cid,
         "title": st["title"],
@@ -96,6 +107,7 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
         "gate_ok": not (submit.get("gate", {}) or {}).get("problems"),
         "gate_problems": (submit.get("gate", {}) or {}).get("problems", []),
         "review_verdict": (st.get("review") or {}).get("verdict"),
+        "consult": {"seats": seats, "unfixed": unfixed},
         "review_seat": (st.get("review") or {}).get("seat"),
         "review_evidence": (st.get("review") or {}).get("evidence"),
         "usage": usage,

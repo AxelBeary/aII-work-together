@@ -95,6 +95,11 @@ def main():
            f"{len(cards)} 张")
         ok("/api/cards 带用量字段（界面要显示花费）",
            "usage" in cards[0] and "cost" in cards[0]["usage"])
+        ok("/api/cards 带评审摘要（几席、改后剩几条未改）",
+           isinstance(cards[0].get("consult"), dict)
+           and "seats" in cards[0]["consult"]
+           and "unfixed" in cards[0]["consult"],
+           f"consult={cards[0].get('consult')}")
 
         # 4 单卡详情带事件流
         code, one = call(f"/api/card?project={PROJ}&id=D-001")
