@@ -174,6 +174,8 @@ def build_prompt(card: dict, question: str, files: list,
     parts += [
         "",
         "再次强调：**只输出意见，不要改文件，不要给完整重写稿。**",
+        "材料已经完整贴在上面了，**不要去磁盘上到处找文件**，更不要整盘搜索"
+        "（`dir /s`、`Get-ChildItem -Recurse E:\\` 这类会吃满 CPU，拖慢整台机器）。",
         f"（第 {round_no} 轮评审）",
     ]
     return "\n".join(parts)

@@ -127,6 +127,12 @@ def review_prompt(card: dict, cid: str, submit: dict) -> str:
         "",
         "你是**独立复核席**。执行者声称做完了，你要**亲自核实**，不是复述它的话。",
         "",
+        "## 只在这一个目录里找",
+        "当前工作目录就是这张卡的工作区，交付物路径**相对它解析**。",
+        "⛔ **不要整盘搜索**（`dir /s`、`Get-ChildItem -Recurse E:\\` 这类）：",
+        "   实测会吃满一个核、每秒几万次目录查询，拖慢整台机器。",
+        "⛔ 找不到就**直接判 fail 并说明找不到**，不要扩大搜索范围。",
+        "",
         "## 你要做的",
         "1. 逐个确认交付物**存在**且**字节>0**：",
         *[f"   - `{d}`" for d in dl],
@@ -337,7 +343,7 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         votes = []
         for ex in panel:
             res_i = E.run(engine, experts.build_prompt(ex, rprompt),
-                          cwd=str(ROOT), model=model, effort=effort)
+                          cwd=work_dir, model=model, effort=effort)
             (ev_dir / f"panel__{ex}__{uuid.uuid4().hex[:6]}.json").write_text(
                 json.dumps(res_i.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8")
@@ -354,7 +360,9 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         rres_ok = True
     else:
         log(f"派复核席 {rseat} 独立核验…", "step")
-        rres = E.run(engine, rprompt, cwd=str(ROOT), model=model, effort=effort)
+        # ⚠️ 必须用这张卡的工作区，不是脚本所在项目：
+        # 复核席跑错目录会找不到交付物，然后自己去整盘搜（实测把 C: 和 E: 全扫了一遍）
+        rres = E.run(engine, rprompt, cwd=work_dir, model=model, effort=effort)
         (ev_dir / f"review__{rseat}__{uuid.uuid4().hex[:6]}.json").write_text(
             json.dumps(rres.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         if not rres.ok:
