@@ -1,24 +1,47 @@
 # 怎么用（三分钟，之后只看一条命令）
 
-## 你只需要记这一条
+## 最常用四条
 
-```
-python tools/orchestrator.py run --engine opencode --seat w1 --max 5
-```
-
-**它会自己找活、自己干、自己验、不过就自己返工。** 跑完看板自动刷新。
-
-看结果：
-
-```
-python tools/board.py html
+```bash
+board project default --engine opencode --model opencode-go/deepseek-v4.1-flash   # 一次
+board add --title "要做什么" --goal "具体目标"
+python tools/orchestrator.py run --max 5
+board open --show
 ```
 
-双击 `board/board.html`（30 秒自动刷新），或看文字版 `python tools/board.py ls`。
+`board` 就是 `python tools/board.py`（建议加个 alias 或 .cmd 包装）。
 
 ---
 
-## 编排器（全自动，无人值守）
+## 多项目
+
+```bash
+board project ls                 # 所有项目 + 卡片数
+board project add /其他/项目     # 登记
+board -p 其他项目 ls             # 切项目
+board overview                   # 跨项目总览页
+```
+
+**零配置**：在任意目录直接 `board add`，自动把当前目录当项目、自动建、自动登记。
+每个项目的数据在它自己的 `board/` 里——可 git、可搬、可单独备份。
+
+**全局注册表**：`~/.allworktogether/projects.json`，只记「项目在哪」。删了不影响任何项目数据。
+
+---
+
+## 并行（默认串行）
+
+```bash
+python tools/orchestrator.py run --parallel 2 --max 4
+```
+
+每张卡一个独立 git worktree，互不踩文件。收工只拷该卡的交付物；**两卡写同一个文件且内容不同 ⇒ 后到的判阻塞**，不会静默覆盖。
+
+⚠️ 建议 ≤2：本机引擎会抢资源。
+
+---
+
+## 编排器（全自动）
 
 ```
 python tools/orchestrator.py run --engine opencode --max 5

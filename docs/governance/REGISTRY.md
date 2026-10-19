@@ -42,6 +42,11 @@
 | 7 | 机器闸有问题仍可给 PASS | 手工复核时发现 | `review` 前查最后一次 verify 的 problems |
 | 8 | 反空跑只在有 `--accept` 时才执行 | 回归库 R08 | 改为无条件；纯文字稿需 `allow_no_numbers=true` |
 
+| 2026-10-19 | **多项目支持** | `tools/projects.py` | 发牌席 | **已验（PASS）** | 注册表只存位置；零配置自动登记；两项目实测隔离 |
+| 2026-10-19 | **跨项目总览页** | `tools/render.py` → `~/.allworktogether/overview.html` | 发牌席 | **已验（PASS）** | 每项目一行色条 + 卡片数，链接到各自看板 |
+| 2026-10-19 | **worktree 并行** | `tools/parallel.py` | 发牌席 | **已验（PASS）** | 2 卡并行 14s 完成；冲突实测判 BLOCKED 未覆盖 |
+| 2026-10-19 | 回归库扩到 18 条 | `tests/run_regression.py` | 发牌席 | **已验（PASS）** | 新增多项目隔离／默认值继承／并行冲突 3 条 |
+
 ### 编排器端到端实测（2026-10-19，C1019-01，含专家团）
 
 | 阶段 | 实测 |

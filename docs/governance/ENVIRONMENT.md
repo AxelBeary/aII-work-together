@@ -180,6 +180,24 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 - **真跑**才暴露兼容性：真辩论跑出 2 个独立 `ses_` 会话；`--agent plan/general` 真跑成功；`--agent nope` 真被拒。
 - **做法**：凡声称「兼容/可用」的功能，**至少要有一条真引擎的实跑证据**；只有打桩的一律标 `未证`。
 
+## E-21 · 多项目与并行实测（取证 2026-10-19）
+
+**多项目**：
+- 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
+- 实测在 `C:\Users\qly19\AppData\Local\Temp\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
+- `board project ls` 能汇总两个项目各自的卡片数。
+
+**并行（worktree）**：
+- 实测 `orchestrator.py run --parallel 2`：两张卡同时跑，各在 `.worktrees/<card-id>/`，均在 14s 内完成，交付物正确拷回，worktree 自动清理。
+- **冲突检测实测**：两张卡都产出 `board/artifacts/same.md` ⇒ 后到的判 `conflict`，**未覆盖**先到的；先到的正常完成。
+- ⚠️ worktree 依赖 git；无 git 或仓库无提交时退化为「目录副本」，隔离性弱但仍不互踩。
+
+## E-22 · 拆代码的教训：渐进，不重写（取证 2026-10-19）
+
+- `board.py` 一度 1099 行／44KB。**没有**一次性拆成完整包，而是按职责抽出 `render.py`（渲染）、`projects.py`（多项目）、`parallel.py`（并行），`board.py` 保留为 CLI 入口。
+- **理由**：一次性大重构会让回归基线失效、且无法二分定位回归来源；渐进拆每次只动一块，跑完 18 条回归即知有没有坏。
+- **做法固化**：拆一个模块 → 立即跑 `run_regression.py` + `--break` → 绿了才继续下一块。
+
 ## E-20 · 三个「值得抄」的实件（取证 2026-10-19）
 
 | 件 | 是什么 | 为什么值得抄 |

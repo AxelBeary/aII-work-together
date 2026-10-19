@@ -37,6 +37,16 @@ ROOT = Path(__file__).resolve().parent.parent
 BOARD = ROOT / "board"
 CARDS = BOARD / "cards"
 
+
+def set_root(root) -> None:
+    """切换当前项目根。多项目支持的核心入口。"""
+    global ROOT, BOARD, CARDS
+    ROOT = Path(root).resolve()
+    BOARD = ROOT / "board"
+    CARDS = BOARD / "cards"
+    BOARD.mkdir(parents=True, exist_ok=True)
+    CARDS.mkdir(parents=True, exist_ok=True)
+
 # 租约参数（D2 A.5）
 LEASE_TTL = 600          # 秒，10 分钟无心跳视为超时
 HB_INTERVAL = 120        # 秒，建议心跳间隔
@@ -438,6 +448,12 @@ def cmd_init(a):
 
 def cmd_new(a):
     CARDS.mkdir(parents=True, exist_ok=True)
+    # 继承项目默认值：没指定就自动填，省掉手打模型名
+    import projects as P
+    defaults = P.project_defaults(ROOT) or {}
+    eng = a.engine if a.engine and a.engine != "any" else defaults.get("engine", "any")
+    mdl = a.model if a.model and a.model != "any" else defaults.get("model", "any")
+    eft = a.effort if a.effort and a.effort != "any" else defaults.get("effort", "any")
     cid = a.id or f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}"
     d = CARDS / cid
     if d.exists():
@@ -452,9 +468,9 @@ def cmd_new(a):
         "accept_patterns": a.accept or [],
         "human_gate": a.human_gate,
         # —— 执行规格：谁来干、用什么模型、思考多深 ——
-        "engine": a.engine or "any",
-        "model": a.model or "any",
-        "effort": a.effort or "any",
+        "engine": eng,
+        "model": mdl,
+        "effort": eft,
         "created_at": ts(),
         "created_by": a.seat or "human",
         "created_kind": "agent" if a.seat and a.seat != "human" else "human",
@@ -874,7 +890,8 @@ def cmd_audit(a):
 
 
 def cmd_html(a):
-    """生成静态看板页，双击即可看。"""
+    """生成静态看板页（单项目）。双击即可看。"""
+    import render as RD
     cards = []
     for d in sorted(CARDS.iterdir()) if CARDS.exists() else []:
         if not d.is_dir():
@@ -885,108 +902,196 @@ def cmd_html(a):
         except Exception:
             continue
         st["goal"] = card.get("goal", "")
-        st["territory"] = card.get("territory", [])
         st["deliverables"] = card.get("deliverables", [])
-        st["rework"] = st.get("rework", 0)
         cards.append(st)
 
-    cols = ["待认领", "进行中", "阻塞", "待验收", "核验中", "拍板中", "完成"]
-    by = {c: [x for x in cards if x["state"] == c] for c in cols}
-
-    def card_html(c):
-        hold = f"<span class=hold>{c['holder']}</span>" if c["holder"] else ""
-        gate = "<span class=gate>人闸</span>" if c["gate"] in ("both", "before_done") else ""
-        rw = f"<span class=rw>返工 {c['rework']}</span>" if c["rework"] else ""
-        goal = f"<div class=goal>{c['goal'][:120]}</div>" if c["goal"] else ""
-        # 执行规格徽标：引擎 / 模型 / 思考强度
-        spec = []
-        if c.get("engine", "any") != "any":
-            spec.append(f"<span class=eng>{c['engine']}</span>")
-        if c.get("model", "any") != "any":
-            m = c["model"].split("/")[-1]
-            spec.append(f"<span class=mdl>{m}</span>")
-        if c.get("effort", "any") != "any":
-            spec.append(f"<span class=eff>{c['effort']}</span>")
-        spec_html = f"<div class=spec>{''.join(spec)}</div>" if spec else ""
-        # AI 发布标记
-        ai = "<span class=aib>AI 发布</span>" if c.get("created_kind") == "agent" else ""
-        dl = "".join(f"<li>{x if isinstance(x,str) else x.get('path')}</li>"
-                     for x in c["deliverables"][:4])
-        dls = f"<ul class=dl>{dl}</ul>" if dl else ""
-        blk = f"<div class=blk>{c['blocked_reason'][:80]}</div>" if c.get("blocked_reason") else ""
-        return f"""<div class=card>
-  <div class=id>{c['id']} {ai}</div>
-  <div class=title>{c['title']}</div>
-  {spec_html}{goal}{blk}{dls}
-  <div class=meta>{hold}{gate}{rw}<span class=ev>{c['events']} 事件</span></div>
-</div>"""
-
-    body = ""
-    for col in cols:
-        items = by[col]
-        inner = "".join(card_html(c) for c in items) or "<div class=empty>—</div>"
-        body += f"""<div class=col><div class=ch>{col}<span class=cn>{len(items)}</span></div>
-<div class=cb>{inner}</div></div>"""
-
-    html = f"""<!doctype html><html lang=zh><meta charset=utf-8>
-<title>看板 · allworktogether</title>
-<meta http-equiv=refresh content=30>
-<style>
-:root{{--bg:#0f1115;--fg:#e6e8eb;--mut:#8b929e;--card:#191c22;--line:#2a2f38;--acc:#4a9eff}}
-*{{box-sizing:border-box}}
-body{{margin:0;background:var(--bg);color:var(--fg);
-font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}}
-header{{padding:18px 24px;border-bottom:1px solid var(--line);
-display:flex;align-items:baseline;gap:16px}}
-h1{{font-size:17px;margin:0;font-weight:600}}
-.sub{{color:var(--mut);font-size:12px}}
-.board{{display:flex;gap:14px;padding:18px 24px;overflow-x:auto;align-items:flex-start}}
-.col{{flex:0 0 280px;background:#14161b;border:1px solid var(--line);border-radius:10px}}
-.ch{{padding:11px 14px;font-weight:600;font-size:13px;border-bottom:1px solid var(--line);
-display:flex;justify-content:space-between;align-items:center}}
-.cn{{color:var(--mut);font-weight:400;font-size:12px}}
-.cb{{padding:10px;display:flex;flex-direction:column;gap:9px;min-height:40px}}
-.card{{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:11px 12px}}
-.id{{font-size:11px;color:var(--acc);font-family:ui-monospace,Consolas,monospace}}
-.title{{font-weight:600;margin:3px 0 6px;font-size:13px}}
-.goal{{color:var(--mut);font-size:12px;margin-bottom:6px}}
-.blk{{color:#ffb454;font-size:12px;margin-bottom:6px}}
-.dl{{margin:0 0 6px;padding-left:16px;color:var(--mut);font-size:11px}}
-.meta{{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--mut);align-items:center}}
-.hold{{background:#1e3a5f;color:#8cc4ff;padding:1px 7px;border-radius:20px}}
-.gate{{background:#5f3a1e;color:#ffc98c;padding:1px 7px;border-radius:20px}}
-.rw{{background:#5f1e1e;color:#ff9c9c;padding:1px 7px;border-radius:20px}}
-.aib{{background:#1e5f3a;color:#8cffb4;padding:1px 6px;border-radius:20px;font-size:10px;margin-left:4px}}
-.spec{{display:flex;gap:5px;flex-wrap:wrap;margin:5px 0}}
-.eng{{background:#2a2f38;color:#a9b4c4;padding:1px 7px;border-radius:4px;font-size:10px;
-font-family:ui-monospace,Consolas,monospace}}
-.mdl{{background:#2d2a38;color:#c4a9e0;padding:1px 7px;border-radius:4px;font-size:10px;
-font-family:ui-monospace,Consolas,monospace}}
-.eff{{background:#382f2a;color:#e0c4a9;padding:1px 7px;border-radius:4px;font-size:10px}}
-.empty{{color:#3a4048;text-align:center;padding:12px}}
-footer{{padding:14px 24px;color:var(--mut);font-size:11px;border-top:1px solid var(--line)}}
-</style>
-<header><h1>看板</h1><span class=sub>allworktogether · 30s 自动刷新</span></header>
-<div class=board>{body}</div>
-<footer>共 {len(cards)} 张卡 ｜ 生成于 {ts()} ｜ 真相源：board/cards/*/journal.jsonl</footer>
-</html>"""
-
     out = BOARD / "board.html"
-    out.write_text(html, encoding="utf-8")
+    name = ROOT.name
+    RD.render_project(cards, f"看板 · {name}", out, project_name=name,
+                      has_overview=True)
     ok(f"看板已生成：{out}")
     print(f"  共 {len(cards)} 张卡")
+    return out
 
 
-# ---------- 入口 ----------
+def cmd_overview(a):
+    """跨项目总览页。"""
+    import render as RD
+    import projects as P
+    out = Path.home() / ".allworktogether" / "overview.html"
+    ps = P.project_summary()
+    RD.render_all(ps, out)
+    ok(f"总览已生成：{out}")
+    for p in ps:
+        print(f"  {p['name']:<20} {p.get('cards', 0):>3} 张")
+
+
+def cmd_project(a):
+    """项目管理：add / ls / rm / default。"""
+    import projects as P
+    if a.action == "ls":
+        ps = P.list_projects()
+        if not ps:
+            print("（还没有登记任何项目）")
+            print(f"  注册表：{P.REGISTRY}")
+            return
+        print(f"{'':2} {'项目':<20} {'卡片':>4}  {'默认引擎/模型':<38} 路径")
+        print("-" * 96)
+        for p in ps:
+            mark = "✓" if p["exists"] else "✗"
+            cp = P.cards_path(p["path"])
+            n = len([d for d in cp.iterdir() if d.is_dir()]) if cp.exists() else 0
+            d = p.get("defaults") or {}
+            spec = f"{d.get('engine','—')}/{d.get('model','—')}"
+            print(f"{mark:2} {p['name']:<20} {n:>4}  {spec:<38} {p['path']}")
+        print(f"\n共 {len(ps)} 个项目 ｜ 注册表：{P.REGISTRY}")
+        return
+
+    if a.action == "add":
+        target = a.path or str(Path.cwd())
+        entry = P.add_project(target, a.name)
+        P.ensure_root(Path(entry["path"]))
+        ok(f"已登记：{entry['name']} → {entry['path']}")
+        return
+
+    if a.action == "rm":
+        if not a.name:
+            die("需要 --name（或路径）")
+        if P.remove_project(a.name):
+            ok(f"已移除登记：{a.name}（⛔ 磁盘数据未动）")
+        else:
+            die(f"没找到：{a.name}")
+        return
+
+    if a.action == "default":
+        entry = P.add_project(ROOT)
+        d = entry.setdefault("defaults", {})
+        if a.engine:
+            d["engine"] = a.engine
+        if a.model:
+            d["model"] = a.model
+        if a.effort:
+            d["effort"] = a.effort
+        # 写回
+        reg = P._load_registry()
+        for p in reg["projects"]:
+            if Path(p["path"]).resolve() == ROOT.resolve():
+                p["defaults"] = d
+        P._save_registry(reg)
+        ok(f"本项目默认值：引擎={d.get('engine','—')} 模型={d.get('model','—')} "
+           f"思考={d.get('effort','—')}")
+        return
+
+
+def cmd_bare(a):
+    """不带子命令时：给一个能直接用的面板，而不是报错。"""
+    print(f"📋 {ROOT.name}")
+    print(f"   {ROOT}\n")
+
+    if not CARDS.exists() or not any(d.is_dir() for d in CARDS.iterdir()):
+        print("   还没有任何卡。\n")
+        print("   下一步：")
+        print("     board add --title \"要做什么\" --goal \"具体目标\"")
+        print("     board project default --engine opencode "
+              "--model opencode-go/deepseek-v4.1-flash")
+        return
+
+    counts = {}
+    total = 0
+    for d in CARDS.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            st = replay(d.name)
+        except Exception:
+            continue
+        total += 1
+        counts[st["state"]] = counts.get(st["state"], 0) + 1
+
+    order = ["待认领", "进行中", "待返工", "阻塞", "待验收", "核验中", "拍板中", "完成"]
+    bits = [f"{s} {counts[s]}" for s in order if counts.get(s)]
+    print(f"   {total} 张卡：  " + " ｜ ".join(bits))
+
+    # 最该做的事
+    if counts.get("拍板中"):
+        print(f"\n   ⚠ {counts['拍板中']} 张等你拍板：board human <卡号> --decision approve")
+    if counts.get("待认领") or counts.get("待返工"):
+        print("\n   下一步：board open --show 看板  或  "
+              "python tools/orchestrator.py run --max 5 让它自己跑")
+    elif counts.get("完成") == total:
+        print("\n   全部完成 🎉   下一步：board add 建新卡")
+    print()
+
+
+def cmd_stats(a):
+    if not CARDS.exists():
+        print("（看板为空）")
+        return
+    counts = {}
+    total = 0
+    for d in CARDS.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            st = replay(d.name)
+        except Exception:
+            continue
+        total += 1
+        counts[st["state"]] = counts.get(st["state"], 0) + 1
+    print(f"项目：{ROOT.name}  （{ROOT}）")
+    print(f"共 {total} 张卡\n")
+    for s in STATES:
+        n = counts.get(s, 0)
+        if n:
+            bar = "█" * min(n, 30)
+            print(f"  {s:<6} {n:>3}  {bar}")
+    if total:
+        done = counts.get("完成", 0)
+        print(f"\n完成率 {done}/{total} = {done/total*100:.0f}%")
+
+
+def cmd_open(a):
+    """打开/刷新看板页。最常用的一条命令。"""
+    cmd_html(a)
+    out = BOARD / "board.html"
+    print(f"\n  {out}")
+    if a.show:
+        try:
+            import webbrowser
+            webbrowser.open(out.as_uri())
+        except Exception:
+            pass
+
 
 def main():
-    p = argparse.ArgumentParser(prog="board", description="多 agent 共享看板")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(
+        prog="board",
+        description="单人用的多 agent 编排看板（多项目）",
+        epilog="最常用：board ls ｜ board open ｜ board add --title ... ｜ board human <卡号>")
+    p.add_argument("-C", "--root", help="指定项目目录（默认从当前目录向上找）")
+    p.add_argument("-p", "--project", help="按注册表里的项目名切换")
+    sub = p.add_subparsers(dest="cmd", required=False)
 
     s = sub.add_parser("init", help="初始化看板")
     s.set_defaults(f=cmd_init)
 
-    s = sub.add_parser("new", help="建卡（人建）")
+    s = sub.add_parser("project", help="项目管理：add / ls / rm / default")
+    s.add_argument("action", choices=["add", "ls", "rm", "default"])
+    s.add_argument("path", nargs="?")
+    s.add_argument("--name")
+    s.add_argument("--engine")
+    s.add_argument("--model")
+    s.add_argument("--effort")
+    s.set_defaults(f=cmd_project)
+
+    s = sub.add_parser("stats", help="一眼看数字")
+    s.set_defaults(f=cmd_stats)
+
+    s = sub.add_parser("open", help="生成并打开看板页（最常用）")
+    s.add_argument("--show", action="store_true", help="生成后自动用浏览器打开")
+    s.set_defaults(f=cmd_open)
+
+    s = sub.add_parser("add", help="建卡（人建，等价于 new）")
     s.add_argument("--title", required=True)
     s.add_argument("--goal")
     s.add_argument("--territory", nargs="*", help="可写领地（路径）")
@@ -1000,6 +1105,23 @@ def main():
     s.add_argument("--model", default="any", help="指定模型（如 deepseek-v4.1-flash）")
     s.add_argument("--effort", default="any",
                    help="思考强度：low/medium/high/max/any")
+    s.add_argument("--id")
+    s.add_argument("--seat")
+    s.set_defaults(f=cmd_new)
+
+    # new 是 add 的别名（保持旧脚本可用）
+    s = sub.add_parser("new", help="建卡（add 的别名）")
+    s.add_argument("--title", required=True)
+    s.add_argument("--goal")
+    s.add_argument("--territory", nargs="*")
+    s.add_argument("--deliverable", nargs="*")
+    s.add_argument("--accept", nargs="*")
+    s.add_argument("--human-gate", default="none",
+                   choices=["none", "before_done", "both"])
+    s.add_argument("--irreversible", action="store_true")
+    s.add_argument("--engine", default="any")
+    s.add_argument("--model", default="any")
+    s.add_argument("--effort", default="any")
     s.add_argument("--id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_new)
@@ -1091,7 +1213,27 @@ def main():
     s = sub.add_parser("html", help="生成看板页")
     s.set_defaults(f=cmd_html)
 
+    s = sub.add_parser("overview", help="跨项目总览页")
+    s.set_defaults(f=cmd_overview)
+
     a = p.parse_args()
+
+    # 多项目解析：--root > --project > 自动向上找 > 当前目录
+    import projects as P
+    if a.project:
+        entry = P.find_project(a.project)
+        if not entry:
+            die(f"没找到项目「{a.project}」。用 board project ls 看已登记的")
+        if not Path(entry["path"]).exists():
+            die(f"项目目录不存在：{entry['path']}")
+        root = Path(entry["path"])
+    else:
+        root = P.resolve_root(a.root)
+
+    set_root(root)
+    P.ensure_root(root)
+    if not a.cmd:
+        return cmd_bare(a)
     a.f(a)
 
 

@@ -108,6 +108,24 @@
       "kind": "resume_skip_done",
       "desc": "续跑必须跳过已完成卡（不重做）",
       "expect": {"action": "SKIP"}
+    },
+    {
+      "id": "R16",
+      "kind": "project_isolation",
+      "desc": "多项目：不同 root 的卡互不可见",
+      "expect": {"isolated": true}
+    },
+    {
+      "id": "R17",
+      "kind": "defaults_inherit",
+      "desc": "项目默认值必须被新建卡继承",
+      "expect": {"inherited": true}
+    },
+    {
+      "id": "R18",
+      "kind": "parallel_conflict",
+      "desc": "并行收工：交付物冲突必须被检出",
+      "expect": {"conflict": true}
     }
   ]
 }

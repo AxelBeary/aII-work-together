@@ -215,6 +215,91 @@ def k_resume_skip(case, cid):
     return action == case["expect"]["action"], f"action={action}"
 
 
+def k_project_isolation(case, cid):
+    """两个不同 root 各建一张同名卡，状态必须互不影响。"""
+    import tempfile
+    import projects as P
+    a = Path(tempfile.mkdtemp(prefix="rg-iso-a-"))
+    b = Path(tempfile.mkdtemp(prefix="rg-iso-b-"))
+    old_root = B.ROOT
+    try:
+        B.set_root(a)
+        new_card(cid)
+        B.claim(cid, "wa", "opencode")
+        st_a = B.replay(cid)["state"]
+
+        B.set_root(b)
+        # b 里根本没这张卡
+        exists_in_b = (B.CARDS / cid).exists()
+        st_b = None
+        if exists_in_b:
+            st_b = B.replay(cid)["state"]
+    finally:
+        B.set_root(old_root)
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
+
+    ok = (st_a == "进行中") and (not exists_in_b)
+    return ok == case["expect"]["isolated"], \
+        f"a={st_a} b_exists={exists_in_b}"
+
+
+def k_defaults_inherit(case, cid):
+    """项目默认值应被新卡继承。"""
+    import projects as P
+    reg = P._load_registry()
+    entry = None
+    for p in reg["projects"]:
+        if Path(p["path"]).resolve() == B.ROOT.resolve():
+            entry = p
+            break
+    if entry is None:
+        entry = {"name": B.ROOT.name, "path": str(B.ROOT), "defaults": {}}
+        reg["projects"].append(entry)
+    old = dict(entry.get("defaults") or {})
+    entry["defaults"] = {"engine": "opencode",
+                         "model": "opencode-go/deepseek-v4.1-flash",
+                         "effort": "high"}
+    P._save_registry(reg)
+    try:
+        ns = type("A", (), {
+            "id": cid, "title": "t", "goal": "", "territory": [],
+            "deliverable": [], "accept": [], "human_gate": "none",
+            "irreversible": False, "engine": "any", "model": "any",
+            "effort": "any", "seat": "regression", "from_card": None,
+        })()
+        B.cmd_new(ns)
+        card = B.jread(B.CARDS / cid / "card.json")
+        got = (card["engine"], card["model"], card["effort"])
+        want = ("opencode", "opencode-go/deepseek-v4.1-flash", "high")
+        ok = got == want
+    finally:
+        entry["defaults"] = old
+        P._save_registry(reg)
+    return ok == case["expect"]["inherited"], f"got={got}"
+
+
+def k_parallel_conflict(case, cid):
+    """并行收工：主树已有不同内容时必须报冲突。"""
+    import parallel as PL
+    rel = f"tests/regression/{cid}-conflict.md"
+    main = ROOT / rel
+    main.parent.mkdir(parents=True, exist_ok=True)
+    main.write_text("主树版本", encoding="utf-8")
+
+    wt = ROOT / PL.WT_DIR / cid
+    wt.mkdir(parents=True, exist_ok=True)
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text("worktree 版本（不同）", encoding="utf-8")
+    try:
+        copied, conflicts = PL.collect(cid, [rel])
+        got = bool(conflicts) and not copied
+    finally:
+        shutil.rmtree(wt, ignore_errors=True)
+        main.unlink(missing_ok=True)
+    return got == case["expect"]["conflict"], f"conflicts={bool(got)}"
+
+
 HANDLERS = {
     "concurrency": k_concurrency,
     "spec_mismatch": lambda c, i: k_spec(c, i, True),
@@ -228,6 +313,9 @@ HANDLERS = {
     "chain_insert": k_chain,
     "state_rework": k_state_rework,
     "resume_skip_done": k_resume_skip,
+    "project_isolation": k_project_isolation,
+    "defaults_inherit": k_defaults_inherit,
+    "parallel_conflict": k_parallel_conflict,
 }
 
 

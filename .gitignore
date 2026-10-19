@@ -12,6 +12,7 @@ build/
 Thumbs.db
 __pycache__/
 *.pyc
+.worktrees/
 
 # 看板运行时数据（卡片是本地状态，不进库；产出物 artifacts 保留）
 board/cards/

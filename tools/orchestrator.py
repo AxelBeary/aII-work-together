@@ -130,7 +130,7 @@ def parse_review(text: str) -> tuple:
 
 
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
-            dry: bool = False, panel: list = None) -> str:
+            dry: bool = False, panel: list = None, use_worktree: bool = False) -> str:
     """跑完一张卡的全流程。返回最终状态。"""
     card = B.jread(B.card_dir(cid) / "card.json")
 
@@ -150,11 +150,37 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"[dry] 会给 {engine} 发 {len(prompt)} 字符的提示", "step")
         return "dry"
 
+    # 并行模式：在独立 worktree 里跑，避免踩别人的文件
+    work_dir = str(ROOT)
+    if use_worktree:
+        import parallel as PL
+        try:
+            wt = PL.create(cid)
+            work_dir = str(wt)
+            log(f"用独立 worktree：{wt.name}", "step")
+        except Exception as e:
+            log(f"worktree 建不起来，退回主树：{e}", "warn")
+
     log(f"调 {engine}（模型 {model or '默认'}）…", "step")
     t0 = time.time()
-    res = E.run(engine, prompt, cwd=str(ROOT), model=model, effort=effort)
+    res = E.run(engine, prompt, cwd=work_dir, model=model, effort=effort)
     dur = time.time() - t0
     log(f"{engine} 返回 ok={res.ok} 用时 {dur:.0f}s", "ok" if res.ok else "err")
+
+    # 收工：把 worktree 里的交付物拷回主树
+    if use_worktree:
+        import parallel as PL
+        copied, conflicts = PL.collect(cid, card.get("deliverables", []))
+        if copied:
+            log(f"拷回 {len(copied)} 个交付物", "ok")
+        if conflicts:
+            B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
+                                 "reason": "并行冲突：" + "；".join(conflicts)[:200]})
+            PL.remove(cid)
+            B.release(cid)
+            log(f"交付物冲突，判阻塞：{conflicts[0][:80]}", "err")
+            return "conflict"
+        PL.remove(cid)
 
     # 存档原始回执（证据）
     ev_dir = B.card_dir(cid) / "evidence"
@@ -280,16 +306,17 @@ def count_attempts(cid: str) -> int:
 
 
 def cmd_run(a):
-    log(f"编排器启动：引擎={a.engine} 席={a.seat} 上限={a.max} 次", "step")
+    log(f"编排器启动：引擎={a.engine} 席={a.seat} 上限={a.max} 次"
+        + (f" 并行={a.parallel}" if a.parallel > 1 else ""), "step")
     if a.engine == "opencode" and not a.model:
         a.model = E.DEFAULT_MODELS.get("opencode")
         log(f"opencode 未指定模型 → 用默认 {a.model}", "warn")
 
     results = []
-    rounds = 0
-    while rounds < a.max:
-        rounds += 1
-        target, best_score = None, -1
+
+    def pick(limit):
+        """挑最多 limit 张能接的卡（精确匹配优先）。"""
+        cand = []
         for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
             if not d.is_dir():
                 continue
@@ -300,8 +327,7 @@ def cmd_run(a):
                 continue
             if st["state"] not in ("待认领", "阻塞", "待返工"):
                 continue
-            miss = B._match_miss(card, a.engine, a.model, a.effort)
-            if miss:
+            if B._match_miss(card, a.engine, a.model, a.effort):
                 continue
             score = 0
             if card.get("engine", "any") == a.engine:
@@ -310,20 +336,42 @@ def cmd_run(a):
                 score += 1
             if a.effort and card.get("effort", "any") == a.effort:
                 score += 1
-            if score > best_score:
-                best_score, target = score, d.name
+            cand.append((score, d.name))
+        cand.sort(reverse=True)
+        return [c for _, c in cand[:limit]]
 
-        if not target:
+    if a.parallel > 1:
+        # ---- 并行模式：每卡一个 worktree，同时跑 ----
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        targets = pick(a.max)
+        if not targets:
             log("没有可接的卡，收工", "ok")
-            break
-
-        log(f"[{rounds}/{a.max}] 处理 {target}", "step")
-        outcome = run_one(target, a.engine, a.seat, a.model, a.effort,
-                          a.dry_run, panel=a.panel)
-        results.append((target, outcome))
-
-        if a.dry_run:
-            break
+            return 0
+        log(f"并行跑 {len(targets)} 张：{', '.join(targets)}", "step")
+        with ThreadPoolExecutor(max_workers=min(a.parallel, len(targets))) as ex:
+            futs = {ex.submit(run_one, t, a.engine, a.seat, a.model, a.effort,
+                              a.dry_run, a.panel, True): t for t in targets}
+            for f in as_completed(futs):
+                t = futs[f]
+                try:
+                    results.append((t, f.result()))
+                except Exception as e:
+                    results.append((t, f"error: {e}"))
+    else:
+        rounds = 0
+        while rounds < a.max:
+            rounds += 1
+            t = pick(1)
+            if not t:
+                log("没有可接的卡，收工", "ok")
+                break
+            target = t[0]
+            log(f"[{rounds}/{a.max}] 处理 {target}", "step")
+            results.append((target, run_one(target, a.engine, a.seat, a.model,
+                                            a.effort, a.dry_run, panel=a.panel,
+                                            use_worktree=False)))
+            if a.dry_run:
+                break
 
     print()
     log("=== 本轮汇总 ===", "step")
@@ -422,6 +470,8 @@ def main():
     s.add_argument("--model", default=None)
     s.add_argument("--effort", default=None)
     s.add_argument("--max", type=int, default=5, help="最多处理几张卡")
+    s.add_argument("--parallel", type=int, default=1,
+                   help="并行数（>1 时每卡一个 git worktree）；建议 2-3，引擎会抢资源")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--panel", nargs="*", default=None,
                    help="专家团复核（如 --panel security skeptic simplifier）；不给=单席复核")
