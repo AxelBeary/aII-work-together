@@ -566,6 +566,7 @@ def cmd_resume(a):
 
 def main():
     p = argparse.ArgumentParser(prog="orchestrator", description="自主编排器")
+    p.add_argument("-C", "--root", help="指定项目目录（默认用脚本所在项目）")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("run", help="跑一轮（自动认领→执行→复核→返工）")
@@ -609,6 +610,10 @@ def main():
                                 for k, v in E.available().items()])
 
     a = p.parse_args()
+    if getattr(a, "root", None):
+        import projects as P
+        B.set_root(Path(a.root).resolve())
+        B.set_workspace(P.workspace_of(Path(a.root).resolve()))
     a.f(a)
 
 

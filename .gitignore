@@ -23,7 +23,11 @@ board/board.db-wal
 board/board.db-shm
 board/evidence/
 board/MIGRATED.txt
+board/tray.log
 .worktrees/
+
+# 托盘程序是编译产物（源码在 tray/BoardTray.cs）
+tray/boardtray.exe
 
 # 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
 .opencode/memory/

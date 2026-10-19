@@ -1,9 +1,14 @@
 # allworktogether
 
-> **单人用的多 agent 编排看板**：让本机所有 AI agent 在同一块板上分工协作，全程可追责。
+> **单人／小团队用的多 agent 编排看板**：让本机所有 AI agent 在同一块板上分工协作，全程可追责。
 
-## 三分钟上手
+## 最快的用法：右下角托盘
 
+双击 `tray\tray.cmd` → 右下角出现「板」图标 → 双击打开网页看板，右键可「跑一轮」。
+
+原生 C# 壳（14 KB），**不是 Electron**。详见 [`docs/托盘.md`](docs/托盘.md)。
+
+## 三分钟上手（命令行）
 ```bash
 # 1. 在任意项目目录，设一次默认值（只做一次）
 python <本项目>/tools/board.py project default --engine opencode --model opencode-go/deepseek-v4.1-flash

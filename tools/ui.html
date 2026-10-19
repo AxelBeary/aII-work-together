@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>看板</title>
+<style>
+:root{
+  --bg:#0e1014; --panel:#15181e; --card:#1b1f27; --line:#2a303a;
+  --fg:#e8eaed; --mut:#8b94a1; --acc:#5aa9ff; --ok:#3fb950; --warn:#d9a441; --err:#f85149;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:none;border-radius:8px;padding:9px 16px;transition:.15s}
+button:disabled{opacity:.45;cursor:not-allowed}
+.btn{background:#252b35;color:var(--fg)}
+.btn:hover:not(:disabled){background:#2f3742}
+.btn-primary{background:var(--acc);color:#06121f;font-weight:600}
+.btn-primary:hover:not(:disabled){background:#7dbcff}
+.btn-ok{background:#1d5f33;color:#c6ffd8}
+.btn-ok:hover:not(:disabled){background:#25753f}
+.btn-err{background:#5f1d1d;color:#ffd0d0}
+.btn-err:hover:not(:disabled){background:#7a2626}
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);
+  background:var(--panel);position:sticky;top:0;z-index:10;flex-wrap:wrap}
+h1{font-size:16px;font-weight:600}
+.sub{color:var(--mut);font-size:12px}
+.spacer{flex:1}
+select,input,textarea{background:#11141a;color:var(--fg);border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px;font:inherit;outline:none}
+select:focus,input:focus,textarea:focus{border-color:var(--acc)}
+textarea{resize:vertical;min-height:70px;width:100%}
+main{padding:18px 22px 60px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:92px}
+.stat b{display:block;font-size:20px;line-height:1.2}
+.stat span{color:var(--mut);font-size:11px}
+.board{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:12px}
+.col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
+  justify-content:space-between;color:#c8d0da}
+.col h2 em{color:var(--mut);font-style:normal}
+.col body,.col .list{padding:9px;display:flex;flex-direction:column;gap:8px;min-height:40px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer}
+.card:hover{border-color:#3c4757;background:#20252e}
+.card .id{font-size:11px;color:var(--acc);font-family:ui-monospace,Consolas,monospace}
+.card .t{font-weight:600;margin:3px 0 6px;font-size:13px;line-height:1.45}
+.card .g{color:var(--mut);font-size:12px;margin-bottom:7px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tags{display:flex;gap:5px;flex-wrap:wrap;font-size:10px}
+.tag{padding:1px 7px;border-radius:20px;background:#252b35;color:#a9b4c4}
+.tag.gate{background:#3d2f18;color:#f0c98a}
+.tag.rw{background:#3d1c1c;color:#ff9c9c}
+.tag.ai{background:#173d28;color:#8cffb4}
+.tag.cost{background:#20283a;color:#9fb8e0}
+.empty{color:#39414d;text-align:center;padding:14px;font-size:12px}
+dialog{border:none;border-radius:14px;background:var(--panel);color:var(--fg);
+  padding:0;width:min(680px,92vw);max-height:88vh;box-shadow:0 20px 60px #000a}
+dialog::backdrop{background:#000b}
+.dhead{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.dbody{padding:18px 20px;overflow:auto;max-height:calc(88vh - 130px)}
+.dfoot{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end;
+  flex-wrap:wrap}
+label{display:block;font-size:12px;color:var(--mut);margin:14px 0 6px}
+label:first-child{margin-top:0}
+.row{display:flex;gap:10px}
+.row>*{flex:1}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:6px 12px;font-size:13px;margin:10px 0}
+.kv dt{color:var(--mut)}
+.kv dd{word-break:break-word}
+.ev{font-size:12px;border-left:2px solid var(--line);padding:4px 0 4px 12px;margin:8px 0;color:#b8c1cd}
+.ev b{color:var(--fg)}
+.toast{position:fixed;right:20px;bottom:20px;background:#1f2731;border:1px solid var(--line);
+  border-radius:10px;padding:12px 18px;box-shadow:0 10px 30px #000a;opacity:0;transform:translateY(10px);
+  transition:.2s;max-width:420px;z-index:99}
+.toast.show{opacity:1;transform:none}
+.toast.err{border-color:#6b2b2b;background:#2a1a1a}
+.hint{color:var(--mut);font-size:12px;margin-top:6px}
+.log{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:12px;
+  font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;
+  max-height:240px;overflow:auto;color:#a9b4c4}
+.pill{display:inline-block;padding:2px 9px;border-radius:20px;background:#252b35;font-size:11px;color:#a9b4c4}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>看板</h1>
+  <select id="proj" title="切换项目"></select>
+  <span class="sub" id="projinfo"></span>
+  <div class="spacer"></div>
+  <button class="btn" id="btn-refresh">刷新</button>
+  <button class="btn" id="btn-run">跑一轮</button>
+  <button class="btn-primary" id="btn-new">+ 新建任务</button>
+</header>
+
+<main>
+  <div class="stats" id="stats"></div>
+  <div class="board" id="board"></div>
+</main>
+
+<dialog id="dlg-new">
+  <div class="dhead"><h2 style="font-size:15px">新建任务</h2><div class="spacer"></div>
+    <span class="sub">说清「要什么」就行，其余默认</span></div>
+  <div class="dbody">
+    <label>标题（一句话说做什么）</label>
+    <input id="f-title" placeholder="例：给 README 加常见问题" style="width:100%">
+    <label>目标（什么样算做完）</label>
+    <textarea id="f-goal" placeholder="例：回答三个新手问题，每条不超过两句"></textarea>
+    <div class="row">
+      <div><label>产出文件路径</label><input id="f-deliv" placeholder="board/artifacts/xxx.md" style="width:100%"></div>
+      <div><label>必须包含的字眼</label><input id="f-accept" placeholder="例：常见问题" style="width:100%"></div>
+    </div>
+    <div class="row">
+      <div><label>引擎</label><select id="f-engine" style="width:100%">
+        <option value="">用项目默认</option><option>opencode</option><option>qoderclicn</option></select></div>
+      <div><label>模型（留空=默认）</label><input id="f-model" style="width:100%"></div>
+      <div><label>思考强度</label><select id="f-effort" style="width:100%">
+        <option value="">默认</option><option>low</option><option>medium</option>
+        <option>high</option><option>max</option></select></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:16px">
+      <input type="checkbox" id="f-gate" style="width:auto" checked>
+      必须我拍板才算完成
+    </label>
+    <div class="hint">勾上后：agent 做完会停在「等你拍板」，你看一眼再决定批准或驳回。</div>
+  </div>
+  <div class="dfoot">
+    <button class="btn" onclick="dlgNew.close()">取消</button>
+    <button class="btn-primary" id="btn-create">创建</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-card">
+  <div class="dhead"><h2 style="font-size:15px" id="c-title">—</h2><div class="spacer"></div>
+    <span class="pill" id="c-state">—</span></div>
+  <div class="dbody" id="c-body"></div>
+  <div class="dfoot" id="c-foot"></div>
+</dialog>
+
+<dialog id="dlg-run">
+  <div class="dhead"><h2 style="font-size:15px">跑一轮</h2><div class="spacer"></div>
+    <span class="sub" id="run-state"></span></div>
+  <div class="dbody">
+    <div class="row">
+      <div><label>最多处理几张</label><input id="f-max" type="number" value="3" min="1" max="20" style="width:100%"></div>
+      <div><label>引擎</label><select id="f-run-engine" style="width:100%">
+        <option>opencode</option><option>qoderclicn</option></select></div>
+    </div>
+    <div class="hint">它会自己找活、执行、复核、返工；需要你拍板的会停下等你。</div>
+    <label>运行输出</label>
+    <div class="log" id="run-log">（还没开始）</div>
+  </div>
+  <div class="dfoot">
+    <button class="btn" onclick="dlgRun.close()">关闭</button>
+    <button class="btn-primary" id="btn-run-start">开始</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","核验中","拍板中","完成"];
+let CUR = {project:null, cards:[], state:null};
+let pollTimer = null;
+
+function toast(msg, isErr){
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>{ t.className = "toast"; }, 3600);
+}
+
+async function api(path, opt){
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({error:"返回不是 JSON"}));
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+
+const q = () => "?project=" + encodeURIComponent(CUR.project || "");
+
+async function loadState(){
+  const s = await api("/api/state" + q());
+  CUR.state = s;
+  CUR.project = CUR.project || s.current;
+  const sel = $("proj");
+  sel.innerHTML = s.projects.map(p =>
+    `<option value="${p.name}" ${p.name===CUR.project?"selected":""}>${p.name}（${p.cards}）</option>`
+  ).join("");
+  $("projinfo").textContent = s.current_path;
+  return s;
+}
+
+function statCards(s){
+  const c = s.counts || {};
+  const items = [
+    ["全部", s.total],
+    ["进行中", c["进行中"]||0],
+    ["待拍板", c["拍板中"]||0],
+    ["待验收", (c["待验收"]||0)+(c["核验中"]||0)],
+    ["完成", c["完成"]||0],
+  ];
+  $("stats").innerHTML = items.map(([k,v]) =>
+    `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+}
+
+function cardHtml(c){
+  const tags = [];
+  if(c.engine && c.engine!=="any") tags.push(`<span class="tag">${c.engine}</span>`);
+  if(c.model && c.model!=="any") tags.push(`<span class="tag">${String(c.model).split('/').pop()}</span>`);
+  if(c.human_gate && c.human_gate!=="none") tags.push(`<span class="tag gate">需你拍板</span>`);
+  if(c.rework) tags.push(`<span class="tag rw">返工 ${c.rework}</span>`);
+  if(c.created_kind==="agent") tags.push(`<span class="tag ai">AI 发布</span>`);
+  if(c.usage && c.usage.available) tags.push(`<span class="tag cost">$${c.usage.cost.toFixed(4)}</span>`);
+  const blk = c.blocked_reason ? `<div class="g" style="color:#d9a441">${esc(c.blocked_reason).slice(0,60)}</div>` : "";
+  return `<div class="card" data-id="${c.id}">
+    <div class="id">${c.id}</div>
+    <div class="t">${esc(c.title)}</div>
+    ${c.goal?`<div class="g">${esc(c.goal)}</div>`:""}
+    ${blk}
+    <div class="tags">${tags.join("")}</div>
+  </div>`;
+}
+
+function esc(s){ return String(s??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+function render(cards){
+  const by = {};
+  STATE_ORDER.forEach(s => by[s]=[]);
+  cards.forEach(c => (by[c.state] || (by[c.state]=[])).push(c));
+  $("board").innerHTML = STATE_ORDER.map(s => {
+    const list = by[s]||[];
+    if(!list.length && ["核验中","待返工","阻塞"].includes(s)) return "";
+    const inner = list.length
+      ? list.map(cardHtml).join("")
+      : `<div class="empty">—</div>`;
+    return `<div class="col"><h2>${s}<em>${list.length}</em></h2><div class="list">${inner}</div></div>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(el =>
+    el.addEventListener("click", ()=>openCard(el.dataset.id)));
+}
+
+async function refresh(){
+  try{
+    const s = await loadState();
+    const d = await api("/api/cards" + q());
+    CUR.cards = d.cards;
+    statCards(s);
+    render(d.cards);
+  }catch(e){ toast("刷新失败："+e.message, true); }
+}
+
+function startPoll(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(()=>{ if(!document.querySelector("dialog[open]")) refresh(); }, 5000);
+}
+
+/* ---------- 单卡详情 ---------- */
+async function openCard(id){
+  try{
+    const c = await api("/api/card"+q()+"&id="+encodeURIComponent(id));
+    $("c-title").textContent = c.title;
+    $("c-state").textContent = c.state;
+    const kv = [];
+    kv.push(["编号", c.id]);
+    if(c.goal) kv.push(["目标", c.goal]);
+    if(c.holder) kv.push(["当前执行", c.holder]);
+    if(c.deliverables && c.deliverables.length) kv.push(["产出", c.deliverables.join("、")]);
+    if(c.review_verdict) kv.push(["复核", `${c.review_verdict}（${c.review_seat}）`]);
+    if(c.review_evidence) kv.push(["凭据", c.review_evidence]);
+    if(c.gate_problems && c.gate_problems.length) kv.push(["未过项", c.gate_problems.join("；")]);
+    if(c.usage && c.usage.available)
+      kv.push(["花费", `$${c.usage.cost.toFixed(4)}（入 ${c.usage.input} / 出 ${c.usage.output} / 缓存 ${c.usage.cache_read+c.usage.cache_write}）`]);
+    if(c.blocked_reason) kv.push(["阻塞", c.blocked_reason]);
+
+    const events = (c.events||[]).map(e =>
+      `<div class="ev"><b>${e.type}</b> <span style="color:#6c7683">${e.seq} · ${(e.at||"").slice(11,19)}</span>
+        ${e.seat?` · ${esc(e.seat)}`:""}
+        ${e.verdict?` · ${e.verdict}`:""}
+        ${e.note?`<br>${esc(e.note).slice(0,200)}`:""}
+        ${e.evidence?`<br><span style="color:#6c7683">${esc(e.evidence).slice(0,180)}</span>`:""}
+      </div>`).join("");
+
+    $("c-body").innerHTML = `<dl class="kv">` +
+      kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>
+      <label>经过</label>${events || '<div class="empty">—</div>'}`;
+
+    const foot = [];
+    if(c.state === "拍板中"){
+      foot.push(`<input id="reject-note" placeholder="驳回理由（会传给下一轮）" style="flex:1;min-width:200px">`);
+      foot.push(`<button class="btn-err" id="btn-reject">驳回</button>`);
+      foot.push(`<button class="btn-ok" id="btn-approve">批准</button>`);
+    }
+    foot.push(`<button class="btn" onclick="dlgCard.close()">关闭</button>`);
+    $("c-foot").innerHTML = foot.join("");
+    if(c.state === "拍板中"){
+      $("btn-approve").onclick = () => human(c.id, "approve", "");
+      $("btn-reject").onclick = () => {
+        const n = ($("reject-note").value||"").trim();
+        if(!n) return toast("驳回要写理由", true);
+        human(c.id, "reject", n);
+      };
+    }
+    dlgCard.showModal();
+  }catch(e){ toast("打开失败："+e.message, true); }
+}
+
+async function human(id, decision, note){
+  try{
+    await api("/api/human", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project:CUR.project, id, decision, note, who:"owner"})});
+    dlgCard.close();
+    toast(decision==="approve" ? "已批准" : "已驳回，agent 下轮会按你的理由改");
+    refresh();
+  }catch(e){
+    toast(e.message, true);
+  }
+}
+
+/* ---------- 新建 ---------- */
+const dlgNew = $("dlg-new"), dlgCard = $("dlg-card"), dlgRun = $("dlg-run");
+
+$("btn-new").onclick = () => dlgNew.showModal();
+$("btn-refresh").onclick = () => { refresh(); toast("已刷新"); };
+$("btn-run").onclick = () => { dlgRun.showModal(); pollRun(); };
+$("proj").onchange = e => { CUR.project = e.target.value; refresh(); };
+
+$("btn-create").onclick = async () => {
+  const body = {
+    project: CUR.project,
+    title: $("f-title").value,
+    goal: $("f-goal").value,
+    deliverables: $("f-deliv").value ? [$("f-deliv").value.trim()] : [],
+    accept: $("f-accept").value ? [$("f-accept").value.trim()] : [],
+    human_gate: $("f-gate").checked ? "before_done" : "none",
+    engine: $("f-engine").value || undefined,
+    model: $("f-model").value || undefined,
+    effort: $("f-effort").value || undefined,
+  };
+  try{
+    const r = await api("/api/card", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)});
+    dlgNew.close();
+    $("f-title").value = ""; $("f-goal").value=""; $("f-deliv").value=""; $("f-accept").value="";
+    toast("已创建：" + r.id);
+    refresh();
+  }catch(e){ toast(e.message, true); }
+};
+
+/* ---------- 跑一轮 ---------- */
+let runPoll = null;
+async function pollRun(){
+  try{
+    const r = await api("/api/run/log");
+    $("run-log").textContent = r.log || "（还没开始）";
+    $("run-state").textContent = r.running ? "运行中…" : "空闲";
+    $("btn-run-start").disabled = r.running;
+    if(!r.running && runPoll){ clearInterval(runPoll); runPoll=null; refresh(); }
+  }catch(e){}
+}
+$("btn-run-start").onclick = async () => {
+  try{
+    await api("/api/run", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project:CUR.project, max:Number($("f-max").value)||3,
+                            engine:$("f-run-engine").value})});
+    toast("已开始，输出会实时显示");
+    if(!runPoll) runPoll = setInterval(pollRun, 2000);
+    pollRun();
+  }catch(e){ toast(e.message, true); }
+};
+
+refresh().then(startPoll);
+</script>
+</body>
+</html>
