@@ -21,32 +21,62 @@ python tools/board.py html
 ## 编排器（全自动，无人值守）
 
 ```
-python tools/orchestrator.py run --engine opencode --model opencode-go/deepseek-v4.1-flash --max 5
+python tools/orchestrator.py run --engine opencode --max 5
 ```
 
-它每一轮做这些事，**全自动**：
+**加专家团复核**（多视角，取最严）：
+
+```
+python tools/orchestrator.py run --engine opencode --panel security skeptic simplifier --max 5
+```
 
 | 步骤 | 它做什么 |
 |---|---|
 | 1 找活 | 按引擎／模型／思考强度匹配，**精确匹配优先** |
-| 2 认领 | 原子独占创建，抢不到就换下一张 |
+| 2 认领 | **固定名目录 + `os.mkdir`** 原子独占（实测 12 线程只有 1 个成功） |
 | 3 执行 | 调引擎，把卡变成提示词（含领地、交付物、必含项） |
-| 4 提交 | **自动跑 L1-L3**：产物在不在、形制对不对、必含项命中没 |
-| 5 复核 | **换一个会话**独立核验，不给凭据不算过 |
-| 6 返工 | 复核 FAIL → 自动重派；**3 次不过转阻塞**，不死循环 |
+| 4 提交 | **自动跑 L1-L3** |
+| 5 复核 | 单席或**专家团**；取最严，任一 FAIL 即 FAIL |
+| 6 返工 | FAIL → 状态转「待返工」，**能被重新认领**；3 次不过转阻塞 |
 | 7 人闸 | 需要拍板的转「拍板中」停下等你 |
+| 8 记账 | 自动追加 `DELEGATION-LEDGER.md` |
 
-**先看它会干什么（不真跑）**：
+**先看它会干什么**：`--dry-run`
+
+---
+
+## 专家团（多视角审一遍）
+
+| 角色 | 它专门看什么 |
+|---|---|
+| `security` | 能不能绕过、密钥会不会泄漏、权限边界 |
+| `skeptic` | 这件事到底该不该做、有没有更简单的做法 |
+| `simplifier` | 哪些没人用、哪些该砍、哪些过度设计 |
+| `architect` | 模块边界、失败怎么退化、以后改起来痛不痛 |
+| `perf` | 慢在哪、量级对不对 |
+| `ux` | 新用户能不能三分钟上手、错误信息说不说人话 |
+| `reviewer` / `worker` / `lead` / `researcher` | 基础四席（对应 AGENTS.md §3） |
 
 ```
-python tools/orchestrator.py run --engine opencode --max 1 --dry-run
+python tools/orchestrator.py run --engine opencode --panel security skeptic
 ```
 
-**看整体状态**：
+---
 
+## 子代理（独立会话，可并行）
+
+```python
+import subagents
+res = subagents.spawn([
+    {"task": "查 A", "name": "a"},
+    {"task": "查 B", "name": "b", "role": "skeptic"},
+], model="opencode-go/deepseek-v4.1-flash")
+print(subagents.gather_summary(res))
 ```
-python tools/orchestrator.py status
-```
+
+- 每个子代理**独立上下文**，互不污染
+- 带 `session_id` 可续接（实测：第一轮记住 42，第二轮答出 42）
+- `parallel=True` 可并行，但本机引擎会抢资源，建议 ≤2
 
 ---
 

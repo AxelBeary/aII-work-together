@@ -124,8 +124,17 @@ def _exec(cmd, cwd, timeout, stdin_text=None):
 
 
 def run(engine: str, prompt: str, cwd: str = None, model: str = None,
-        effort: str = None, timeout: int = 1800, extra_args: list = None) -> Result:
-    """跑一个引擎。返回 Result（含结构化回执解析结果）。"""
+        effort: str = None, timeout: int = 1800, extra_args: list = None,
+        session_id: str = None, agent: str = None, fork: bool = False,
+        continue_last: bool = False) -> Result:
+    """跑一个引擎。返回 Result（含结构化回执解析结果）。
+
+    会话能力（opencode 实测可用，2026-10-19）：
+      session_id    续接指定会话（上下文全在）
+      continue_last 续最近一个会话
+      fork          续接时先分叉（保留原会话）
+      agent         指定子代理（build/plan/general/explore）
+    """
     engine = (engine or "").lower()
     if engine not in ("opencode", "qoderclicn", "codex", "hermes"):
         r = Result(engine)
@@ -145,13 +154,26 @@ def run(engine: str, prompt: str, cwd: str = None, model: str = None,
         cmd = ["opencode", "run", "--format", "json"]
         if model:
             cmd += ["--model", model]
+        if agent:
+            cmd += ["--agent", agent]
+        if session_id:
+            cmd += ["--session", session_id]
+        elif continue_last:
+            cmd += ["--continue"]
+        if fork:
+            cmd += ["--fork"]
         if extra_args:
             cmd += extra_args
         return _run_opencode(cmd, cwd, timeout, prompt)
 
     if engine == "qoderclicn":
         # -p 是布尔旗标，正文走 stdin
-        cmd = ["qoderclicn", "-p", "-o", "json", "--no-session-persistence"]
+        cmd = ["qoderclicn", "-p", "-o", "json"]
+        if session_id:
+            # qoder 的会话续接：保留持久化 + 指定 session
+            cmd += ["--resume", session_id]
+        else:
+            cmd += ["--no-session-persistence"]
         if extra_args:
             cmd += extra_args
         return _run_qoder(cmd, cwd, timeout, prompt)

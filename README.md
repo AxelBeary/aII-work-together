@@ -24,15 +24,37 @@
 - **用法只看一条命令**：`python tools/orchestrator.py run --engine opencode --seat w1 --max 5`
 - 看板：`python tools/board.py html` → 双击 `board/board.html`（30s 自动刷新）。详见 [`docs/usage.md`](docs/usage.md)。
 
-## 三个文件就是全部
+## 五个文件就是全部
 
 | 文件 | 干什么 |
 |---|---|
-| `tools/board.py` | 看板本体：卡片、状态机、租约、闸门、看板页 |
-| `tools/engines.py` | 引擎适配层：opencode／qoderclicn／codex／hermes 的统一调用与**结构化回执解析** |
-| `tools/orchestrator.py` | 自主编排：自动找活、执行、复核、返工 |
+| `tools/board.py` | 看板本体：卡片、状态机、租约、闸门、哈希链、看板页 |
+| `tools/engines.py` | 引擎适配层：统一调用 + **结构化回执解析** + **会话续接** |
+| `tools/experts.py` | **专家团**：11 个角色（安全/怀疑论/简化/架构/性能/体验…） |
+| `tools/subagents.py` | **子代理**：独立会话、可并行、可续接、可追问 |
+| `tools/orchestrator.py` | 自主编排：找活→认领→执行→**专家团复核**→返工 |
 
 零依赖，Python 3.9+ 即可。
+
+## 三种协作模式
+
+| 模式 | 怎么用 | 适合 |
+|---|---|---|
+| **单席执行** | `orchestrator.py run --seat w1` | 日常干活 |
+| **专家团复核** | `--panel security skeptic simplifier` | 要人拍板前先多视角审一遍 |
+| **辩论** | `experts.py` 的 `debate()` | 有争议的方案 |
+
+## 会话间交流（实测可用）
+
+```python
+# 独立会话
+r1 = engines.run('opencode', '记住 42', model='...')
+# 续同一个会话（上下文全在）
+r2 = engines.run('opencode', '刚才那个数？', model='...', session_id=r1.session_id)
+# → 返回 42
+```
+
+子代理也支持追问：`subagent.follow_up("那如果改成 X 呢？")`
 
 ## 从哪读起
 

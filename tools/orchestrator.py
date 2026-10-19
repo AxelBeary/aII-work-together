@@ -130,7 +130,7 @@ def parse_review(text: str) -> tuple:
 
 
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
-            dry: bool = False) -> str:
+            dry: bool = False, panel: list = None) -> str:
     """跑完一张卡的全流程。返回最终状态。"""
     card = B.jread(B.card_dir(cid) / "card.json")
 
@@ -178,23 +178,45 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"闸门未过 → {st['state']}", "err")
         return "gate-failed"
 
-    # ---- 复核（必须异会话：换个 seat + 让引擎独立跑一次）----
+    # ---- 复核（必须异会话）----
+    # 单席模式：换 seat + 独立会话跑一次
+    # 专家团模式：多个视角各看一遍，取最严（任一 FAIL 即 FAIL）
     rseat = f"rev-{uuid.uuid4().hex[:4]}"
     rprompt = review_prompt(card, cid, st["submit"] or {})
-    log(f"派复核席 {rseat} 独立核验…", "step")
-    rres = E.run(engine, rprompt, cwd=str(ROOT), model=model, effort=effort)
-    (ev_dir / f"review__{rseat}__{uuid.uuid4().hex[:6]}.json").write_text(
-        json.dumps(rres.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if not rres.ok:
-        # 复核引擎失败 → 不能算过，也不能算返工
-        B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
-                             "reason": f"复核引擎失败：{rres.reason}"[:300]})
-        B.release(cid)
-        log(f"复核引擎失败：{rres.reason[:120]}", "err")
-        return "review-engine-failed"
-
-    verdict, evidence, reason = parse_review(rres.text)
+    if panel:
+        import experts
+        log(f"派专家团复核（{'/'.join(panel)}）…", "step")
+        votes = []
+        for ex in panel:
+            res_i = E.run(engine, experts.build_prompt(ex, rprompt),
+                          cwd=str(ROOT), model=model, effort=effort)
+            (ev_dir / f"panel__{ex}__{uuid.uuid4().hex[:6]}.json").write_text(
+                json.dumps(res_i.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8")
+            v, evd, rsn = parse_review(res_i.text) if res_i.ok else ("fail", "", res_i.reason)
+            votes.append({"expert": ex, "ok": res_i.ok, "verdict": v,
+                          "evidence": evd, "reason": rsn})
+            log(f"  {ex}: {v or '不可解析'}", "ok" if v == "pass" else "warn")
+        # 取最严：任一 fail 即 fail；全部 pass 才 pass
+        verdict = "pass" if all(v["verdict"] == "pass" for v in votes) and votes else "fail"
+        evidence = " | ".join(f"{v['expert']}:{v['evidence'][:80]}" for v in votes)
+        reason = "；".join(f"{v['expert']}:{v['reason']}" for v in votes if v["reason"])
+        B.append_event(cid, {"type": "panel_review", "actor": "review",
+                             "seat": rseat, "votes": votes})
+        rres_ok = True
+    else:
+        log(f"派复核席 {rseat} 独立核验…", "step")
+        rres = E.run(engine, rprompt, cwd=str(ROOT), model=model, effort=effort)
+        (ev_dir / f"review__{rseat}__{uuid.uuid4().hex[:6]}.json").write_text(
+            json.dumps(rres.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        if not rres.ok:
+            B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
+                                 "reason": f"复核引擎失败：{rres.reason}"[:300]})
+            B.release(cid)
+            log(f"复核引擎失败：{rres.reason[:120]}", "err")
+            return "review-engine-failed"
+        verdict, evidence, reason = parse_review(rres.text)
     if not verdict:
         # 复核没给结构化结论 → 保守判 fail
         verdict, evidence = "fail", f"复核未给出可解析结论；原文={rres.text[:120]}"
@@ -206,9 +228,21 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         nums = "; ".join(f"{x['path']}={x.get('bytes','?')}B" for x in r1)
         evidence = (evidence + " | 机器读数：" + nums).strip(" |")
 
-    # ---- 记复核结论 ----
+    # ---- 记复核结论（⚠️ 必须真跑闸门，⛔ 不许写死 True）----
+    g1, p1, r1 = B.gate_l1(cid, card)
+    g2, p2 = B.gate_l2(cid, card)
+    g3, p3, _ = B.gate_l3(cid, card)
     B.append_event(cid, {"type": "verify", "actor": "review", "seat": rseat,
-                         "L1": True, "L2": True, "L3": True, "problems": []})
+                         "L1": g1, "L2": g2, "L3": g3,
+                         "problems": p1 + p2 + p3})
+    if not (g1 and g2 and g3):
+        B.append_event(cid, {"type": "review", "actor": "review", "seat": rseat,
+                             "verdict": "fail", "evidence": evidence,
+                             "note": "机器闸未过：" + "；".join((p1 + p2 + p3)[:3]),
+                             "evidence_ok": True})
+        B.release(cid)
+        log(f"{cid} 机器闸未过 → 待返工", "err")
+        return "gate-failed"
     B.append_event(cid, {"type": "review", "actor": "review", "seat": rseat,
                          "verdict": verdict, "note": reason,
                          "evidence": evidence, "evidence_ok": True})
@@ -233,8 +267,7 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
                              "reason": f"返工 {attempts} 次仍不过，转阻塞等人"})
         log(f"{cid} 返工 {attempts} 次 → 阻塞", "err")
         return "blocked-after-retries"
-    B.append_event(cid, {"type": "unblock", "actor": "system", "seat": "system"})
-    log(f"{cid} 复核 FAIL（{reason[:60]}）→ 返工第 {attempts+1} 次", "warn")
+    log(f"{cid} 复核 FAIL（{reason[:60]}）→ 待返工（第 {attempts+1} 次）", "warn")
     return "rework"
 
 
@@ -256,9 +289,7 @@ def cmd_run(a):
     rounds = 0
     while rounds < a.max:
         rounds += 1
-        # 找一张能接的卡：优先「规格精确匹配」的，再退到 any
-        target = None
-        best_score = -1
+        target, best_score = None, -1
         for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
             if not d.is_dir():
                 continue
@@ -267,12 +298,11 @@ def cmd_run(a):
                 card = B.jread(d / "card.json")
             except Exception:
                 continue
-            if st["state"] not in ("待认领", "阻塞"):
+            if st["state"] not in ("待认领", "阻塞", "待返工"):
                 continue
             miss = B._match_miss(card, a.engine, a.model, a.effort)
             if miss:
                 continue
-            # 越精确越优先：引擎/模型/思考各匹配 +1
             score = 0
             if card.get("engine", "any") == a.engine:
                 score += 2
@@ -288,13 +318,13 @@ def cmd_run(a):
             break
 
         log(f"[{rounds}/{a.max}] 处理 {target}", "step")
-        outcome = run_one(target, a.engine, a.seat, a.model, a.effort, a.dry_run)
+        outcome = run_one(target, a.engine, a.seat, a.model, a.effort,
+                          a.dry_run, panel=a.panel)
         results.append((target, outcome))
 
         if a.dry_run:
             break
 
-    # 汇总
     print()
     log("=== 本轮汇总 ===", "step")
     for cid, oc in results:
@@ -302,7 +332,12 @@ def cmd_run(a):
     if not results:
         print("  （没有处理任何卡）")
 
-    # 刷新看板
+    # 收工：必须报度量（AGENTS.md §7 第 4 条）
+    try:
+        _append_ledger(a, results)
+    except Exception as e:
+        log(f"度量台账写入失败：{e}", "warn")
+
     try:
         B.cmd_html(argparse.Namespace())
         log("看板已刷新", "ok")
@@ -310,6 +345,22 @@ def cmd_run(a):
         log(f"看板刷新失败：{e}", "warn")
 
     return 0
+
+
+def _append_ledger(a, results):
+    """把本轮派工追加到 DELEGATION-LEDGER.md（治理收工动作）。"""
+    path = ROOT / "docs" / "governance" / "DELEGATION-LEDGER.md"
+    if not path.exists():
+        return
+    ok_n = sum(1 for _, o in results if o == "done")
+    line = (f"| {datetime.now().strftime('%Y-%m-%d')} | 自动编排 | "
+            f"内派（{a.engine}/{a.model or 'default'}） | "
+            f"{'成' if ok_n else '部分'} {ok_n}/{len(results)} | "
+            f"{len(results)} | 0 | 否 | "
+            f"{'；'.join(f'{c}={o}' for c, o in results)[:120]} |")
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    log("度量台账已追加", "ok")
 
 
 def cmd_status(a):
@@ -344,6 +395,8 @@ def main():
     s.add_argument("--effort", default=None)
     s.add_argument("--max", type=int, default=5, help="最多处理几张卡")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--panel", nargs="*", default=None,
+                   help="专家团复核（如 --panel security skeptic simplifier）；不给=单席复核")
     s.set_defaults(f=cmd_run)
 
     s = sub.add_parser("status", help="看编排状态")

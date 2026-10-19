@@ -41,22 +41,24 @@ CARDS = BOARD / "cards"
 LEASE_TTL = 600          # 秒，10 分钟无心跳视为超时
 HB_INTERVAL = 120        # 秒，建议心跳间隔
 
-STATES = ["待认领", "进行中", "阻塞", "待验收", "核验中", "拍板中", "完成", "已取消"]
+STATES = ["待认领", "进行中", "待返工", "阻塞", "待验收", "核验中", "拍板中", "完成", "已取消"]
 
 # 转移白名单：谁可以触发。agent = 执行席，review = 复核席，human = 人，system = 工具
 TRANSITIONS = {
     ("待认领", "进行中"):   {"actor": {"agent"}},
+    ("待返工", "进行中"):   {"actor": {"agent"}},
     ("进行中", "阻塞"):     {"actor": {"agent"}},
     ("阻塞", "进行中"):     {"actor": {"agent"}},
     ("进行中", "待验收"):   {"actor": {"agent"}},          # submit
     ("待验收", "核验中"):   {"actor": {"review"}},
     ("核验中", "完成"):     {"actor": {"review"}},          # 但需 human gate 时此边不可达
-    ("核验中", "进行中"):   {"actor": {"review"}},          # 打回
+    ("核验中", "待返工"):   {"actor": {"review"}},          # 打回
     ("待验收", "拍板中"):   {"actor": {"agent", "review"}},  # 请求拍板
     ("拍板中", "完成"):     {"actor": {"human"}},
-    ("拍板中", "进行中"):   {"actor": {"human"}},
+    ("拍板中", "待返工"):   {"actor": {"human"}},
     ("待认领", "已取消"):   {"actor": {"human"}},
     ("进行中", "已取消"):   {"actor": {"human"}},
+    ("待返工", "已取消"):   {"actor": {"human"}},
     ("待验收", "已取消"):   {"actor": {"human"}},
 }
 
@@ -113,13 +115,45 @@ def load_journal(cid: str) -> list:
     return out
 
 
+def _line_hash(prev: str, obj: dict) -> str:
+    """一条事件的哈希：prev + 去掉 hash 字段的内容。"""
+    body = {k: v for k, v in obj.items() if k not in ("hash", "prev")}
+    raw = prev + json.dumps(body, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def append_event(cid: str, ev: dict) -> dict:
-    """append-only：只追加，不改写。"""
+    """append-only：只追加，不改写。每条带 prev/hash 形成哈希链。"""
     d = card_dir(cid)
+    jp = d / "journal.jsonl"
+    prev = ""
+    if jp.exists():
+        lines = [l for l in jp.read_text(encoding="utf-8").splitlines() if l.strip()]
+        if lines:
+            try:
+                prev = json.loads(lines[-1]).get("hash", "")
+            except json.JSONDecodeError:
+                prev = ""
     ev = {"seq": len(load_journal(cid)) + 1, "at": ts(), "at_ms": now_ms(), **ev}
-    with (d / "journal.jsonl").open("a", encoding="utf-8") as f:
+    ev["prev"] = prev
+    ev["hash"] = _line_hash(prev, ev)
+    with jp.open("a", encoding="utf-8") as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
     return ev
+
+
+def verify_chain(cid: str) -> tuple:
+    """校验哈希链。返回 (ok, 问题描述)。"""
+    prev = ""
+    for i, ev in enumerate(load_journal(cid), 1):
+        if "hash" not in ev:
+            return False, f"第 {i} 条无 hash（旧格式或被手写插入）"
+        if ev.get("prev", "") != prev:
+            return False, f"第 {i} 条 prev 断裂（期望 {prev[:8]}，实际 {str(ev.get('prev'))[:8]}）"
+        if _line_hash(prev, ev) != ev["hash"]:
+            return False, f"第 {i} 条 hash 不符（内容被改过）"
+        prev = ev["hash"]
+    return True, ""
 
 
 def replay(cid: str) -> dict:
@@ -166,7 +200,7 @@ def replay(cid: str) -> dict:
             st["state"] = "核验中"
         elif k == "review":
             st["review"] = ev
-            st["state"] = "完成" if ev.get("verdict") == "pass" else "进行中"
+            st["state"] = "完成" if ev.get("verdict") == "pass" else "待返工"
             if ev.get("verdict") != "pass":
                 st["rework"] += 1
                 st["holder"] = None
@@ -178,9 +212,11 @@ def replay(cid: str) -> dict:
             st["blocked_reason"] = None
         elif k == "human":
             st["human"] = ev
-            st["state"] = "完成" if ev.get("decision") == "approve" else "进行中"
+            st["state"] = "完成" if ev.get("decision") == "approve" else "待返工"
             if ev.get("decision") != "approve":
                 st["rework"] += 1
+                st["holder"] = None
+                st["lease_dir"] = None
         elif k == "request_human":
             st["state"] = "拍板中"
         elif k == "reclaim":
@@ -198,16 +234,47 @@ def lease_root(cid: str) -> Path:
     return p
 
 
+# ⚠️ 租约目录名必须是**固定名**，不能带 uuid。
+# 带 uuid 时每个进程创建的路径都不同，os.mkdir 永远不会撞名，
+# 互斥就退化成「先读后写」的 TOCTOU（2026-10-19 专家团实测：12 线程抢卡，3 个成功）。
+LEASE_NAME = "holder"
+
+
 def active_lease(cid: str):
-    d = lease_root(cid)
-    items = [x for x in d.iterdir() if x.is_dir()] if d.exists() else []
-    return items[0] if items else None
+    p = card_dir(cid) / "lease" / "active" / LEASE_NAME
+    return p if p.exists() else None
+
+
+def _lease_owner(lease: Path) -> dict:
+    try:
+        return jread(lease / "owner.json")
+    except Exception:
+        return {}
+
+
+def _reclaim_lease(cid: str, lease: Path, reason: str = "heartbeat timeout"):
+    """把租约目录原子 rename 到 reclaimed/，留痕。"""
+    dest = card_dir(cid) / "lease" / "reclaimed"
+    dest.mkdir(parents=True, exist_ok=True)
+    target = dest / f"R__{now_ms()}__{uuid.uuid4().hex[:6]}"
+    try:
+        os.replace(lease, target)
+    except OSError:
+        return False
+    jwrite(target / "reclaim.json", {
+        "reclaimed_at": ts(), "reason": reason,
+        "timeout_s": LEASE_TTL, "previous_owner": _lease_owner(lease),
+    })
+    append_event(cid, {"type": "reclaim", "seat": "system",
+                       "previous": _lease_owner(lease).get("seat"),
+                       "reason": reason})
+    return True
 
 
 def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = None) -> bool:
-    """原子认领：独占创建目录。返回 True=拿到。"""
+    """原子认领：独占创建**固定名**目录。返回 True=拿到。"""
     st = replay(cid)
-    if st["state"] not in ("待认领", "阻塞"):
+    if st["state"] not in ("待认领", "阻塞", "待返工"):
         die(f"卡片当前状态「{st['state']}」，不可认领")
     card = jread(card_dir(cid) / "card.json")
     # 执行规格校验：卡指定了就必须对得上，否则不许接
@@ -218,40 +285,28 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
               f"思考={card.get('effort')}\n  你声明：引擎={engine} 模型={model} 思考={effort}"
             + "\n  （用 board.py ready 找你匹配的活）")
     lease = lease_root(cid)
-    # 先清掉超时的旧租约（回收留痕）
-    for old in list(lease.iterdir()):
-        if old.is_dir():
-            owner = old / "owner.json"
-            try:
-                hb = jread(owner).get("at_ms", 0)
-            except Exception:
-                hb = 0
-            if (now_ms() - hb) / 1000 > LEASE_TTL:
-                dest = card_dir(cid) / "lease" / "reclaimed"
-                dest.mkdir(parents=True, exist_ok=True)
-                target = dest / old.name
-                try:
-                    os.replace(old, target)
-                except OSError:
+    target = lease / LEASE_NAME
+    # 最多试两次：第一次撞上超时租约 → 回收 → 再抢一次
+    for attempt in (1, 2):
+        try:
+            os.mkdir(target)      # ← 固定名 + mkdir = 真正的系统级原子互斥
+            break
+        except FileExistsError:
+            owner = _lease_owner(target)
+            hb = owner.get("at_ms", 0)
+            # 空 owner.json 视为「刚占上、还没写完」，⛔ 不当超时（D2 A.2）
+            fresh = (now_ms() - hb) / 1000 if hb else 0
+            if hb and fresh > LEASE_TTL and attempt == 1:
+                print(f"  · 回收超时租约（{owner.get('seat')}，{int(fresh)}s 无心跳）")
+                if _reclaim_lease(cid, target):
                     continue
-                jwrite(target / "reclaim.json", {
-                    "reclaimed_at": ts(), "reason": "heartbeat timeout",
-                    "timeout_s": LEASE_TTL, "previous_owner": old.name,
-                })
-                append_event(cid, {"type": "reclaim", "seat": "system",
-                                   "previous": old.name, "reason": "heartbeat timeout"})
-                print(f"  · 已回收超时租约：{old.name}")
-            else:
-                die(f"卡片已被占用（{old.name}，心跳 {(now_ms()-hb)//1000}s 前）")
-    # 原子独占创建
-    name = f"L__{seat}__{engine}__{now_ms()}__{uuid.uuid4().hex[:6]}"
-    target = lease / name
-    try:
-        os.mkdir(target)          # ← 系统级原子互斥，两个进程只有一个成功
-    except FileExistsError:
-        die("认领失败：另一个席位抢先拿到了")
-    except OSError as e:
-        die(f"认领失败（文件系统错误）：{e}")
+                die("回收失败，稍后重试")
+            die(f"卡片已被占用（{owner.get('seat','?')}，心跳 {int(fresh)}s 前）")
+        except OSError as e:
+            die(f"认领失败（文件系统错误）：{e}")
+    else:
+        die("认领竞争失败")
+
     jwrite(target / "owner.json", {
         "seat": seat, "engine": engine, "model": model, "effort": effort,
         "at": ts(), "at_ms": now_ms(),
@@ -260,7 +315,7 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
     epoch = replay(cid)["epoch"] + 1
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
                        "engine": engine, "model": model, "effort": effort,
-                       "epoch": epoch, "lease_dir": name})
+                       "epoch": epoch, "lease_dir": LEASE_NAME})
     return True
 
 
@@ -268,27 +323,28 @@ def heartbeat(cid: str, seat: str):
     lease = active_lease(cid)
     if not lease:
         die("没有活跃租约")
-    owner = jread(lease / "owner.json")
+    owner = _lease_owner(lease)
     if owner.get("seat") != seat:
         die(f"租约持有者是 {owner.get('seat')}，不是你")
-    hb = lease / "hb"
-    hb.mkdir(exist_ok=True)
-    jwrite(hb / f"hb__{now_ms()}__{uuid.uuid4().hex[:4]}.json", {"seat": seat, "at": ts()})
-    jwrite(lease / "owner.json", {**owner, "at": ts(), "at_ms": now_ms()})
+    owner.update({"at": ts(), "at_ms": now_ms()})
+    jwrite(lease / "owner.json", owner)
     append_event(cid, {"type": "heartbeat", "actor": "agent", "seat": seat})
     ok(f"心跳已记（TTL {LEASE_TTL}s）")
 
 
 def release(cid: str, to: str = "released"):
+    """释放租约：原子 rename 出去，让下一次认领能重新 mkdir。"""
     lease = active_lease(cid)
     if not lease:
         return
     dest = card_dir(cid) / "lease" / to
     dest.mkdir(parents=True, exist_ok=True)
+    target = dest / f"L__{now_ms()}__{uuid.uuid4().hex[:6]}"
     try:
-        os.replace(lease, dest / lease.name)
+        os.replace(lease, target)
     except OSError:
-        pass
+        return
+    jwrite(target / "release.json", {"released_at": ts(), "owner": _lease_owner(lease)})
 
 
 # ---------- 闸门（红线①）----------
@@ -657,11 +713,55 @@ def human_token() -> Path:
     return Path.home() / ".board-human.tok"
 
 
-def cmd_human(a):
-    # 红线②：唯一能推进人位的入口
+def human_token_sha() -> Path:
+    """令牌哈希存在看板里。只存哈希 ⇒ 读到它推不出原令牌。"""
+    return BOARD / ".human-token.sha"
+
+
+def _verify_human_token() -> tuple:
+    """校验人令牌。返回 (ok, 原因)。
+
+    防线（诚实标注：这是**提高门槛**，不是绝对强制，见 AGENTS.md §4.1）：
+      1. 令牌文件必须存在且内容非空（⛔ 0 字节放行）
+      2. 内容长度 ≥ 16（⛔ 一眼能猜的短串）
+      3. 与首次登记时存的 sha256 一致（换令牌 = 留痕）
+    """
     tok = human_token()
     if not tok.exists():
-        die(f"缺人令牌。首次使用请创建：{tok}（内容随意，⛔ 不要给 agent）")
+        return False, f"缺人令牌。首次使用请创建：{tok}（内容随意，⛔ 不要给 agent）"
+    try:
+        content = tok.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        return False, f"人令牌读不了：{e}"
+    if not content:
+        return False, "人令牌是空的 —— ⛔ 空文件不算令牌（这是本条防线要防的）"
+    if len(content) < 16:
+        return False, f"人令牌太短（{len(content)} < 16 字符）—— 换一个长一点的"
+    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    reg = human_token_sha()
+    if not reg.exists():
+        return True, ""          # 首次登记，下方写入
+    try:
+        expected = reg.read_text(encoding="utf-8").strip()
+    except Exception:
+        return False, "令牌登记文件读不了"
+    if sha != expected:
+        return False, ("人令牌已变更（与登记哈希不符）。"
+                       "若这是你本人换的，删掉 board/.human-token.sha 重新登记；否则是有人动了令牌")
+    return True, ""
+
+
+def cmd_human(a):
+    # 红线②：唯一能推进人位的入口
+    ok_tok, why = _verify_human_token()
+    if not ok_tok:
+        die(why)
+    # 首次登记令牌哈希（只存哈希，推不出原值）
+    if not human_token_sha().exists():
+        content = human_token().read_text(encoding="utf-8").strip()
+        human_token_sha().write_text(
+            hashlib.sha256(content.encode("utf-8")).hexdigest(), encoding="utf-8")
+        print(f"  · 已登记人令牌哈希 → {human_token_sha()}")
     st = replay(a.id)
     if st["state"] != "拍板中":
         die(f"当前状态「{st['state']}」，只有「拍板中」的卡需要人拍")
@@ -709,6 +809,10 @@ def cmd_audit(a):
     for d in sorted(CARDS.iterdir()) if CARDS.exists() else []:
         if not d.is_dir():
             continue
+        # 0) 哈希链校验（整份重写/插入/改内容都会断链）
+        chain_ok, chain_why = verify_chain(d.name)
+        if not chain_ok:
+            issues.append(f"{d.name}: 哈希链断裂 ← {chain_why}")
         try:
             st = replay(d.name)
         except Exception as e:
@@ -737,6 +841,11 @@ def cmd_audit(a):
             act = [x for x in lease.iterdir() if x.is_dir()]
             if len(act) > 1:
                 issues.append(f"{d.name}: 活跃租约 {len(act)} 个（应 ≤1）")
+        # 4b) 租约目录名必须是固定名（旧版带 uuid 的会破坏原子性）
+        if lease.exists():
+            for x in lease.iterdir():
+                if x.is_dir() and x.name != LEASE_NAME:
+                    issues.append(f"{d.name}: 租约目录名非固定名「{x.name}」← 旧版残留，原子性不成立")
         # 5) 交付物缺失但已提交
         if st["state"] in ("待验收", "核验中", "完成"):
             for item in card.get("deliverables", []):
