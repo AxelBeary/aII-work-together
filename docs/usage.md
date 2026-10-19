@@ -1,0 +1,184 @@
+# 怎么用（三分钟，之后只看一条命令）
+
+## 你只需要记这一条
+
+```
+python tools/orchestrator.py run --engine opencode --seat w1 --max 5
+```
+
+**它会自己找活、自己干、自己验、不过就自己返工。** 跑完看板自动刷新。
+
+看结果：
+
+```
+python tools/board.py html
+```
+
+双击 `board/board.html`（30 秒自动刷新），或看文字版 `python tools/board.py ls`。
+
+---
+
+## 编排器（全自动，无人值守）
+
+```
+python tools/orchestrator.py run --engine opencode --model opencode-go/deepseek-v4.1-flash --max 5
+```
+
+它每一轮做这些事，**全自动**：
+
+| 步骤 | 它做什么 |
+|---|---|
+| 1 找活 | 按引擎／模型／思考强度匹配，**精确匹配优先** |
+| 2 认领 | 原子独占创建，抢不到就换下一张 |
+| 3 执行 | 调引擎，把卡变成提示词（含领地、交付物、必含项） |
+| 4 提交 | **自动跑 L1-L3**：产物在不在、形制对不对、必含项命中没 |
+| 5 复核 | **换一个会话**独立核验，不给凭据不算过 |
+| 6 返工 | 复核 FAIL → 自动重派；**3 次不过转阻塞**，不死循环 |
+| 7 人闸 | 需要拍板的转「拍板中」停下等你 |
+
+**先看它会干什么（不真跑）**：
+
+```
+python tools/orchestrator.py run --engine opencode --max 1 --dry-run
+```
+
+**看整体状态**：
+
+```
+python tools/orchestrator.py status
+```
+
+---
+
+## 建卡：可以指定「谁干、用什么模型、思考多深」
+
+```
+python tools/board.py new --title "标题" --goal "要做什么" `
+  --engine opencode `
+  --model opencode-go/deepseek-v4.1-flash `
+  --effort high `
+  --deliverable board/artifacts/产出.md `
+  --accept "必含关键词" `
+  --human-gate before_done
+```
+
+| 参数 | 作用 | 可选值 |
+|---|---|---|
+| `--engine` | **哪个 agent 框架** | `opencode`／`qoderclicn`／`codex`／`hermes`／`any` |
+| `--model` | **哪个模型** | 如 `opencode-go/deepseek-v4.1-flash`；`any`＝不限 |
+| `--effort` | **思考强度** | `low`／`medium`／`high`／`max`／`any` |
+| `--deliverable` | 交付物路径 | 提交时自动查在不在、字节>0 |
+| `--accept` | 交付物里**必须出现**的内容 | 正则；少一个就不让过 |
+| `--human-gate` | 人闸 | `none`／`before_done`（必须你拍板）／`both` |
+| `--irreversible` | 标记不可逆动作 | 建议配合 `before_done` |
+
+三个规格都不填＝`any`，任何 agent 都能接。
+
+**规格对不上会被拒**——防止低配模型接了需要高思考强度的活：
+
+```
+✗ 这张卡的执行规格与你声明的不符：引擎需 opencode
+  卡要求：引擎=opencode 模型=... 思考=high
+  你声明：引擎=qoderclicn 模型=... 思考=high
+```
+
+---
+
+## AI 自己发布任务
+
+```
+python tools/board.py publish --title "..." --engine opencode `
+  --model opencode-go/deepseek-v4.1-flash --effort medium `
+  --seat <发布者席名> --from-card <由哪张卡派生>
+```
+
+- **`--seat` 必填**：⛔ 不允许匿名发布（传 `human` 会被拒）
+- 看板上这类卡带绿色 **「AI 发布」** 标记
+- `--from-card` 记下派生关系（哪个任务拆出来的）
+- 发布者身份写进 journal，可追溯
+
+---
+
+## agent 找活干（手动模式）
+
+```
+python tools/board.py ready --engine opencode --model opencode-go/deepseek-v4.1-flash --effort medium
+python tools/board.py claim <卡号> --seat w1 --engine opencode --model ... --effort ...
+python tools/board.py beat  <卡号> --seat w1        # 每 2 分钟一次
+python tools/board.py submit <卡号> --seat w1 --note "做了什么"
+```
+
+不心跳 = 10 分钟后被回收。
+
+---
+
+## 复核（必须换会话，不能自己验自己）
+
+```
+python tools/board.py verify <卡号> --seat rev1
+python tools/board.py review <卡号> --seat rev1 --verdict pass --evidence "你跑的命令和读数"
+```
+
+`--evidence` **不给就不让过**。编排器会自动做这步。
+
+---
+
+## 你拍板（只有你能做）
+
+```
+python tools/board.py human <卡号> --decision approve --who owner
+```
+
+第一次用先建令牌（一次性）：
+
+```powershell
+Set-Content -Path "$HOME\.board-human.tok" -Value "human-only" -NoNewline
+```
+
+⚠️ **这个令牌不要给 agent**。给了就等于把拍板权交出去了。
+
+---
+
+## 出问题查这个
+
+```
+python tools/orchestrator.py status    # 整体状态
+python tools/board.py audit            # 有没有人绕过 CLI 手改文件
+python tools/board.py reclaim          # 回收所有超时的卡
+python tools/board.py show <卡号> --events    # 看一张卡的全过程
+```
+
+`audit` 退出码非 0 = 有问题，逐条列出。
+
+---
+
+## 引擎当前可用性（2026-10-19 实测）
+
+| 引擎 | 状态 | 备注 |
+|---|---|---|
+| **opencode** | ✅ 可用 | **必须指定 `--model`**，否则走免费池被 IP 封禁 |
+| **qoderclicn** | ✅ 可用 | 直接可用 |
+| codex | ❌ 不可用 | RTOC token 401 失效，需先修钥匙 |
+| hermes | ⚠️ 未测 | 本轮未验证 |
+
+---
+
+## 四条红线在代码里长什么样
+
+| 红线 | 怎么实现的 | 你能看到什么 |
+|---|---|---|
+| **状态即证据** | 进「完成」必须过 L1 产物／L2 形制／L3 内容三道机器闸 + 异会话复核 | 提交时自动打读数；没过就不进「待验收」 |
+| **人的拍板位** | 出「拍板中」只有 `human` 命令，agent 没有这条路径 | 人闸卡没有你的 approve 就永远停在「拍板中」 |
+| **认领即租约** | `os.mkdir` 原子独占创建，两进程只有一个成功 | 第二个 agent 抢会直接报错 |
+| **完成必须异会话** | 复核席 == 执行席 直接拒 | 想自己验自己，命令就报错 |
+
+---
+
+## 它不做什么（免得你期待错）
+
+- **不是**聊天界面，agent 只用命令行
+- **不是**分布式系统，只在本机跑
+- **不保证**「证据是真的」，只保证「有证据」——真假靠复核席亲跑
+- **挡不住**被回收的进程已经在外面干过的事
+- **没做**多用户、权限管理、数据库——文件就是全部
+- **引擎串行跑**，不并行（本机引擎会抢资源）

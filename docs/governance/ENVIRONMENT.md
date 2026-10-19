@@ -90,7 +90,41 @@
   ([regex]::Matches($t,'BitFun')).Count # 必须非零（22）
   ```
 
-## E-10 · 首轮调研查到的三个「值得抄」的实件（取证 2026-10-19）
+## E-11 · 四引擎无头调用实测（取证 2026-10-19，本项目现场复算）
+
+> 本表是**本项目现场实测**，不是技能转录。每次派工前按此复算。
+
+| 引擎 | 版本 | 无头可用？ | 实测结论 |
+|---|---|---|---|
+| **opencode** | v2.0.32 | ✅ **可用（必须显式指定模型）** | `opencode run --format json --model opencode-go/deepseek-v4.1-flash "..."` → RC=0，stdout 出 `type:"text"`。⛔ **不加 `--model` 会走免费池，被 IP 封禁返回 `type:"error"` + RC=1** |
+| **qoderclicn** | 1.1.68 | ✅ **可用** | `qoderclicn -p "..." -o json --no-session-persistence` → RC=0，`is_error:false`，含 `session_id`／`duration_ms`／`modelUsage` |
+| **codex** | 0.153.4 | ❌ **当前不可用** | 走 RTOC 中转，返回 `401 Unauthorized: Invalid token`（`api.rtoc.cc/v1/responses`）；JSONL 末尾 `turn.failed`。**需先修 RTOC 钥匙** |
+| **hermes** | v0.22.0 | 未测 | 本轮未验证 |
+| claude | — | 未安装 | — |
+
+**两条铁律（本项目已多次验证）**：
+1. **退出码不可信**：opencode 免费池失败返回 RC=1，但错误藏在 stdout JSON 的 `type:"error"` 里；qoderclicn 的 `subtype:"success"` 也不能单独信（要看 `is_error`）。
+2. **判成败必须解析结构化回执**，不能看 RC。
+
+**可复跑**：
+```powershell
+# opencode（必须带 --model）
+opencode run --format json --model opencode-go/deepseek-v4.1-flash "只回复两个字：可用"
+# qoderclicn
+qoderclicn -p "只回复两个字：可用" -o json --no-session-persistence
+# codex（当前会 401）
+"只回复两个字：可用" | codex exec --ephemeral --skip-git-repo-check --sandbox read-only -c approval_policy=never --json -
+```
+
+## E-12 · opencode 默认模型池不可用（取证 2026-10-19）
+
+- `opencode run` **不指定 `--model`** 时走免费池 → 返回：
+  `FreeTierError: OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address`
+- **RC=1，但错误只在 stdout JSON 的 `type:"error"` 里**（stderr 为空）。
+- **处置**：编排器**必须强制给每个 opencode 任务指定模型**，默认钉 `opencode-go/deepseek-v4.1-flash`。
+- 同 E-08：子代理派工同样必须钉模型。
+
+## E-13 · 首轮调研查到的三个「值得抄」的实件（取证 2026-10-19）
 
 | 件 | 是什么 | 为什么值得抄 |
 |---|---|---|
