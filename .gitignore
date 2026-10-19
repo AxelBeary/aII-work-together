@@ -13,7 +13,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# 看板运行时数据（卡片是本地状态，不进库）
+# 看板运行时数据（卡片是本地状态，不进库；产出物 artifacts 保留）
 board/cards/
 board/board.html
 
