@@ -66,3 +66,5 @@
 | 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/1 | 1 | 0 | 否 | C1020-6348=awaiting-human |
 | 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | TR1=done |
 | 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | TR2=done |
+| 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | ZX-D0-40=done |
+| 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | ZX-VERIFY=done |
