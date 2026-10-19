@@ -445,6 +445,9 @@ def gate_l2(cid: str, card: dict) -> tuple:
     return (len(problems) == 0), problems
 
 
+MIN_NONSPACE = 20      # 反空跑：交付物至少要有这么多非空白字符，否则视为空壳
+
+
 def gate_l3(cid: str, card: dict) -> tuple:
     """L3 内容闸门：派工单声明的必含项逐条断言 + 反空跑。"""
     problems, checks = [], []
@@ -464,14 +467,25 @@ def gate_l3(cid: str, card: dict) -> tuple:
         checks.append({"pattern": pat, "hit": hit})
         if not hit:
             problems.append(f"必含项未命中：{pat}")
-    # 反空跑（**无条件**执行）：交付物里必须有数字，否则视为空跑。
-    # 例外：卡显式写 allow_no_numbers=true（如纯文字设计稿）。
+    # 反空跑（**无条件**执行）：交付物不能是空壳。
+    # ⚠️ 2026-10-20 改（甲方案）：原来要求「交付物里必须有数字」，
+    #   结果翻译类任务把统计注释写进了正文（实测两席评审都点出这是污染）。
+    #   现在改成**机器测**：字节数 / 行数 / 非空白字符数由闸门自己算，
+    #   数字进 checks（证据），不再要求写进产物。
+    # 例外：卡显式写 allow_no_numbers=true（允许极短产物，如单行占位文案）。
     if text_cache and not card.get("allow_no_numbers"):
-        has_num = any(re.search(r"\d", t) for t in text_cache.values())
-        checks.append({"pattern": "<非零计数>", "hit": has_num})
-        if not has_num:
-            problems.append("反空跑失败：交付物里没有任何数字（若确实不需要数字，"
-                            "在卡上设 allow_no_numbers=true）")
+        total_ns = sum(len(re.sub(r"\s", "", t)) for t in text_cache.values())
+        total_bytes = sum(len(t.encode("utf-8")) for t in text_cache.values())
+        total_lines = sum(t.count("\n") + (1 if t and not t.endswith("\n") else 0)
+                          for t in text_cache.values())
+        ok_nonempty = total_ns >= MIN_NONSPACE
+        checks.append({"pattern": "<非空壳>", "hit": ok_nonempty,
+                       "bytes": total_bytes, "lines": total_lines,
+                       "nonspace": total_ns, "min": MIN_NONSPACE})
+        if not ok_nonempty:
+            problems.append(
+                f"反空跑失败：交付物内容太少（{total_ns} 个非空白字符 / {total_bytes} 字节，"
+                f"至少 {MIN_NONSPACE} 个）——疑似空壳或占位符")
     return (len(problems) == 0), problems, checks
 
 

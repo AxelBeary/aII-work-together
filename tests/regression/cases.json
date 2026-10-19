@@ -10,152 +10,226 @@
       "id": "R01",
       "kind": "concurrency",
       "desc": "原子认领：12 线程抢同一张卡，只能有 1 个成功、1 个活跃租约",
-      "expect": {"max_winners": 1, "max_leases": 1},
+      "expect": {
+        "max_winners": 1,
+        "max_leases": 1
+      },
       "threads": 12
     },
     {
       "id": "R02",
       "kind": "spec_mismatch",
       "desc": "执行规格不匹配必须拒绝认领",
-      "card": {"engine": "opencode"},
-      "claim": {"engine": "qoderclicn"},
-      "expect": {"rejected": true}
+      "card": {
+        "engine": "opencode"
+      },
+      "claim": {
+        "engine": "qoderclicn"
+      },
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R03",
       "kind": "spec_match",
       "desc": "规格匹配应当放行",
-      "card": {"engine": "opencode"},
-      "claim": {"engine": "opencode"},
-      "expect": {"rejected": false}
+      "card": {
+        "engine": "opencode"
+      },
+      "claim": {
+        "engine": "opencode"
+      },
+      "expect": {
+        "rejected": false
+      }
     },
     {
       "id": "R04",
       "kind": "gate_l1",
       "desc": "L1：交付物不存在必须 FAIL",
-      "deliverables": ["tests/regression/__nope__.md"],
-      "expect": {"pass": false}
+      "deliverables": [
+        "tests/regression/__nope__.md"
+      ],
+      "expect": {
+        "pass": false
+      }
     },
     {
       "id": "R05",
       "kind": "gate_l1",
       "desc": "L1：零字节文件必须 FAIL",
       "make_zero_byte": true,
-      "expect": {"pass": false}
+      "expect": {
+        "pass": false
+      }
     },
     {
       "id": "R06",
       "kind": "gate_l2",
       "desc": "L2：JSON 不可解析必须 FAIL",
       "bad_json": true,
-      "expect": {"pass": false}
+      "expect": {
+        "pass": false
+      }
     },
     {
       "id": "R07",
       "kind": "gate_l3",
-      "desc": "L3：必含项未命中必须 FAIL",
-      "accept": ["这个字符串绝不会出现XYZ"],
-      "expect": {"pass": false}
+      "desc": "L3：必含项未命中必须 FAIL（内容本身是充实的）",
+      "accept": [
+        "这个字符串绝不会出现XYZ"
+      ],
+      "expect": {
+        "pass": false
+      },
+      "content": "她沿着湿滑的石阶往下走，雨声在屋檐之间来回撞，像有人在很远的地方敲一只空碗。"
     },
     {
       "id": "R08",
       "kind": "gate_l3",
-      "desc": "L3：反空跑（交付物里没有数字）必须 FAIL",
+      "desc": "L3 反空跑：没有数字但有实质内容必须 PASS（甲方案）",
       "accept": [],
-      "content": "只有中文没有任何数字",
-      "expect": {"pass": false}
+      "content": "她沿着湿滑的石阶往下走，雨声在屋檐之间来回撞，像有人在很远的地方敲一只空碗。",
+      "expect": {
+        "pass": true
+      }
     },
     {
       "id": "R09",
       "kind": "gate_l3",
       "desc": "L3：必含项命中且有数字应当 PASS",
-      "accept": ["hello"],
-      "content": "hello world 123",
-      "expect": {"pass": true}
+      "accept": [
+        "hello"
+      ],
+      "content": "hello world, this is a real paragraph without any digits",
+      "expect": {
+        "pass": true
+      }
     },
     {
       "id": "R10",
       "kind": "review_same_seat",
       "desc": "复核席 == 执行席必须被拒",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R11",
       "kind": "review_gate_block",
       "desc": "机器闸有问题时不许给 PASS",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R12",
       "kind": "human_empty_token",
       "desc": "空 token 必须被拒",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R13",
       "kind": "chain_insert",
       "desc": "手写插入一条事件必须断链",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R14",
       "kind": "state_rework",
       "desc": "复核 FAIL 后状态必须是「待返工」（否则卡死）",
-      "expect": {"state": "待返工"}
+      "expect": {
+        "state": "待返工"
+      }
     },
     {
       "id": "R15",
       "kind": "resume_skip_done",
       "desc": "续跑必须跳过已完成卡（不重做）",
-      "expect": {"action": "SKIP"}
+      "expect": {
+        "action": "SKIP"
+      }
     },
     {
       "id": "R16",
       "kind": "project_isolation",
       "desc": "多项目：不同 root 的卡互不可见",
-      "expect": {"isolated": true}
+      "expect": {
+        "isolated": true
+      }
     },
     {
       "id": "R17",
       "kind": "defaults_inherit",
       "desc": "项目默认值必须被新建卡继承",
-      "expect": {"inherited": true}
+      "expect": {
+        "inherited": true
+      }
     },
     {
       "id": "R18",
       "kind": "parallel_conflict",
       "desc": "并行收工：交付物冲突必须被检出",
-      "expect": {"conflict": true}
+      "expect": {
+        "conflict": true
+      }
     },
     {
       "id": "R19",
       "kind": "guard_illegal_transition",
       "desc": "非法状态转移必须被拒（待认领→完成）",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R20",
       "kind": "guard_actor",
       "desc": "越权转移必须被拒（agent 不能推人位）",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R21",
       "kind": "guard_holder_epoch",
       "desc": "租约被回收后，旧执行者提交必须被拒",
-      "expect": {"rejected": true}
+      "expect": {
+        "rejected": true
+      }
     },
     {
       "id": "R22",
       "kind": "parallel_edit_file",
       "desc": "并行改【已有文件】不应误判冲突（基线判据）",
-      "expect": {"conflict": false, "copied": true}
+      "expect": {
+        "conflict": false,
+        "copied": true
+      }
     },
     {
       "id": "R23",
       "kind": "journal_lock",
       "desc": "并发写 journal 不得造成哈希链分叉",
-      "expect": {"chain_ok": true, "n": 20}
+      "expect": {
+        "chain_ok": true,
+        "n": 20
+      }
+    },
+    {
+      "id": "R24",
+      "kind": "gate_l3",
+      "desc": "L3 反空跑：空壳（只有 TODO）必须 FAIL",
+      "accept": [],
+      "content": "TODO",
+      "expect": {
+        "pass": false
+      }
     }
   ]
 }

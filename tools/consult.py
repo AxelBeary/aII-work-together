@@ -72,9 +72,9 @@ OK:
 # ---------- 评审席规格解析 ----------
 
 def parse_reviewers(spec: str) -> list:
-    """把 "b1:opencode:claudecodesale/claude-opus-5-5,b2:qoderclicn:" 解析成列表。
+    """把 "b1:opencode:claudecodesale/claude-opus-5-5@native,b2:qoderclicn:" 解析成列表。
 
-    格式：seat[:engine[:model[:effort]]]，逗号分隔。
+    格式：seat[:engine[:model[:effort]]][@role]，逗号分隔。
     模型名里可以有 `/`（provider/model），所以只按 `:` 切，最多 4 段。
     """
     out = []
@@ -82,6 +82,12 @@ def parse_reviewers(spec: str) -> list:
         part = part.strip()
         if not part:
             continue
+        role = None
+        if "@" in part:
+            part, role = part.rsplit("@", 1)
+            role = role.strip() or None
+            if role and role not in PERSONAS:
+                raise ValueError(f"未知的评审角色：{role}（可选：{'/'.join(PERSONAS)}）")
         bits = part.split(":", 3)
         seat = bits[0].strip()
         if not seat:
@@ -91,6 +97,7 @@ def parse_reviewers(spec: str) -> list:
             "engine": (bits[1].strip() if len(bits) > 1 and bits[1].strip() else "opencode"),
             "model": (bits[2].strip() if len(bits) > 2 and bits[2].strip() else None),
             "effort": (bits[3].strip() if len(bits) > 3 and bits[3].strip() else None),
+            "role": role,
         })
     if not out:
         raise ValueError("至少要有一个评审席（--by b1:opencode:…）")
@@ -218,6 +225,9 @@ def consult(card_id: str, question: str, reviewers: list, files: list = None,
     files = resolved
 
     snap = snapshot(files)
+    # 每个评审席可以有自己的角度（b1@native, b2@faithful）；没写就用统一 role
+    for rv in reviewers:
+        rv["role"] = rv.get("role") or role
     prompt = build_prompt(card, question, files, role=role, round_no=round_no)
 
     B.append_event(card_id, {
@@ -234,14 +244,15 @@ def consult(card_id: str, question: str, reviewers: list, files: list = None,
 
     def _one(rv):
         t0 = time.time()
-        res = E.run(rv["engine"], prompt, cwd=str(base),
+        p = build_prompt(card, question, files, role=rv["role"], round_no=round_no)
+        res = E.run(rv["engine"], p, cwd=str(base),
                     model=rv.get("model"), effort=rv.get("effort"),
                     timeout=timeout)
         dt = time.time() - t0
         parsed = parse_reply(res.text or "")
         return {
             "seat": rv["seat"], "engine": rv["engine"], "model": rv.get("model"),
-            "role": role, "ok": bool(res.ok), "reason": res.reason,
+            "role": rv["role"], "ok": bool(res.ok), "reason": res.reason,
             "verdict": parsed["verdict"], "problems": parsed["problems"],
             "text": res.text or "", "seconds": round(dt, 1),
             "model_used": res.model_used or rv.get("model"),
