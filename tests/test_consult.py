@@ -124,6 +124,51 @@ def main():
         raise AssertionError("给不存在的文件竟然通过了")
     check("C5 空材料必须报错", c5)
 
+    # ---------- C6 ----------
+    def c6():
+        r = C.parse_verify("FIXED 1\nNOT-FIXED 2\nUNFIXED 1", asked=4)
+        assert r["unfixed"] == 1, r
+        assert r["fixed"] == 1, r
+        return "明写 UNFIXED=1 时按它算"
+    check("C6 改后核对：正常回执", c6)
+
+    # ---------- C7 ----------
+    def c7():
+        r = C.parse_verify("我觉得改得挺好的，基本上都修了。", asked=5)
+        assert r["unfixed"] is None, f"糊话被当成了 {r['unfixed']}（必须未知）"
+        return "没按格式回 ⇒ 未知，不当成 0"
+    check("C7 改后核对：糊话不得算通过", c7)
+
+    # ---------- C8 ----------
+    def c8():
+        r = C.parse_verify("FIXED 1\nFIXED 2\nFIXED 3", asked=3)
+        assert r["unfixed"] == 0, r
+        r2 = C.parse_verify("FIXED 1\nFIXED 2", asked=4)
+        assert r2["unfixed"] == 2, r2
+        return "只回 FIXED 时按 asked 差额推算"
+    check("C8 改后核对：只回 FIXED 也能算", c8)
+
+    # ---------- C9 ----------
+    def c9():
+        # 实测 bug：卡片上的自定义字段（consult_files）被静默丢进 /dev/null，
+        # 结果评审席永远看不到源文，而程序一切"正常"
+        B.create_card({
+            "id": "T2", "title": "自定义字段", "goal": "", "territory": [],
+            "deliverables": [], "accept_patterns": [], "human_gate": "none",
+            "engine": "any", "model": "any", "effort": "any",
+            "created_at": B.ts(), "created_by": "test", "created_kind": "human",
+            "irreversible": False, "source_card": None,
+            "consult_files": ["src/a.md", "src/b.md"],
+            "note_for_someone": "任意自定义键",
+        })
+        got = B.get_card("T2")
+        assert got.get("consult_files") == ["src/a.md", "src/b.md"], \
+            f"consult_files 丢了：{got.get('consult_files')}"
+        assert got.get("note_for_someone") == "任意自定义键", "自定义键丢了"
+        assert got.get("title") == "自定义字段", "真实列被 meta 覆盖了"
+        return "两个自定义字段都存住了，且没覆盖真实列"
+    check("C9 卡片自定义字段不得静默丢失", c9)
+
     ok = sum(1 for _, p in results if p)
     print(f"\n{'=' * 60}")
     print(f"点对点评审：{ok} of {len(results)} 通过")

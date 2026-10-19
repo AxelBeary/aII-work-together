@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS cards (
   irreversible   INTEGER DEFAULT 0,
   allow_no_numbers INTEGER DEFAULT 0,
   source_card    TEXT,
+  meta           TEXT DEFAULT '{}',
   created_at     TEXT,
   created_by     TEXT,
   created_kind   TEXT DEFAULT 'human'
@@ -125,6 +126,10 @@ class Store:
     def _init_schema(self):
         c = self._read_conn()
         c.executescript(SCHEMA)
+        # 老库补列：CREATE TABLE IF NOT EXISTS 不会给已有表加列
+        cols = {r[1] for r in c.execute("PRAGMA table_info(cards)")}
+        if "meta" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN meta TEXT DEFAULT '{}'")
         c.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)",
                   (str(SCHEMA_VERSION),))
 
@@ -149,13 +154,22 @@ class Store:
     def save_card(self, card: dict):
         cols = ("id", "title", "goal", "territory", "deliverables",
                 "accept_patterns", "human_gate", "engine", "model", "effort",
-                "irreversible", "allow_no_numbers", "source_card",
+                "irreversible", "allow_no_numbers", "source_card", "meta",
                 "created_at", "created_by", "created_kind")
+        # 卡片上任何「不在固定列里」的字段都进 meta。
+        # ⚠️ 以前这些字段是被**静默丢弃**的：卡上写了 consult_files，
+        # 存完就没了，程序照常跑，只是评审席永远看不到源文。静默丢数据比报错坏得多。
+        meta = dict(card.get("meta") or {})
+        for k, v in card.items():
+            if k not in cols and k != "meta":
+                meta[k] = v
         vals = []
         for c in cols:
             v = card.get(c)
             if c in ("territory", "deliverables", "accept_patterns"):
                 v = json.dumps(v or [], ensure_ascii=False)
+            elif c == "meta":
+                v = json.dumps(meta, ensure_ascii=False)
             elif c == "irreversible":
                 v = 1 if v else 0
             elif c == "allow_no_numbers":
@@ -185,6 +199,13 @@ class Store:
                 d[k] = json.loads(d.get(k) or "[]")
             except Exception:
                 d[k] = []
+        # meta 里的自定义字段摊回顶层（真实列优先，不允许被 meta 覆盖）
+        try:
+            extra = json.loads(d.get("meta") or "{}")
+            if isinstance(extra, dict):
+                d = {**extra, **d}
+        except Exception:
+            pass
         d["irreversible"] = bool(d.get("irreversible"))
         d["allow_no_numbers"] = bool(d.get("allow_no_numbers"))
         return d

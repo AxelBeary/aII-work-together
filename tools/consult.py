@@ -257,6 +257,7 @@ def consult(card_id: str, question: str, reviewers: list, files: list = None,
             "text": res.text or "", "seconds": round(dt, 1),
             "model_used": res.model_used or rv.get("model"),
             "session_id": res.session_id,
+            "usage": res.usage,
         }
 
     replies = []
@@ -295,12 +296,147 @@ def consult(card_id: str, question: str, reviewers: list, files: list = None,
             "evidence": r.get("evidence"),
             "violation": r["violation"],
         })
+        # 评审席也是真花钱的：用量必须记账，否则成本表只算执行席，等于漏账
+        if r.get("usage"):
+            B.append_event(card_id, {
+                "type": "usage", "seat": r["seat"], "engine": r["engine"],
+                "model": r.get("model_used"), "usage": r["usage"],
+                "phase": "consult",
+            })
 
     if violations:
         B.append_event(card_id, {"type": "consult_violation", "actor": "system",
                                  "detail": violations})
     return {"replies": replies, "violations": violations,
             "packet": render_packet(replies, files, violations)}
+
+
+VERIFY_FORMAT = """\
+下面是你上一轮提的问题（已编号）。当前文件已经改过一轮。
+请逐条判断「现在改没改」，每条一行：
+
+FIXED 1
+NOT-FIXED 2
+...
+
+最后单独一行写总数：
+UNFIXED <仍然没改的条数>
+
+只输出这几行，不要解释，不要改文件。
+"""
+
+
+def parse_verify(text: str, asked: int) -> dict:
+    """解析「改后核对」回执。
+
+    ⚠️ 解析不出来必须返回 None（未知），⛔ 绝不能当成 0（已改好）——
+    否则模型不按格式回，会被读成「全改完了」，正是假绿。
+    """
+    text = text or ""
+    fixed = len(re.findall(r"^\s*FIXED\s+(\d+)", text, re.M))
+    not_fixed_ids = re.findall(r"^\s*NOT-FIXED\s+(\d+)", text, re.M)
+    m = re.search(r"^\s*UNFIXED\s*[:：]?\s*(\d+)", text, re.M)
+    if m:
+        unfixed = int(m.group(1))
+    elif not_fixed_ids:
+        unfixed = len(not_fixed_ids)
+    elif fixed:
+        unfixed = max(0, asked - fixed)
+    else:
+        unfixed = None
+    return {"fixed": fixed, "unfixed": unfixed,
+            "not_fixed_ids": [int(x) for x in not_fixed_ids]}
+
+
+def verify_fix(card_id: str, previous: list, reviewers: list, files: list,
+               cwd: str = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    """改完之后回头验：哪些意见真的改了、哪些没动。
+
+    为什么必须做：修改轮跑完不等于意见被采纳。没有这一步，
+    「已按意见修改」就是执行席的自证 —— 本项目最反对的那种假绿。
+
+    返回 unfixed_total；⛔ 解析不出来时是 None（未知），绝不当成 0。
+    """
+    base = Path(cwd or B.WORKSPACE)
+    card = B.require_card(card_id)
+    by_seat = {p["seat"]: p.get("problems") or [] for p in previous}
+    todo = [rv for rv in reviewers if by_seat.get(rv["seat"])]
+    if not todo:
+        return {"seats": [], "unfixed_total": 0, "packet": "（没有可核对的意见）"}
+
+    material = _material([str(base / f) if not Path(f).is_absolute() else f
+                          for f in files])
+
+    def _one(rv):
+        probs = by_seat[rv["seat"]]
+        listing = "\n".join(f"{i}. {p}" for i, p in enumerate(probs, 1))
+        prompt = "\n".join([
+            PERSONAS.get(rv.get("role") or "generic", PERSONAS["generic"]),
+            "",
+            f"# 任务：{card.get('title', '')}",
+            "",
+            "## 你上一轮提的问题",
+            listing,
+            "",
+            "## 当前文件内容",
+            material,
+            "",
+            "## 输出格式",
+            VERIFY_FORMAT,
+        ])
+        t0 = time.time()
+        res = E.run(rv["engine"], prompt, cwd=str(base), model=rv.get("model"),
+                    effort=rv.get("effort"), timeout=timeout)
+        text = res.text or ""
+        parsed_v = parse_verify(text, len(probs))
+        fixed = parsed_v["fixed"]
+        unfixed = parsed_v["unfixed"]
+        return {"seat": rv["seat"], "engine": rv["engine"],
+                "model": res.model_used or rv.get("model"), "ok": bool(res.ok),
+                "asked": len(probs), "fixed": fixed, "unfixed": unfixed,
+                "seconds": round(time.time() - t0, 1), "text": text,
+                "usage": res.usage}
+
+    seats = []
+    with ThreadPoolExecutor(max_workers=max(1, min(3, len(todo)))) as ex:
+        for f in [ex.submit(_one, rv) for rv in todo]:
+            try:
+                seats.append(f.result())
+            except Exception as e:
+                seats.append({"seat": "?", "ok": False, "unfixed": None,
+                              "reason": str(e), "text": ""})
+
+    ev_dir = Path(B.BOARD) / "evidence" / card_id
+    ev_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%m%d-%H%M%S")
+    known = [s["unfixed"] for s in seats if s.get("unfixed") is not None]
+    total = sum(known) if known else None
+    for s in seats:
+        if s.get("text"):
+            f = ev_dir / f"verify-{stamp}-{s['seat']}.md"
+            f.write_text(f"# 改后核对：{s['seat']}\n\n{s['text']}\n", encoding="utf-8")
+            s["evidence"] = str(f)
+        B.append_event(card_id, {
+            "type": "consult_verify", "actor": "agent", "seat": s["seat"],
+            "engine": s["engine"], "model": s.get("model"), "ok": s.get("ok"),
+            "asked": s.get("asked"), "fixed": s.get("fixed"),
+            "unfixed": s.get("unfixed"), "evidence": s.get("evidence"),
+        })
+        if s.get("usage"):
+            B.append_event(card_id, {"type": "usage", "seat": s["seat"],
+                                     "engine": s["engine"], "model": s.get("model"),
+                                     "usage": s["usage"], "phase": "consult-verify"})
+
+    lines = []
+    for s in seats:
+        if s.get("unfixed") is None:
+            lines.append(f"  {s['seat']}：**无法判定**（没按格式回，别当成已改好）")
+        else:
+            lines.append(f"  {s['seat']}：提了 {s.get('asked')} 条，"
+                         f"已改 {s.get('fixed', 0)} 条，仍未改 {s['unfixed']} 条")
+    packet = ("改后核对：\n" + "\n".join(lines)
+              + f"\n合计未改：{'未知' if total is None else total}")
+    return {"seats": seats, "unfixed_total": total, "packet": packet}
 
 
 def render_packet(replies: list, files: list, violations: list) -> str:

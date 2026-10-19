@@ -279,7 +279,10 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         try:
             import consult as CN
             reviewers = CN.parse_reviewers(consult_spec)
+            # 交付物 + 额外参考材料（如源文）：逐句对照那席必须能看到原文
             files = [str(Path(work_dir) / d) for d in card.get("deliverables", [])]
+            files += [str(Path(work_dir) / f)
+                      for f in card.get("consult_files", [])]
             log(f"派 {len(reviewers)} 席评审："
                 f"{' / '.join(r['seat'] + '@' + (r['model'] or r['engine']) for r in reviewers)}",
                 "step")
@@ -308,6 +311,15 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
                                          "usage": r2.usage, "phase": "consult-fix"})
                 except Exception as e:
                     log(f"修改轮失败（保留初稿继续走）：{e}", "warn")
+                # 改完必须回头验：否则「已按意见修改」只是执行席的自证
+                try:
+                    vres = CN.verify_fix(cid, cres["replies"], reviewers, files,
+                                         cwd=work_dir)
+                    print(vres["packet"])
+                    log(f"改后核对：未改 {vres['unfixed_total']}",
+                        "ok" if vres.get("unfixed_total") == 0 else "warn")
+                except Exception as e:
+                    log(f"改后核对失败（未证，不等于改好了）：{e}", "warn")
         except Exception as e:
             log(f"评审阶段出错（不影响提交）：{e}", "warn")
             B.append_event(cid, {"type": "consult_error", "actor": "system",
