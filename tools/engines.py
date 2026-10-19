@@ -168,12 +168,11 @@ def run(engine: str, prompt: str, cwd: str = None, model: str = None,
 
     if engine == "qoderclicn":
         # -p 是布尔旗标，正文走 stdin
+        # ⚠️ 不能加 --no-session-persistence：实测会导致 --resume 找不到会话
+        #    （Error resuming session: Invalid session identifier）
         cmd = ["qoderclicn", "-p", "-o", "json"]
         if session_id:
-            # qoder 的会话续接：保留持久化 + 指定 session
             cmd += ["--resume", session_id]
-        else:
-            cmd += ["--no-session-persistence"]
         if extra_args:
             cmd += extra_args
         return _run_qoder(cmd, cwd, timeout, prompt)

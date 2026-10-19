@@ -126,14 +126,26 @@ qoderclicn -p "只回复两个字：可用" -o json --no-session-persistence
 
 ## E-14 · 会话续接实测（取证 2026-10-19，本项目）
 
-- **opencode 支持真正的多轮会话**：`--session <id>` 续接，上下文全在。
-- **实测**：第 1 轮让模型「记住 42」→ 得到 `session_id`；第 2 轮带同一 `session_id` 问「刚才那个数」→ **准确回答 42**。
-- 其他相关旗标：`--continue`（续最近）、`--fork`（分叉后续）、`--agent`（指定内置 agent：build/plan/general/explore）。
-- **教训**：这是「会话间交流」的技术基础；⛔ 别再假设「每次调用都是全新上下文」。
+**两个引擎都实测通过**：
+
+| 引擎 | 续接方式 | 实测结果 |
+|---|---|---|
+| **opencode** | `--session <id>` | ✅ 第1轮记 42 → 第2轮准确答 42 |
+| **qoderclicn** | `-r/--resume <id>` | ✅ 第1轮记 77 → 第2轮准确答 77 |
+
+**qoderclicn 的坑**：⛔ **不能加 `--no-session-persistence`**。加了之后 `--resume` 报
+`Error resuming session: Invalid session identifier`（会话没落盘）。
+⇒ 要支持续接就必须持久化会话；已在 `engines.py` 去掉该旗标。
+
+**其他相关旗标**：
+- opencode：`--continue`（续最近）、`--fork`（分叉）、`--agent`（build/plan/general/explore）
+- qoderclicn：`-c/--continue`、`--fork-session`、`--reasoning-effort`、`--thinking`
+
+**教训**：⛔ 别再假设「每次调用都是全新上下文」。
 
 **可复跑**：
 ```powershell
-python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run('opencode','记住42',model='opencode-go/deepseek-v4.1-flash'); print(r1.session_id); r2=E.run('opencode','刚才那个数？',model='opencode-go/deepseek-v4.1-flash',session_id=r1.session_id); print(r2.text)"
+python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run('qoderclicn','记住77'); r2=E.run('qoderclicn','刚才那个数？',session_id=r1.session_id); print(r2.text)"
 ```
 
 ## E-15 · 原子认领必须用固定路径名（取证 2026-10-19，专家团抓出 + 本席复现）
