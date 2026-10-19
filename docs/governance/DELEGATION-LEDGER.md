@@ -38,3 +38,4 @@
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/1 | 1 | 0 | 否 | INBOX1=awaiting-human |
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/1 | 1 | 0 | 否 | INBOX1=awaiting-human |
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | SMOKE1=done |
+| 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | SQ1=done |

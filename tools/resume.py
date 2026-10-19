@@ -84,14 +84,14 @@ def decide(st: dict, cid: str) -> tuple:
 def scan() -> list:
     """扫描全部卡，给出续跑计划。"""
     out = []
-    if not B.CARDS.exists():
+    if not B.card_ids():
         return out
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
             st = B.replay(d.name)
-            card = B.jread(d / "card.json")
+            card = B.get_card(d.name)
         except Exception as e:
             out.append({"id": d.name, "title": "?", "state": "?",
                         "action": SKIP, "reason": f"卡片损坏：{e}"})

@@ -28,15 +28,9 @@ PREFIX = "RG-"
 # ---------- 造卡工具 ----------
 
 def new_card(cid, spec=None):
-    d = B.CARDS / cid
-    if d.exists():
-        shutil.rmtree(d)
-    d.mkdir(parents=True)
-    (d / "artifacts").mkdir()
-    (d / "evidence").mkdir()
-    (d / "lease" / "active").mkdir(parents=True)
+    """造一张卡（走存储层，不再手写 card.json）。"""
     spec = spec or {}
-    B.jwrite(d / "card.json", {
+    B.create_card({
         "id": cid, "title": f"regression {cid}", "goal": "", "territory": [],
         "deliverables": spec.get("deliverables", []),
         "accept_patterns": spec.get("accept", []),
@@ -48,13 +42,21 @@ def new_card(cid, spec=None):
         "effort": spec.get("effort", "any"),
     })
     B.append_event(cid, {"type": "created", "actor": "human", "seat": "regression"})
-    return d
+    return B.card_dir(cid)
 
 
 def cleanup():
-    for d in B.CARDS.iterdir() if B.CARDS.exists() else []:
-        if d.is_dir() and d.name.startswith(PREFIX):
-            shutil.rmtree(d, ignore_errors=True)
+    """删掉本测试造的卡（库删 + 证据目录删）。"""
+    st = B._store()
+    for d in B.card_refs():
+        if d.name.startswith(PREFIX):
+            with st.write() as c:
+                c.execute("DELETE FROM events WHERE card_id=?", (d.name,))
+                c.execute("DELETE FROM leases WHERE card_id=?", (d.name,))
+                c.execute("DELETE FROM cards WHERE id=?", (d.name,))
+            ev = st.evidence_dir / d.name
+            if ev.exists():
+                shutil.rmtree(ev, ignore_errors=True)
 
 
 # ---------- 各 kind 的处理 ----------
@@ -76,10 +78,17 @@ def k_concurrency(case, cid):
         t.start()
     for t in ts:
         t.join()
-    leases = [x for x in (B.CARDS / cid / "lease" / "active").iterdir() if x.is_dir()]
+    # 租约现在在库里：最多一条
+    lease = B.active_lease(cid)
+    st = B.replay(cid)
     exp = case["expect"]
-    ok = len(winners) <= exp["max_winners"] and len(leases) <= exp["max_leases"]
-    return ok, f"winners={len(winners)} leases={len(leases)}"
+    n_leases = 1 if lease else 0
+    n_claim_events = len([e for e in B.load_journal(cid) if e.get("type") == "claim"])
+    ok = (len(winners) <= exp["max_winners"]
+          and n_leases <= exp["max_leases"]
+          and n_claim_events <= exp["max_winners"])
+    return ok, (f"winners={len(winners)} leases={n_leases} "
+                f"claim_events={n_claim_events} state={st['state']}")
 
 
 def k_spec(case, cid, should_reject):
@@ -118,7 +127,7 @@ def k_gate(case, cid, kind):
         spec["deliverables"] = [rel]
 
     d = new_card(cid, spec)
-    card = B.jread(d / "card.json")
+    card = B.get_card(d.name)
     if kind == "gate_l1":
         passed, _, _ = B.gate_l1(cid, card)
     elif kind == "gate_l2":
@@ -180,14 +189,21 @@ def k_human_empty(case, cid):
 
 
 def k_chain(case, cid):
-    d = new_card(cid)
+    """篡改检测：直接改库里某条事件的内容，哈希链必须断。"""
+    new_card(cid)
+    B.append_event(cid, {"type": "probe", "seat": "a"})
+    B.append_event(cid, {"type": "probe", "seat": "b"})
     ok_before, _ = B.verify_chain(cid)
-    with (d / "journal.jsonl").open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"seq": 99, "type": "review", "seat": "x",
-                            "verdict": "pass"}, ensure_ascii=False) + "\n")
+    st = B._store()
+    with st.write() as c:
+        c.execute(
+            "UPDATE events SET data=? WHERE card_id=? AND seq=("
+            "SELECT MIN(seq) FROM events WHERE card_id=?)",
+            ('{"type": "probe", "seat": "TAMPERED"}', cid, cid))
     ok_after, why = B.verify_chain(cid)
     rejected = ok_before and not ok_after
-    return rejected == case["expect"]["rejected"], f"chain_ok_after={ok_after}"
+    return rejected == case["expect"]["rejected"], \
+        f"before={ok_before} after={ok_after} why={why[:40]}"
 
 
 def k_state_rework(case, cid):
@@ -230,7 +246,7 @@ def k_project_isolation(case, cid):
 
         B.set_root(b)
         # b 里根本没这张卡
-        exists_in_b = (B.CARDS / cid).exists()
+        exists_in_b = B.get_card(cid) is not None
         st_b = None
         if exists_in_b:
             st_b = B.replay(cid)["state"]
@@ -269,7 +285,7 @@ def k_defaults_inherit(case, cid):
             "effort": "any", "seat": "regression", "from_card": None,
         })()
         B.cmd_new(ns)
-        card = B.jread(B.CARDS / cid / "card.json")
+        card = B.get_card(cid)
         got = (card["engine"], card["model"], card["effort"])
         want = ("opencode", "opencode-go/deepseek-v4.1-flash", "high")
         ok = got == want

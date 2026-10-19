@@ -39,17 +39,49 @@ BOARD = ROOT / "board"
 CARDS = BOARD / "cards"
 # agent 干活的地方（交付物路径相对它解析）。默认＝项目根，可由项目注册表的 workspace 覆盖。
 WORKSPACE = ROOT
+_STORE = None          # 当前项目的 Store（惰性建）
+_STORE_LOCK = None     # 建连接的锁
 
 
 def set_root(root) -> None:
     """切换当前项目根。多项目支持的核心入口。"""
-    global ROOT, BOARD, CARDS, WORKSPACE
+    global ROOT, BOARD, CARDS, WORKSPACE, _STORE
     ROOT = Path(root).resolve()
     BOARD = ROOT / "board"
     CARDS = BOARD / "cards"
     BOARD.mkdir(parents=True, exist_ok=True)
     CARDS.mkdir(parents=True, exist_ok=True)
     WORKSPACE = ROOT
+    _STORE = None            # 切项目必须丢弃旧连接
+    migrate_if_needed()
+
+
+def migrate_if_needed(verbose: bool = False) -> int:
+    """首次把旧「文件即卡」布局迁进 SQLite（幂等，不删旧文件）。"""
+    legacy = ROOT / "board" / "cards"
+    if not legacy.exists():
+        return 0
+    if not any(d.is_dir() for d in legacy.iterdir()):
+        return 0
+    st = _store()
+    if st.stats()["cards"] > 0:
+        return 0
+    import storage
+    n = storage.migrate_from_files(legacy, st)
+    if n:
+        _stamp_migration_done(n)
+    return n
+
+
+def _stamp_migration_done(n: int):
+    try:
+        f = BOARD / "MIGRATED.txt"
+        f.write_text(
+            f"已把 {n} 张卡从 board/cards/ 迁入 board/board.db（{ts()}）\n"
+            "旧文件保留作对照，可直接删除：board/cards/\n",
+            encoding="utf-8")
+    except Exception:
+        pass
 
 
 def set_workspace(ws) -> None:
@@ -102,142 +134,124 @@ def ok(msg: str):
     print(f"✓ {msg}")
 
 
-def jwrite(path: Path, obj: dict):
-    """原子写：先写临时文件再 rename。"""
-    tmp = path.with_suffix(path.suffix + f".tmp{uuid.uuid4().hex[:8]}")
+def _store():
+    """取当前项目的库（惰性建连，随 set_root 切换）。
+
+    ⚠️ 必须加锁：并发首次调用会同时看到 _STORE is None ⇒ 造出多个 Store 实例，
+       各自带一把锁 ⇒ 互斥失效。
+       2026-10-20 实测：12 线程首次并发调用造出 12 个实例，导致 2 个 agent 同时认领成功。
+    """
+    global _STORE, _STORE_LOCK
+    if _STORE_LOCK is None:
+        import threading as _t
+        _STORE_LOCK = _t.Lock()
+    with _STORE_LOCK:
+        if _STORE is None or Path(_STORE.path) != (BOARD / "board.db"):
+            import storage
+            _STORE = storage.Store(BOARD / "board.db", BOARD / "evidence")
+        return _STORE
+
+
+def close_store():
+    global _STORE
+    if _STORE is not None:
+        _STORE.close()
+        _STORE = None
+
+
+def jwrite(path, obj):
+    """兼容旧接口：仍可原子写 JSON 文件（现在只用于非权威的小件）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import uuid as _u
+    tmp = path.with_suffix(path.suffix + f".tmp{_u.uuid4().hex[:8]}")
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def jread(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+def jread(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def card_dir(cid: str) -> Path:
-    d = CARDS / cid
-    if not d.exists():
-        die(f"卡片不存在：{cid}")
+    """卡片作用域的文件目录（证据等）。权威数据在库里，不在这些文件里。"""
+    d = _store().evidence_path(cid)
     return d
 
 
-def load_journal(cid: str) -> list:
-    p = card_dir(cid) / "journal.jsonl"
-    if not p.exists():
-        return []
-    out = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-    return out
+def get_card(cid: str):
+    """取卡片契约（库）。找不到返回 None。"""
+    return _store().get_card(cid)
 
 
-def _line_hash(prev: str, obj: dict) -> str:
-    """一条事件的哈希：prev + 去掉 hash 字段的内容。"""
-    body = {k: v for k, v in obj.items() if k not in ("hash", "prev")}
-    raw = prev + json.dumps(body, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+def require_card(cid: str):
+    c = get_card(cid)
+    if not c:
+        die(f"卡片不存在：{cid}")
+    return c
 
 
-@contextlib.contextmanager
-def _file_lock(path: Path, timeout: float = 10.0):
-    """跨进程文件锁（Windows 用 msvcrt，POSIX 用 fcntl）。
+def all_cards():
+    return _store().all_cards()
 
-    防的是：两个进程同时 append journal ⇒ 都读到同一个 prev ⇒ 哈希链分叉，
-    随后 audit 会把正常写入误报成「被篡改」（opus 评审指出）。
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    f = open(path, "a+", encoding="utf-8")
-    locked = False
-    deadline = time.time() + timeout
-    try:
-        while time.time() < deadline:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    f.seek(0)
-                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                locked = True
-                break
-            except OSError:
-                time.sleep(0.05)
-        yield locked
-    finally:
-        if locked:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    f.seek(0)
-                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
-        f.close()
+
+def card_ids():
+    """所有卡号（有序）。替代遍历 CARDS 目录。"""
+    return [c["id"] for c in _store().all_cards()]
+
+
+class CardRef:
+    """轻量卡引用：兼容 `for d in ...: d.name` 与 `d / 'xxx'` 的老写法。"""
+    __slots__ = ("name",)
+
+    def __init__(self, cid):
+        self.name = cid
+
+    def __truediv__(self, other):
+        return card_dir(self.name) / other
+
+    def exists(self):
+        return get_card(self.name) is not None
+
+    def is_dir(self):
+        return self.exists()
+
+    def relative_to(self, other):
+        return Path(self.name)
+
+
+def card_refs():
+    return [CardRef(c) for c in card_ids()]
+
+
+def card_ref(cid):
+    return CardRef(cid)
+
+
+def create_card(card: dict):
+    """建卡（统一入口，CLI 与测试都用它）。"""
+    _store().save_card(card)
+    return card
+
+
+def load_journal(cid: str):
+    return _store().events(cid)
 
 
 def append_event(cid: str, ev: dict) -> dict:
-    """append-only：只追加，不改写。每条带 prev/hash 形成哈希链。
-
-    加锁：读 prev → 计算 hash → 写入，整段原子，防止并发分叉。
-    坏行处理：解析失败的行**不再静默丢弃**，记到 journal.corrupt 里（E-15/opus 评审）。
-    """
-    d = card_dir(cid)
-    jp = d / "journal.jsonl"
-    lockp = d / ".journal.lock"
-    with _file_lock(lockp) as got:
-        if not got:
-            die(f"拿不到 {cid} 的 journal 锁（另一个进程正在写），稍后重试")
-        prev = ""
-        n = 0
-        bad = []
-        if jp.exists():
-            for line in jp.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    n += 1
-                    prev = obj.get("hash", prev)
-                except json.JSONDecodeError:
-                    bad.append(line[:200])
-        if bad:
-            with (d / "journal.corrupt").open("a", encoding="utf-8") as f:
-                for b in bad:
-                    f.write(b + "\n")
-        ev = {"seq": n + 1, "at": ts(), "at_ms": now_ms(), **ev}
-        ev["prev"] = prev
-        ev["hash"] = _line_hash(prev, ev)
-        with jp.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-        return ev
+    """append-only；哈希链与串行化由存储层事务保证。"""
+    if get_card(cid) is None:
+        die(f"卡片不存在：{cid}")
+    return _store().append_event(cid, ev)
 
 
-def verify_chain(cid: str) -> tuple:
-    """校验哈希链。返回 (ok, 问题描述)。"""
-    prev = ""
-    for i, ev in enumerate(load_journal(cid), 1):
-        if "hash" not in ev:
-            return False, f"第 {i} 条无 hash（旧格式或被手写插入）"
-        if ev.get("prev", "") != prev:
-            return False, f"第 {i} 条 prev 断裂（期望 {prev[:8]}，实际 {str(ev.get('prev'))[:8]}）"
-        if _line_hash(prev, ev) != ev["hash"]:
-            return False, f"第 {i} 条 hash 不符（内容被改过）"
-        prev = ev["hash"]
-    return True, ""
+def verify_chain(cid: str):
+    return _store().verify_chain(cid)
 
 
-def replay(cid: str) -> dict:
-    """从 journal 重放出当前状态（journal 是唯一真相）。"""
-    card = jread(card_dir(cid) / "card.json")
+def replay(cid: str):
+    """从事件流重放出当前状态（事件流＝唯一真相）。"""
+    card = require_card(cid)
     st = {
         "id": cid,
         "title": card.get("title", cid),
@@ -307,91 +321,45 @@ def replay(cid: str) -> dict:
 
 # ---------- 租约（红线③）----------
 
-def lease_root(cid: str) -> Path:
-    p = card_dir(cid) / "lease" / "active"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
-# ⚠️ 租约目录名必须是**固定名**，不能带 uuid。
-# 带 uuid 时每个进程创建的路径都不同，os.mkdir 永远不会撞名，
-# 互斥就退化成「先读后写」的 TOCTOU（2026-10-19 专家团实测：12 线程抢卡，3 个成功）。
-LEASE_NAME = "holder"
+LEASE_NAME = "holder"      # 兼容旧值；库版已不用目录名做互斥
 
 
 def active_lease(cid: str):
-    p = card_dir(cid) / "lease" / "active" / LEASE_NAME
-    return p if p.exists() else None
+    """有活跃租约则返回持有者信息 dict，否则 None。"""
+    return _store().get_lease(cid)
 
 
-def _lease_owner(lease: Path) -> dict:
-    try:
-        return jread(lease / "owner.json")
-    except Exception:
-        return {}
+def _lease_owner(lease):
+    """兼容旧签名：lease 现在就是持有者 dict。"""
+    return lease or {}
 
 
-def _reclaim_lease(cid: str, lease: Path, reason: str = "heartbeat timeout"):
-    """把租约目录原子 rename 到 reclaimed/，留痕。"""
-    dest = card_dir(cid) / "lease" / "reclaimed"
-    dest.mkdir(parents=True, exist_ok=True)
-    target = dest / f"R__{now_ms()}__{uuid.uuid4().hex[:6]}"
-    try:
-        os.replace(lease, target)
-    except OSError:
-        return False
-    jwrite(target / "reclaim.json", {
-        "reclaimed_at": ts(), "reason": reason,
-        "timeout_s": LEASE_TTL, "previous_owner": _lease_owner(lease),
-    })
-    append_event(cid, {"type": "reclaim", "seat": "system",
-                       "previous": _lease_owner(lease).get("seat"),
-                       "reason": reason})
-    return True
+def _reclaim_lease(cid: str, lease=None, reason: str = "heartbeat timeout"):
+    cur = _store().reclaim(cid, reason=reason)
+    if cur:
+        append_event(cid, {"type": "reclaim", "seat": "system",
+                           "previous": cur.get("seat"), "reason": reason})
+        return True
+    return False
 
 
 def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = None) -> bool:
-    """原子认领：独占创建**固定名**目录。返回 True=拿到。"""
+    """原子认领（库里 PRIMARY KEY 保证互斥）。"""
     st = replay(cid)
     if st["state"] not in ("待认领", "阻塞", "待返工"):
         die(f"卡片当前状态「{st['state']}」，不可认领")
-    card = jread(card_dir(cid) / "card.json")
-    # 执行规格校验：卡指定了就必须对得上，否则不许接
+    card = require_card(cid)
     miss = _match_miss(card, engine, model, effort)
     if miss:
         die("这张卡的执行规格与你声明的不符：" + "；".join(miss)
             + f"\n  卡要求：引擎={card.get('engine')} 模型={card.get('model')} "
               f"思考={card.get('effort')}\n  你声明：引擎={engine} 模型={model} 思考={effort}"
             + "\n  （用 board.py ready 找你匹配的活）")
-    lease = lease_root(cid)
-    target = lease / LEASE_NAME
-    # 最多试两次：第一次撞上超时租约 → 回收 → 再抢一次
-    for attempt in (1, 2):
-        try:
-            os.mkdir(target)      # ← 固定名 + mkdir = 真正的系统级原子互斥
-            break
-        except FileExistsError:
-            owner = _lease_owner(target)
-            hb = owner.get("at_ms", 0)
-            # 空 owner.json 视为「刚占上、还没写完」，⛔ 不当超时（D2 A.2）
-            fresh = (now_ms() - hb) / 1000 if hb else 0
-            if hb and fresh > LEASE_TTL and attempt == 1:
-                print(f"  · 回收超时租约（{owner.get('seat')}，{int(fresh)}s 无心跳）")
-                if _reclaim_lease(cid, target):
-                    continue
-                die("回收失败，稍后重试")
-            die(f"卡片已被占用（{owner.get('seat','?')}，心跳 {int(fresh)}s 前）")
-        except OSError as e:
-            die(f"认领失败（文件系统错误）：{e}")
-    else:
-        die("认领竞争失败")
-
-    jwrite(target / "owner.json", {
-        "seat": seat, "engine": engine, "model": model, "effort": effort,
-        "at": ts(), "at_ms": now_ms(),
-        "ttl_s": LEASE_TTL, "hb_interval_s": HB_INTERVAL,
-    })
-    epoch = replay(cid)["epoch"] + 1
+    epoch = st.get("epoch", 0) + 1
+    okc, why = _store().try_claim(cid, seat, engine, model, effort,
+                                  epoch=epoch, ttl_s=LEASE_TTL)
+    if not okc:
+        die(why)
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
                        "engine": engine, "model": model, "effort": effort,
                        "epoch": epoch, "lease_dir": LEASE_NAME})
@@ -399,31 +367,19 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
 
 
 def heartbeat(cid: str, seat: str):
-    lease = active_lease(cid)
-    if not lease:
+    cur = _store().get_lease(cid)
+    if not cur:
         die("没有活跃租约")
-    owner = _lease_owner(lease)
-    if owner.get("seat") != seat:
-        die(f"租约持有者是 {owner.get('seat')}，不是你")
-    owner.update({"at": ts(), "at_ms": now_ms()})
-    jwrite(lease / "owner.json", owner)
+    if cur.get("seat") != seat:
+        die(f"租约持有者是 {cur.get('seat')}，不是你")
+    _store().touch_lease(cid, seat)
     append_event(cid, {"type": "heartbeat", "actor": "agent", "seat": seat})
     ok(f"心跳已记（TTL {LEASE_TTL}s）")
 
 
 def release(cid: str, to: str = "released"):
-    """释放租约：原子 rename 出去，让下一次认领能重新 mkdir。"""
-    lease = active_lease(cid)
-    if not lease:
-        return
-    dest = card_dir(cid) / "lease" / to
-    dest.mkdir(parents=True, exist_ok=True)
-    target = dest / f"L__{now_ms()}__{uuid.uuid4().hex[:6]}"
-    try:
-        os.replace(lease, target)
-    except OSError:
-        return
-    jwrite(target / "release.json", {"released_at": ts(), "owner": _lease_owner(lease)})
+    cur = _store().release_lease(cid, kind=to)
+    return cur
 
 
 # ---------- 闸门（红线①）----------

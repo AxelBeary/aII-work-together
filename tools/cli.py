@@ -21,12 +21,11 @@ import board as B                        # noqa: E402
 # ---------- 命令 ----------
 
 def cmd_init(a):
-    B.CARDS.mkdir(parents=True, exist_ok=True)
-    B.ok(f"看板已初始化：{B.BOARD}")
+    B._store()          # 建库
+    B.ok(f"看板已初始化：{B.BOARD / 'board.db'}")
 
 
 def cmd_new(a):
-    B.CARDS.mkdir(parents=True, exist_ok=True)
     # 继承项目默认值：没指定就自动填，省掉手打模型名
     import projects as P
     defaults = P.project_defaults(B.ROOT) or {}
@@ -34,13 +33,8 @@ def cmd_new(a):
     mdl = a.model if a.model and a.model != "any" else defaults.get("model", "any")
     eft = a.effort if a.effort and a.effort != "any" else defaults.get("effort", "any")
     cid = a.id or f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}"
-    d = B.CARDS / cid
-    if d.exists():
+    if B.get_card(cid):
         B.die(f"卡片已存在：{cid}")
-    d.mkdir(parents=True)
-    (d / "artifacts").mkdir()
-    (d / "evidence").mkdir()
-    (d / "lease" / "active").mkdir(parents=True)
     card = {
         "id": cid, "title": a.title, "goal": a.goal or "",
         "territory": a.territory or [], "deliverables": a.deliverable or [],
@@ -56,7 +50,7 @@ def cmd_new(a):
         "irreversible": bool(a.irreversible),
         "source_card": getattr(a, "from_card", None),
     }
-    B.jwrite(d / "card.json", card)
+    B.create_card(card)
     B.append_event(cid, {"type": "created", "actor": card["created_kind"],
                        "seat": card["created_by"], "title": a.title,
                        "engine": card["engine"], "model": card["model"],
@@ -73,7 +67,6 @@ def cmd_new(a):
         spec.append(f"思考={card['effort']}")
     if spec:
         print(f"  执行规格：{' / '.join(spec)}")
-    print(f"  {d}")
 
 
 def cmd_publish(a):
@@ -88,16 +81,16 @@ def cmd_publish(a):
 
 def cmd_ready(a):
     """agent 找活干：列出「待认领」且与我的引擎/模型/思考强度匹配的卡。"""
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空）")
         return
     hits = []
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
             st = B.replay(d.name)
-            card = B.jread(d / "card.json")
+            card = B.get_card(d.name)
         except Exception:
             continue
         if st["state"] not in ("待认领", "阻塞"):
@@ -120,11 +113,11 @@ def cmd_ready(a):
 
 
 def cmd_ls(a):
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空，先 board.py new）")
         return
     rows = []
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
@@ -151,7 +144,7 @@ def cmd_ls(a):
 
 def cmd_show(a):
     st = B.replay(a.id)
-    card = B.jread(B.card_dir(a.id) / "card.json")
+    card = B.get_card(a.id)
     print(f"\n【{st['id']}】{st['title']}")
     print(f"  状态    {st['state']}")
     print(f"  持有    {st['holder'] or '-'}")
@@ -253,7 +246,7 @@ def cmd_submit(a):
     st = B.replay(a.id)
     if st["holder"] != a.seat:
         B.die(f"你不是持有者（当前 {st['holder']}）")
-    card = B.jread(B.card_dir(a.id) / "card.json")
+    card = B.get_card(a.id)
     # 提交即跑 L1-L3
     ok1, p1, r1 = B.gate_l1(a.id, card)
     ok2, p2 = B.gate_l2(a.id, card)
@@ -282,7 +275,7 @@ def cmd_verify(a):
     st = B.replay(a.id)
     if st["state"] != "待验收":
         B.die(f"当前状态「{st['state']}」，需先 submit")
-    card = B.jread(B.card_dir(a.id) / "card.json")
+    card = B.get_card(a.id)
     ok1, p1, r1 = B.gate_l1(a.id, card)
     ok2, p2 = B.gate_l2(a.id, card)
     ok3, p3, c3 = B.gate_l3(a.id, card)
@@ -416,7 +409,7 @@ def cmd_human(a):
 
 def cmd_reclaim(a):
     n = 0
-    for d in B.CARDS.iterdir() if B.CARDS.exists() else []:
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         lease = d / "lease" / "active"
@@ -450,7 +443,7 @@ def cmd_reclaim(a):
 def cmd_audit(a):
     """检测绕过 CLI 直接改文件的行为。"""
     issues = []
-    for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         # 0) 哈希链校验（整份重写/插入/改内容都会断链）
@@ -462,7 +455,7 @@ def cmd_audit(a):
         except Exception as e:
             issues.append(f"{d.name}: journal 无法重放（{e}）")
             continue
-        card = B.jread(d / "card.json")
+        card = B.get_card(d.name)
         # 1) 完成但没有复核记录
         if st["state"] == "完成" and not st["review"]:
             issues.append(f"{d.name}: 状态=完成 但无复核记录")
@@ -509,12 +502,12 @@ def cmd_html(a):
     """生成静态看板页（单项目）。双击即可看。"""
     import render as RD
     cards = []
-    for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
             st = B.replay(d.name)
-            card = B.jread(d / "card.json")
+            card = B.get_card(d.name)
         except Exception:
             continue
         st["goal"] = card.get("goal", "")
@@ -611,7 +604,7 @@ def cmd_bare(a):
     print(f"📋 {B.ROOT.name}")
     print(f"   {B.ROOT}\n")
 
-    if not B.CARDS.exists() or not any(d.is_dir() for d in B.CARDS.iterdir()):
+    if not B.card_ids() or not any(d.is_dir() for d in B.card_refs()):
         print("   还没有任何卡。\n")
         print("   下一步：")
         print("     board add --title \"要做什么\" --goal \"具体目标\"")
@@ -621,7 +614,7 @@ def cmd_bare(a):
 
     counts = {}
     total = 0
-    for d in B.CARDS.iterdir():
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
@@ -648,11 +641,11 @@ def cmd_bare(a):
 
 def cmd_stats(a):
     """各状态几张、完成率。"""
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空）")
         return
     counts, total = {}, 0
-    for d in B.CARDS.iterdir():
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
@@ -676,7 +669,7 @@ def cmd_stats(a):
 
 def cmd_cost(a):
     """用量统计：token + 缓存 + 花费。只统计引擎真的报了数的（⛔ 不假装 0）。"""
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空）")
         return
 
@@ -687,7 +680,7 @@ def cmd_cost(a):
     total = newagg()
     by_card, by_model = {}, {}
 
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         for ev in B.load_journal(d.name):
@@ -748,16 +741,16 @@ def cmd_inbox(a):
       · 每张给：做了什么 / 证据数字 / 花费 / 建议 / 一行命令
       · 驳回必须带理由，理由会传回下一轮返工
     """
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空）")
         return
     waiting = []
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:
             st = B.replay(d.name)
-            card = B.jread(d / "card.json")
+            card = B.get_card(d.name)
         except Exception:
             continue
         if st["state"] == "拍板中":
@@ -767,7 +760,7 @@ def cmd_inbox(a):
         # 没有待拍板，给一句正面的
         print("✓ 没有待你拍板的卡")
         pending = []
-        for d in sorted(B.CARDS.iterdir()):
+        for d in B.card_refs():
             if not d.is_dir():
                 continue
             try:
@@ -887,7 +880,7 @@ def cmd_doctor(a):
 
     # 2) 卡片逐张查
     n_cards = 0
-    for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         n_cards += 1
@@ -926,7 +919,7 @@ def cmd_doctor(a):
         # 2.5 完成但交付物丢了
         try:
             st = B.replay(cid)
-            card = B.jread(d / "card.json")
+            card = B.get_card(d.name)
         except Exception:
             findings.append(("✗", f"{cid}: card.json 读不了", False))
             continue
@@ -943,7 +936,7 @@ def cmd_doctor(a):
         for w in wt_base.iterdir():
             if w.is_dir():
                 cid = w.name
-                d = B.CARDS / cid
+                d = B.card_ref(cid)
                 if not d.exists():
                     findings.append(("!", f"孤立 worktree：{cid}（卡片已不存在）", True))
                     fixable.append(("worktree", cid))
@@ -1001,6 +994,27 @@ def cmd_doctor(a):
         print("\n加 --fix 自动清理可修项")
 
 
+def cmd_rm(a):
+    """删卡（人类操作，需 --yes）。⛔ 只删本项目的卡，不碰交付物文件。"""
+    card = B.get_card(a.id)
+    if not card:
+        B.die(f"卡片不存在：{a.id}")
+    if not a.yes:
+        print(f"要删：{a.id}  {card.get('title')}")
+        print(f"  加 --yes 确认。⛔ 交付物文件不会被删除")
+        return
+    st = B._store()
+    with st.write() as c:
+        c.execute("DELETE FROM events WHERE card_id=?", (a.id,))
+        c.execute("DELETE FROM leases WHERE card_id=?", (a.id,))
+        c.execute("DELETE FROM cards WHERE id=?", (a.id,))
+    ev = st.evidence_dir / a.id
+    if ev.exists():
+        import shutil as _sh
+        _sh.rmtree(ev, ignore_errors=True)
+    B.ok(f"已删除：{a.id}")
+
+
 def cmd_open(a):
     """打开/刷新看板页。最常用的一条命令。"""
     cmd_html(a)
@@ -1039,6 +1053,11 @@ def main():
     s = sub.add_parser("stats", help="一眼看数字")
     s.add_argument("--workspace", action="store_true", help="同时显示工作区")
     s.set_defaults(f=cmd_stats)
+
+    s = sub.add_parser("rm", help="删卡（需 --yes）")
+    s.add_argument("id")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(f=cmd_rm)
 
     s = sub.add_parser("cost", help="用量统计（token/缓存/花费）")
     s.add_argument("--per-card", action="store_true", help="按卡片细分")

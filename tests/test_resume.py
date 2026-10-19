@@ -35,23 +35,21 @@ def _bump(kind, cid):
 
 def cleanup_cards():
     """删掉本测试造的卡，并清掉计数文件（不留残渣）。"""
+    st = B._store()
     for cid in ("RT-DONE", "RT-STALE", "RT-REVIEW"):
-        d = B.CARDS / cid
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
+        with st.write() as c:
+            c.execute("DELETE FROM events WHERE card_id=?", (cid,))
+            c.execute("DELETE FROM leases WHERE card_id=?", (cid,))
+            c.execute("DELETE FROM cards WHERE id=?", (cid,))
+        ev = st.evidence_dir / cid
+        if ev.exists():
+            shutil.rmtree(ev, ignore_errors=True)
     COUNTER.unlink(missing_ok=True)
 
 
 def _make_card(cid, state):
-    """造一张卡并推到指定状态。"""
-    d = B.CARDS / cid
-    if d.exists():
-        shutil.rmtree(d)
-    d.mkdir(parents=True)
-    (d / "artifacts").mkdir()
-    (d / "evidence").mkdir()
-    (d / "lease" / "active").mkdir(parents=True)
-    B.jwrite(d / "card.json", {
+    """造一张卡并推到指定状态（走存储层）。"""
+    B.create_card({
         "id": cid, "title": f"test {cid}", "goal": "", "territory": [],
         "deliverables": [], "accept_patterns": [], "human_gate": "none",
         "created_at": "x", "created_by": "test", "created_kind": "human",
@@ -74,11 +72,11 @@ def _make_card(cid, state):
 
     elif state == "进行中":
         B.claim(cid, "w1", "fake")
-        # 手工把心跳时间改老，模拟崩溃
-        lease = B.active_lease(cid)
-        owner = B._lease_owner(lease)
-        owner["at_ms"] = B.now_ms() - (B.LEASE_TTL + 60) * 1000
-        B.jwrite(lease / "owner.json", owner)
+        # 把租约心跳时间改老，模拟崩溃
+        st = B._store()
+        with st.write() as c:
+            c.execute("UPDATE leases SET at_ms=? WHERE card_id=?",
+                      (B.now_ms() - (B.LEASE_TTL + 60) * 1000, cid))
     return cid
 
 
@@ -86,7 +84,7 @@ def main():
     _reset_counter()
     # 清掉上次的测试卡
     for cid in ("RT-DONE", "RT-STALE", "RT-REVIEW"):
-        d = B.CARDS / cid
+        d = B.card_ref(cid)
         if d.exists():
             shutil.rmtree(d)
 

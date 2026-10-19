@@ -162,7 +162,7 @@ def parse_review(text: str) -> tuple:
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
             dry: bool = False, panel: list = None, use_worktree: bool = False) -> str:
     """跑完一张卡的全流程。返回最终状态。"""
-    card = B.jread(B.card_dir(cid) / "card.json")
+    card = B.get_card(cid)
 
     # ---- 认领 ----
     if not dry:
@@ -383,12 +383,12 @@ def cmd_run(a):
     def pick(limit):
         """挑最多 limit 张能接的卡（精确匹配优先）。"""
         cand = []
-        for d in sorted(B.CARDS.iterdir()) if B.CARDS.exists() else []:
+        for d in B.card_refs():
             if not d.is_dir():
                 continue
             try:
                 st = B.replay(d.name)
-                card = B.jread(d / "card.json")
+                card = B.get_card(d.name)
             except Exception:
                 continue
             if st["state"] not in ("待认领", "阻塞", "待返工"):
@@ -479,11 +479,11 @@ def _append_ledger(a, results):
 
 def cmd_status(a):
     """一眼看编排状态。"""
-    if not B.CARDS.exists():
+    if not B.card_ids():
         print("（看板为空）")
         return
     by = {}
-    for d in sorted(B.CARDS.iterdir()):
+    for d in B.card_refs():
         if not d.is_dir():
             continue
         try:

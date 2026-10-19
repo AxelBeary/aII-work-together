@@ -18,6 +18,12 @@ __pycache__/
 board/cards/
 board/board.html
 board/.human-token.sha
+board/board.db
+board/board.db-wal
+board/board.db-shm
+board/evidence/
+board/MIGRATED.txt
+.worktrees/
 
 # 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
 .opencode/memory/
