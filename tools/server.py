@@ -45,6 +45,10 @@ UI = Path(__file__).resolve().parent / "ui.html"
 # 跨项目总览用的伪项目名（不是真目录）
 ALL_PROJECTS = "__all__"
 
+# 后端自证（给外壳比对用）：进程号和「这份代码的 mtime」
+_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
+_CODE_MTIME = int(Path(__file__).stat().st_mtime)
+
 _run_lock = threading.Lock()
 _run_state = {"running": False, "project": None, "started": None}
 _run_log_path = ROOT / "board" / "ui-run.log"
@@ -157,6 +161,9 @@ def api_state(q):
         "current_path": str(root),
         "workspace": str(B.WORKSPACE),
         "projects": projects,
+        # 让外壳能认出「这个后端是不是老代码」（E-31：旧进程配新页面＝接口 not found）
+        "server": {"pid": os.getpid(), "started": _STARTED_AT,
+                   "code_mtime": int(_CODE_MTIME)},
     }
 
 

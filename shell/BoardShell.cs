@@ -138,6 +138,7 @@ namespace BoardShell
             BuildWindow();
             BuildTray();
             WatchWake();
+            CheckBackendFreshness();
 
             Application.Run(Win);
 
@@ -744,6 +745,37 @@ namespace BoardShell
                 try { if (f != null) f.Close(); } catch { }
                 StopServerIfOwned();      // 自检自己起的后端不留垃圾进程
             }
+        }
+
+        // 后端是不是「老代码」：改了 server.py 但旧的 server 进程还在 8777（E-31）
+        // 旧进程配新页面 ⇒ 新接口 404，而且看起来像「路由写错了」。
+        static void CheckBackendFreshness()
+        {
+            try
+            {
+                var s = Http.GetStringAsync("http://127.0.0.1:" + Port + "/api/state").Result;
+                var f = Path.Combine(ProjectDir, "tools", "server.py");
+                if (!File.Exists(f)) return;
+                long disk = (long)(File.GetLastWriteTimeUtc(f)
+                                   - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+                int i = s.IndexOf("\"code_mtime\":");
+                if (i < 0)
+                {
+                    Log("backend has no code_mtime ⇒ 旧版本进程");
+                    Balloon("后端是旧版", "关掉看板再开一次就会用新代码；否则新接口会报 not found");
+                    return;
+                }
+                var digits = "";
+                for (int j = i + 13; j < s.Length && char.IsDigit(s[j]); j++) digits += s[j];
+                long running;
+                if (!long.TryParse(digits, out running)) return;
+                if (running < disk - 1)
+                {
+                    Log("backend stale: running=" + running + " disk=" + disk);
+                    Balloon("后端是旧版", "它比 tools\\server.py 旧；关掉看板再开一次");
+                }
+            }
+            catch { }
         }
 
         // ---------- 日志 ----------
