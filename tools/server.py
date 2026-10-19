@@ -45,6 +45,12 @@ _run_lock = threading.Lock()
 _run_state = {"running": False, "project": None, "started": None}
 _run_log_path = ROOT / "board" / "ui-run.log"
 
+# ⚠️ 所有看板访问必须在这个锁里做。
+# 原因：board.py 的项目根是模块级全局（B.set_root），而这里是一请求一线程。
+# 不锁的后果是实测过的——两个项目并发建卡会互相串（卡建到别的项目、同号静默覆盖）。
+# 单人本地界面，串行化完全够用；要真并发得把项目根改成上下文变量，那是另一件事。
+_BOARD_LOCK = threading.RLock()
+
 
 # ---------- 数据整形 ----------
 
@@ -341,7 +347,8 @@ class Handler(BaseHTTPRequestHandler):
         if not fn:
             return self._json({"error": "not found"}, 404)
         try:
-            self._json(fn(q))
+            with _BOARD_LOCK:
+                self._json(fn(q))
         except SystemExit:
             self._json({"error": "内部操作失败（详见控制台）"}, 500)
         except Exception as e:
@@ -360,7 +367,8 @@ class Handler(BaseHTTPRequestHandler):
         if not fn:
             return self._json({"error": "not found"}, 404)
         try:
-            self._json(fn(body))
+            with _BOARD_LOCK:
+                self._json(fn(body))
         except PermissionError as e:
             self._json({"error": str(e)}, 403)
         except SystemExit:

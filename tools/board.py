@@ -229,7 +229,14 @@ def card_ref(cid):
 
 
 def create_card(card: dict):
-    """建卡（统一入口，CLI 与测试都用它）。"""
+    """建卡（统一入口，CLI 与测试都用它）。
+
+    ⚠️ 必须先查后写、且在同一个串行区内完成，否则并发建同号卡会互相覆盖
+    （存储层用的是 INSERT OR REPLACE，覆盖是静默的）。
+    """
+    cid = card.get("id")
+    if get_card(cid) is not None:
+        raise ValueError(f"卡片已存在：{cid}")
     _store().save_card(card)
     return card
 

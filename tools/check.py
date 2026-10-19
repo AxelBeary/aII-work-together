@@ -89,6 +89,16 @@ def main():
     if not ok:
         fails.append("断点续跑")
 
+    # 4b 多项目（几十个项目同用是第一需求，单项目回归覆盖不到）
+    ok, _ = run("多项目", [PY, "tests/test_multiproject.py"])
+    if not ok:
+        fails.append("多项目")
+
+    # 4c 界面并发隔离（实测过：不锁会把卡建到别的项目）
+    ok, _ = run("并发隔离", [PY, "tests/test_ui_concurrency.py"])
+    if not ok:
+        fails.append("并发隔离")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

@@ -93,3 +93,17 @@
 | 红线② agent 越权 | 卡在「拍板中」时 agent 调 `review` | **被拒**：「不可复核」 |
 | 审计（反向测试） | 手写 journal 伪造 review 事件 | **被抓**：`audit` 退出码 2，报「复核记录缺 evidence 字段 ← 疑似绕过 CLI」 |
 | 完整闭环 | 认领→提交→复核→人拍板 | **通过**，卡进「完成」，`audit` 干净 |
+
+### 多项目压测新增（2026-10-20）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 多项目压测（9 条） | `tests/test_multiproject.py` | PASS（9 of 9） | 12 个项目 / 36 张卡 / 8 线程并发登记一条不丢 / 工作区还原 |
+| 界面并发隔离（真 bug 回归） | `tests/test_ui_concurrency.py` | PASS | 两项目并发 25+25 张，4 个读线程，零串号；**拆除锁则转红** |
+| 注册表目录可隔离 | `tools/projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.allworktogether` |
+| 建卡原子拒绝重号 | `tools/board.py`（`create_card()`） | 已修 | 重号抛 `ValueError`，不再静默覆盖 |
+| 界面并发串号 | `tools/server.py`（`_BOARD_LOCK`） | 已修 | 见 ENVIRONMENT.md E-24 |
+| 汇总不改调用方工作区 | `tools/projects.py`（`project_summary()`） | 已修 | P9 用例；反向测试确认能抓 |
+| 汇总缓存原子写 | `tools/projects.py` | 已修 | 临时文件 + `os.replace` |
+
+`tools/check.py` 现为 **9 道闸**（新增「多项目」「并发隔离」）。

@@ -264,3 +264,28 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 | 最该做的一件事＝「拍板收件箱」 | 📌 **记为下一步**（一次最多 3 张、人话、带可复制命令） |
 
 评审全文：`docs/design/20261020-opus-review/OPUS-设计评审__外部专家__claude-opus-5-5.md`
+
+## E-24 · 网页界面的多项目串号（实测抓到的真 bug，2026-10-20）
+
+**现象**：两个浏览器标签页分别指向不同项目，同时建卡 ⇒ **卡被建到别的项目里**、同号卡被静默覆盖、25 张只建成 10 张。
+
+**根因**：`server.py` 每个接口都靠 `B.set_root(...)` 改**模块级全局**当前项目，而 `ThreadingHTTPServer` 是一请求一线程。线程 A 刚把根切到 alpha，线程 B 立刻切到 beta，A 随后写入就落进了 beta。
+
+**为什么之前没发现**：只注册过 1 个项目，单项目下「切根」永远切到同一个地方，错误不可见。⇒ **多项目能力必须用多项目压测，不能靠单项目回归倒推。**
+
+**修法**（两条都要）：
+1. `server.py` 加 `_BOARD_LOCK`（RLock），所有看板访问串行化。单人本地界面够用；要真并发得把项目根改成 `contextvars`，那是另一件事。
+2. `board.create_card()` 先查后写、重号直接 `ValueError`。存储层用的是 `INSERT OR REPLACE`，**覆盖是静默的**，不先查就会「看起来建成了」。
+
+**同批修掉**：`projects.project_summary()` 遍历完几十个项目后只还原 `ROOT`、没还原 `WORKSPACE` ⇒ 调用方的工作区悄悄变成「最后一个被遍历的项目」。现连工作区一起还原，并把缓存文件改成**原子写**（临时文件 + `os.replace`）。
+
+**反向测试（关键）**：把 `with _BOARD_LOCK:` 换成 `with threading.RLock():`（每次新锁＝没锁），并发测试必须变红；实测红（6 次失败 + 双向串号）。恢复后转绿。
+
+**可复跑**：
+
+```
+python tests/test_ui_concurrency.py     # 两项目并发 25+25 张，4 个读线程
+python tests/test_multiproject.py       # 12 个项目 / 注册表并发 / 工作区还原
+```
+
+**教训（第 6 次同源）**：「全局状态 + 每请求一线程」＝**必然串号**，只是没压测时看不见。凡「切换全局当前对象」的接口，先问一句：**同时来两个请求会怎样？**

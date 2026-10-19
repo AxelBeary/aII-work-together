@@ -26,7 +26,10 @@ import threading
 import time
 from pathlib import Path
 
-HOME_DIR = Path.home() / ".allworktogether"
+# 全局数据目录（注册表、汇总缓存）。
+# ABOARD_REGISTRY_DIR 用于隔离测试或分离多人环境；不设＝用户主目录。
+_REG_DIR = os.environ.get("ABOARD_REGISTRY_DIR")
+HOME_DIR = Path(_REG_DIR).expanduser() if _REG_DIR else Path.home() / ".allworktogether"
 REGISTRY_DB = HOME_DIR / "registry.db"
 BOARD_DIRNAME = "board"
 MARKER_DB = "board.db"
@@ -277,9 +280,10 @@ def project_summary(use_cache: bool = True, ttl_s: int = 15) -> list:
         if not p.get("exists"):
             out.append({**p, "cards": 0, "states": {}, "ok": False})
             continue
-        old_root = B.ROOT
+        old_root, old_ws = B.ROOT, B.WORKSPACE
         try:
             B.set_root(p["path"])
+            B.set_workspace(workspace_of(p["path"]))
             states = {}
             n = 0
             for cid in B.card_ids():
@@ -291,14 +295,25 @@ def project_summary(use_cache: bool = True, ttl_s: int = 15) -> list:
             out.append({**p, "cards": 0, "states": {}, "ok": False,
                         "error": str(e)[:120]})
         finally:
+            # ⚠️ 必须连工作区一起还原：set_root 会把 WORKSPACE 重置成项目根，
+            # 只还原 ROOT 会让调用方的工作区悄悄变成「最后一个被遍历的项目」。
             B.set_root(old_root)
+            B.set_workspace(old_ws)
 
+    # 原子写：几十个项目 + 多个进程同时刷新时，避免读到半截 JSON
+    tmp = None
     try:
         cf.parent.mkdir(parents=True, exist_ok=True)
-        cf.write_text(json.dumps({"at": time.time(), "projects": out},
-                                 ensure_ascii=False), encoding="utf-8")
+        tmp = cf.with_name(f".{cf.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "projects": out},
+                                  ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, cf)
     except Exception:
-        pass
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
     return out
 
 
