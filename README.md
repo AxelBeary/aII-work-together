@@ -20,9 +20,10 @@
 ## 现状
 
 - 2026-10-19 项目立项：治理层已就位（`AGENTS.md`＋`docs/governance/`），形态已拍板（`DECISIONS.md` D-001／D-004）。
-- **编排器已可用并实测跑通**：`tools/orchestrator.py` 能自动「找活→认领→执行→提交→异会话复核→返工」，全程无人值守。
-- **用法只看一条命令**：`python tools/orchestrator.py run --engine opencode --seat w1 --max 5`
+- **全流程已跑通**：看板 → 编排器 → 专家团 → 子代理 → 会话续接 → 断点续跑 → 回归库。
+- **用法只看一条命令**：`python tools/orchestrator.py run --engine opencode --max 5`
 - 看板：`python tools/board.py html` → 双击 `board/board.html`（30s 自动刷新）。详见 [`docs/usage.md`](docs/usage.md)。
+- 自检四件套：`run_regression.py`／`--break`／`test_resume.py`／`board.py audit`。
 
 ## 五个文件就是全部
 
@@ -33,8 +34,20 @@
 | `tools/experts.py` | **专家团**：11 个角色（安全/怀疑论/简化/架构/性能/体验…） |
 | `tools/subagents.py` | **子代理**：独立会话、可并行、可续接、可追问 |
 | `tools/orchestrator.py` | 自主编排：找活→认领→执行→**专家团复核**→返工 |
+| `tools/resume.py` | **断点续跑**：杀了能接，不重做已完成部分 |
 
 零依赖，Python 3.9+ 即可。
+
+## 自检（改完代码必跑）
+
+```
+python tests/run_regression.py          # 15 条回归，全过才算没坏
+python tests/run_regression.py --break  # 反向测试：故意改坏，必须被抓
+python tests/test_resume.py             # 断点续跑三条判据
+python tools/board.py audit             # 有没有绕过 CLI 手改文件
+```
+
+**这四条是闸门的闸门**。任何一条红，说明改坏了。
 
 ## 三种协作模式
 

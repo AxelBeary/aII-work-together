@@ -404,10 +404,11 @@ def gate_l3(cid: str, card: dict) -> tuple:
     problems, checks = [], []
     patterns = card.get("accept_patterns", [])
     text_cache = {}
+    TEXTY = (".md", ".txt", ".py", ".json", ".yaml", ".yml", ".html", ".css", ".js", ".ts")
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
         p = (ROOT / rel) if not Path(rel).is_absolute() else Path(rel)
-        if p.exists() and p.suffix in (".md", ".txt"):
+        if p.exists() and p.suffix.lower() in TEXTY:
             try:
                 text_cache[rel] = p.read_text(encoding="utf-8")
             except Exception:
@@ -417,12 +418,14 @@ def gate_l3(cid: str, card: dict) -> tuple:
         checks.append({"pattern": pat, "hit": hit})
         if not hit:
             problems.append(f"必含项未命中：{pat}")
-    # 反空跑：必须有非零计数（至少一个数字断言）
-    if patterns:
+    # 反空跑（**无条件**执行）：交付物里必须有数字，否则视为空跑。
+    # 例外：卡显式写 allow_no_numbers=true（如纯文字设计稿）。
+    if text_cache and not card.get("allow_no_numbers"):
         has_num = any(re.search(r"\d", t) for t in text_cache.values())
         checks.append({"pattern": "<非零计数>", "hit": has_num})
         if not has_num:
-            problems.append("反空跑失败：交付物里没有任何数字")
+            problems.append("反空跑失败：交付物里没有任何数字（若确实不需要数字，"
+                            "在卡上设 allow_no_numbers=true）")
     return (len(problems) == 0), problems, checks
 
 
@@ -667,6 +670,15 @@ def cmd_review(a):
     st = replay(a.id)
     if st["state"] not in ("核验中", "待验收"):
         die(f"当前状态「{st['state']}」，不可复核")
+    # 红线①（加固）：机器闸未过就不许给 PASS
+    last_verify = None
+    for ev in load_journal(a.id):
+        if ev.get("type") == "verify":
+            last_verify = ev
+    if a.verdict == "pass" and last_verify and last_verify.get("problems"):
+        die("机器闸有未解决问题，⛔ 不许直接给 PASS：\n  "
+            + "\n  ".join(str(p) for p in last_verify["problems"][:5])
+            + "\n  先修好再复核，或给 --verdict fail")
     # 红线①：复核席不得是执行者
     executor = (st["submit"] or {}).get("seat") or st["holder"]
     if a.seat == executor:

@@ -173,10 +173,34 @@ Set-Content -Path "$HOME\.board-human.tok" -Value "human-only" -NoNewline
 
 ```
 python tools/orchestrator.py status    # 整体状态
+python tools/orchestrator.py resume    # 断点续跑：杀了能接
 python tools/board.py audit            # 有没有人绕过 CLI 手改文件
-python tools/board.py reclaim          # 回收所有超时的卡
+python tools/board.py reclaim          # 回收超时的卡
 python tools/board.py show <卡号> --events    # 看一张卡的全过程
 ```
+
+---
+
+## 断了怎么接（断点续跑）
+
+编排器被杀了（Ctrl+C、断电、OOM）不用慌：
+
+```
+python tools/orchestrator.py resume --engine opencode
+```
+
+它会按 journal 状态决定每张卡从哪接：
+
+| 卡的状态 | 它怎么做 |
+|---|---|
+| 待认领 / 待返工 | 从执行开始 |
+| 进行中但没租约（上次崩了） | 回收后重跑 |
+| 进行中且有活租约 | **跳过**（别人在干） |
+| **待验收** | **直接复核，不重做** |
+| 核验中 | 补复核结论 |
+| 完成 / 拍板中 | 跳过 |
+
+先看计划再跑：`--dry-run`
 
 `audit` 退出码非 0 = 有问题，逐条列出。
 

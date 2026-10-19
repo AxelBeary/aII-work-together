@@ -384,6 +384,34 @@ def cmd_status(a):
     print(f"\n共 {total} 张")
 
 
+def cmd_resume(a):
+    """断点续跑：按 journal 状态决定从哪一步接。"""
+    import resume as R
+
+    plan = R.scan()
+    todo = [p for p in plan if p["action"] != R.SKIP]
+    log(f"续跑计划：共 {len(plan)} 张，需动作 {len(todo)} 张", "step")
+    for p in plan:
+        mark = {"RUN": "→", "REVIEW": "✓", "CONCLUDE": "✓",
+                "RECLAIM_RUN": "↻", "SKIP": "·"}.get(p["action"], "?")
+        log(f"  {mark} {p['id']:<10} {p['state']:<8} {p['reason']}", "info")
+
+    if not todo:
+        log("没有需要续跑的卡", "ok")
+        return
+
+    def execute_fn(card, cid):
+        return run_one(cid, a.engine, a.seat, a.model, a.effort, False)
+
+    def review_fn(card, cid):
+        return run_one(cid, a.engine, a.seat, a.model, a.effort, False)
+
+    res = R.resume(execute_fn, review_fn, dry=a.dry_run)
+    print()
+    for cid, act, outcome in res:
+        print(f"  {cid:<10} {act:<10} {outcome}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="orchestrator", description="自主编排器")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -401,6 +429,14 @@ def main():
 
     s = sub.add_parser("status", help="看编排状态")
     s.set_defaults(f=cmd_status)
+
+    s = sub.add_parser("resume", help="断点续跑（按 journal 状态接上）")
+    s.add_argument("--engine", default="opencode")
+    s.add_argument("--model", default=None)
+    s.add_argument("--seat", default="resume-w")
+    s.add_argument("--effort", default=None)
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(f=cmd_resume)
 
     s = sub.add_parser("probe", help="探测本机引擎可用性")
     s.set_defaults(f=lambda a: [print(f"{k:<12} {'FOUND' if v['found'] else 'MISSING'}")

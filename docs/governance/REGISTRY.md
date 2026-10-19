@@ -30,6 +30,18 @@
 | 2026-10-19 | 使用说明 | `docs/usage.md` | 发牌席 | 已交 | 一条命令覆盖主流程 |
 | 2026-10-19 | 看板页（自动生成） | `board/board.html` | 发牌席 | 已生成 | 30s 自动刷新；含引擎/模型/思考强度徽标＋AI 发布标记 |
 
+| 2026-10-19 | 回归库（15 条＋反向测试） | `tests/run_regression.py`＋`tests/regression/cases.json` | 发牌席 | **已验（PASS）** | 15 条全过；`--break` 注入故障被 R07/R08 抓住 |
+| 2026-10-19 | 断点续跑 | `tools/resume.py`＋`tests/test_resume.py` | 发牌席 | **已验（PASS）** | 3 条判据 + 反空跑计数=2 |
+| 2026-10-19 | 专家团／子代理／会话续接 | `tools/experts.py`＋`tools/subagents.py`＋`engines.py` | 发牌席 | **已验（PASS）** | 真辩论 2 独立会话；真跑 --agent 3 档；两个引擎会话续接实测 |
+
+### 补齐四项后的新 bug（2026-10-19，均从测试里抓出）
+
+| # | Bug | 抓法 | 修复 |
+|---|---|---|---|
+| 6 | L3 只查 `.md/.txt`，`.py` 永远判不中 | G1 submit 误判 | 扩展到 .py/.json/.yaml/.html/.css/.js/.ts |
+| 7 | 机器闸有问题仍可给 PASS | 手工复核时发现 | `review` 前查最后一次 verify 的 problems |
+| 8 | 反空跑只在有 `--accept` 时才执行 | 回归库 R08 | 改为无条件；纯文字稿需 `allow_no_numbers=true` |
+
 ### 编排器端到端实测（2026-10-19，C1019-01，含专家团）
 
 | 阶段 | 实测 |

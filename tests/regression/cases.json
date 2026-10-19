@@ -1,0 +1,113 @@
+{
+  "meta": {
+    "name": "allworktogether 回归库",
+    "version": 1,
+    "frozen_at": "2026-10-19",
+    "note": "每条 = 一个已被验证过的行为。改代码后必须全过；故意改坏一条必须被抓（--break）。"
+  },
+  "cases": [
+    {
+      "id": "R01",
+      "kind": "concurrency",
+      "desc": "原子认领：12 线程抢同一张卡，只能有 1 个成功、1 个活跃租约",
+      "expect": {"max_winners": 1, "max_leases": 1},
+      "threads": 12
+    },
+    {
+      "id": "R02",
+      "kind": "spec_mismatch",
+      "desc": "执行规格不匹配必须拒绝认领",
+      "card": {"engine": "opencode"},
+      "claim": {"engine": "qoderclicn"},
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R03",
+      "kind": "spec_match",
+      "desc": "规格匹配应当放行",
+      "card": {"engine": "opencode"},
+      "claim": {"engine": "opencode"},
+      "expect": {"rejected": false}
+    },
+    {
+      "id": "R04",
+      "kind": "gate_l1",
+      "desc": "L1：交付物不存在必须 FAIL",
+      "deliverables": ["tests/regression/__nope__.md"],
+      "expect": {"pass": false}
+    },
+    {
+      "id": "R05",
+      "kind": "gate_l1",
+      "desc": "L1：零字节文件必须 FAIL",
+      "make_zero_byte": true,
+      "expect": {"pass": false}
+    },
+    {
+      "id": "R06",
+      "kind": "gate_l2",
+      "desc": "L2：JSON 不可解析必须 FAIL",
+      "bad_json": true,
+      "expect": {"pass": false}
+    },
+    {
+      "id": "R07",
+      "kind": "gate_l3",
+      "desc": "L3：必含项未命中必须 FAIL",
+      "accept": ["这个字符串绝不会出现XYZ"],
+      "expect": {"pass": false}
+    },
+    {
+      "id": "R08",
+      "kind": "gate_l3",
+      "desc": "L3：反空跑（交付物里没有数字）必须 FAIL",
+      "accept": [],
+      "content": "只有中文没有任何数字",
+      "expect": {"pass": false}
+    },
+    {
+      "id": "R09",
+      "kind": "gate_l3",
+      "desc": "L3：必含项命中且有数字应当 PASS",
+      "accept": ["hello"],
+      "content": "hello world 123",
+      "expect": {"pass": true}
+    },
+    {
+      "id": "R10",
+      "kind": "review_same_seat",
+      "desc": "复核席 == 执行席必须被拒",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R11",
+      "kind": "review_gate_block",
+      "desc": "机器闸有问题时不许给 PASS",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R12",
+      "kind": "human_empty_token",
+      "desc": "空 token 必须被拒",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R13",
+      "kind": "chain_insert",
+      "desc": "手写插入一条事件必须断链",
+      "expect": {"rejected": true}
+    },
+    {
+      "id": "R14",
+      "kind": "state_rework",
+      "desc": "复核 FAIL 后状态必须是「待返工」（否则卡死）",
+      "expect": {"state": "待返工"}
+    },
+    {
+      "id": "R15",
+      "kind": "resume_skip_done",
+      "desc": "续跑必须跳过已完成卡（不重做）",
+      "expect": {"action": "SKIP"}
+    }
+  ]
+}
