@@ -429,3 +429,25 @@ python tools/check.py --quick
 ```
 
 **判据**：闸红了先看是不是自己污染的环境，**别急着改代码**——「单独跑能过、合起来跑不过」八成是环境串味。
+
+---
+
+## E-31 · 旧的 server 进程还在 8777 ⇒ 新页面配旧接口，报「not found」（2026-10-20 实测）
+
+**现象**：界面（新）里点终端，报 `✗ not found`；可 `tests/test_ui_api.py` 全绿、`/api/messages` 也正常。
+
+**根因**：`8777` 上还挂着一个**几分钟前启动**的 `python tools/server.py`（05:19 起的，那时代码里还没有 `/api/term/run`）。
+页面是浏览器现从磁盘读的（新），接口是那个老进程提供的（旧）——**混合状态**。壳的 `EnsureServer()` 只探活，不管版本。
+
+**怎么认**：
+
+```powershell
+$c = Get-NetTCPConnection -LocalPort 8777 -State Listen
+Get-Process -Id $c.OwningProcess | Select Id,StartTime
+```
+
+进程启动时间**早于**你最后一次改 `server.py` ⇒ 就是它。
+
+**处置**：截图/自测别去杀别人的进程，**换个端口**（`boardshell.exe --port=8790 --url=http://127.0.0.1:8790/…`）；日常用就重启一次看板（托盘退出再开）。
+
+**判据**：「单独跑测试全绿、界面上某个新接口 404」——先查端口上是谁在服务，别怀疑路由写错。

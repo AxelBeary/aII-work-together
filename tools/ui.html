@@ -117,6 +117,7 @@ label:first-child{margin-top:0}
 .term .tout .ok{color:#3fb950}
 .term .tout .err{color:#f85149}
 .term .tout .head{color:#5aa9ff}
+.term .tout:empty::before{content:"还没有输出 —— 点上面的按钮，或直接敲命令（只跑看板自己那几条）";color:#39414d}
 .term .tin{display:flex;align-items:center;gap:8px;padding:8px 12px;
   border-top:1px solid var(--line);background:var(--panel)}
 .term .tin .ps{color:var(--acc);font-family:ui-monospace,Consolas,monospace}
@@ -639,6 +640,12 @@ document.addEventListener("keydown", e => {
 refresh().then(startPoll);
 setInterval(pollBadge, 10000);
 pollBadge();
+
+// 截图/演示用：?term=1 直接把终端拉起来（也方便你对着一张图看它在哪）
+//   ?term=1&cmd=board+stats 会顺手跑一条（照样走白名单，跑不了的还是跑不了）
+if(location.search.indexOf("term=1") >= 0) termToggle(true);
+const demoCmd = (location.search.match(/[?&]cmd=([^&]+)/) || [])[1];
+if(demoCmd) termRun(decodeURIComponent(demoCmd.replace(/\+/g, " ")));
 </script>
 </body>
 </html>
