@@ -3,13 +3,39 @@
 ## 最常用四条
 
 ```bash
-board project default --engine opencode --model opencode-go/deepseek-v4.1-flash   # 一次
+board project default --engine opencode --model opencode-go/deepseek-v4.1-flash --workspace <代码目录>   # 一次
 board add --title "要做什么" --goal "具体目标"
 python tools/orchestrator.py run --max 5
-board open --show
+board inbox        # 看有没有等你拍板的
 ```
 
 `board` 就是 `python tools/board.py`（建议加个 alias 或 .cmd 包装）。
+
+---
+
+## 📥 拍板收件箱（你最常用的一个）
+
+```bash
+board inbox              # 一次最多 3 张，多了不列（免得你看花眼）
+board inbox --limit 5    # 想一次多看点
+```
+
+每张卡它会用人话告诉你：
+- **目标**是什么
+- agent **做了什么**
+- **产出**有哪些、多大
+- **门禁**过没过、**复核**是谁做的、**凭据**是什么
+- **花了多少钱**（token / 缓存 / 美元）
+- **建议批准还是驳回**（并说明理由）
+
+然后给两行可直接复制的命令：
+
+```bash
+board human <卡号> --decision approve --who owner
+board human <卡号> --decision reject  --who owner --note "要改什么"
+```
+
+**驳回时写的理由会传回下一轮**，agent 会针对性改，不会重做一遍。
 
 ---
 
@@ -209,12 +235,16 @@ Set-Content -Path "$HOME\.board-human.tok" -Value "human-only" -NoNewline
 ## 出问题查这个
 
 ```
-python tools/orchestrator.py status    # 整体状态
-python tools/orchestrator.py resume    # 断点续跑：杀了能接
-python tools/board.py audit            # 有没有人绕过 CLI 手改文件
-python tools/board.py reclaim          # 回收超时的卡
-python tools/board.py show <卡号> --events    # 看一张卡的全过程
+board                # 不带参数：面板（项目名 + 各状态张数 + 下一步）
+board stats          # 各状态 + 完成率
+board doctor         # 体检：残留租约/worktree/断链/丢件
+board doctor --fix   # 自动清理可修项
+board audit          # 有没有人绕过 CLI 手改文件
+board cost           # token / 缓存 / 花费
+board show <卡号> --events   # 一张卡的全过程
 ```
+
+一条命令跑完全部自检：`python tools/check.py`
 
 ---
 

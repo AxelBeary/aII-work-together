@@ -14,11 +14,20 @@ python <本项目>/tools/board.py add --title "把登录页改成深色" --goal 
 # 3. 让它自己跑
 python <本项目>/tools/orchestrator.py run --max 5
 
-# 4. 看
-python <本项目>/tools/board.py open --show
+# 4. 看（或直接跑 board inbox 看有没有等你拍板的）
+python <本项目>/tools/board.py inbox
 ```
 
-就这四条。剩下的它会自己做。
+就这四步。剩下的它会自己做。
+
+## 你只做两件事
+
+| 什么时候 | 跑什么 |
+|---|---|
+| 想知道现在该干嘛 | `board`（不带参数，给面板）/ `board inbox` |
+| 需要你拍板时 | `board human <卡号> --decision approve`（或 `reject --note "要改什么"`） |
+
+**驳回时写的理由会传回下一轮**，agent 会针对性修改，不是重做一遍。
 
 ## 它替你做什么
 
@@ -55,28 +64,39 @@ python tools/orchestrator.py run --parallel 2 --max 4
 每张卡在独立 git worktree 里跑，互不踩文件；收工时只拷**该卡的交付物**，两卡交付物重叠就判阻塞。
 ⚠️ 建议 ≤2：本机引擎会抢资源，开太多反而慢。
 
-## 自检（改完代码必跑）
+## 自检（改完代码必跑一条）
 
 ```bash
-python tests/run_regression.py          # 18 条回归
+python tools/check.py          # 全部：语法/回归/反向/续跑/审计/体检/真跑
+python tools/check.py --quick  # 跳过真调模型的
+```
+
+单独跑也行：
+
+```bash
+python tests/run_regression.py          # 23 条回归
 python tests/run_regression.py --break  # 反向测试：故意改坏必须被抓
 python tests/test_resume.py             # 断点续跑
 python tools/board.py audit             # 有没有绕过 CLI 手改
+python tools/board.py doctor            # 体检（残留租约/worktree/断链）
+python tools/board.py doctor --fix      # 自动清理可修项
 ```
 
 ## 文件结构
 
 | 文件 | 职责 |
 |---|---|
-| `tools/board.py` | 看板本体：卡片、状态机、租约、闸门、哈希链、CLI |
-| `tools/render.py` | 看板页与跨项目总览（纯静态 HTML） |
-| `tools/projects.py` | 多项目注册表与根目录解析 |
-| `tools/engines.py` | 引擎适配：结构化回执解析 + 会话续接 |
+| `tools/board.py` | **看板核心**：卡片、状态机、journal、租约、闸门、守卫 |
+| `tools/cli.py` | 命令行层（所有命令与参数） |
+| `tools/render.py` | 看板页与跨项目总览 |
+| `tools/projects.py` | 多项目注册表、工作区解析 |
+| `tools/engines.py` | 引擎适配：回执解析 + 会话续接 + 用量 |
 | `tools/experts.py` | 专家团：11 个角色 |
-| `tools/subagents.py` | 子代理：独立会话、可并行 |
+| `tools/subagents.py` | 子代理：独立会话 |
 | `tools/orchestrator.py` | 自主编排 |
 | `tools/resume.py` | 断点续跑 |
-| `tools/parallel.py` | worktree 并行执行 |
+| `tools/parallel.py` | worktree 并行 |
+| `tools/check.py` | 一条命令跑完全部自检 |
 
 零依赖，Python 3.9+。
 

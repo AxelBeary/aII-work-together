@@ -54,6 +54,32 @@ def log(msg, kind="info"):
     print(f"{mark} {msg}")
 
 
+def _rework_context(cid: str) -> str:
+    """把上一次被打回的原因抽出来，附给下一轮执行者。
+
+    ⚠️ 2026-10-20：此前人写的驳回意见/复核理由**到不了** execagent，
+    返工等于重来一遍。现在显式带回。
+    """
+    reasons = []
+    for ev in B.load_journal(cid):
+        t = ev.get("type")
+        if t == "review" and ev.get("verdict") != "pass":
+            why = (ev.get("note") or "").strip() or (ev.get("evidence") or "").strip()
+            if why:
+                reasons.append(f"- 复核席打回（{ev.get('seat')}）：{why[:300]}")
+        elif t == "human" and ev.get("decision") != "approve":
+            why = (ev.get("note") or "").strip()
+            reasons.append(f"- **人驳回**（{ev.get('who')}）：{why[:300] or '（未写理由）'}")
+        elif t == "block":
+            why = (ev.get("reason") or "").strip()
+            if why and ev.get("seat") != "system":
+                reasons.append(f"- 阻塞原因：{why[:200]}")
+    if not reasons:
+        return ""
+    return ("\n## ⚠️ 上一轮为什么没过（必须针对性修掉，别重做一遍）\n"
+            + "\n".join(reasons[-4:]) + "\n")
+
+
 def build_prompt(card: dict, cid: str) -> str:
     """把卡变成给 agent 的提示词。强调纪律，但不说废话。"""
     lines = [
@@ -62,6 +88,9 @@ def build_prompt(card: dict, cid: str) -> str:
     ]
     if card.get("goal"):
         lines += [f"**目标**：{card['goal']}", ""]
+    rework = _rework_context(cid)
+    if rework:
+        lines += [rework, ""]
     if card.get("territory"):
         lines += ["**可写领地**（只能改这些，其余一律只读）："]
         for t in card["territory"]:

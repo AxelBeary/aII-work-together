@@ -35,3 +35,6 @@
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | COST1=done |
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/2 | 2 | 0 | 否 | RT1=error: name 'threading' is not defined；RT2=error: name 'threading' is not defined |
 | 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 2/2 | 2 | 0 | 否 | RT1=done；RT2=done |
+| 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/1 | 1 | 0 | 否 | INBOX1=awaiting-human |
+| 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 部分 0/1 | 1 | 0 | 否 | INBOX1=awaiting-human |
+| 2026-10-19 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | SMOKE1=done |

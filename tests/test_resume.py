@@ -33,6 +33,15 @@ def _bump(kind, cid):
     COUNTER.write_text(json.dumps(c), encoding="utf-8")
 
 
+def cleanup_cards():
+    """删掉本测试造的卡，并清掉计数文件（不留残渣）。"""
+    for cid in ("RT-DONE", "RT-STALE", "RT-REVIEW"):
+        d = B.CARDS / cid
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+    COUNTER.unlink(missing_ok=True)
+
+
 def _make_card(cid, state):
     """造一张卡并推到指定状态。"""
     d = B.CARDS / cid
@@ -103,6 +112,9 @@ def main():
     results = R.resume(fake_execute, fake_review,
                        only=["RT-DONE", "RT-STALE", "RT-REVIEW"])
     c = json.loads(COUNTER.read_text(encoding="utf-8"))
+
+    # 收工清理：测试卡与计数文件不留在看板里（保持项目整洁）
+    cleanup_cards()
 
     print("续跑结果：")
     for cid, act, out in results:
