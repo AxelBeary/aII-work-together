@@ -129,13 +129,16 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 ## 九、提交线（收工时）
 
 ```
+fa4b65e  feat: cross-session messages + native shell + in-window terminal
+ef179c7  docs: closeout - handoff, decisions and registry brought up to date
 2059c90  feat: code-drawn icon + desktop shortcut
 4aa1701  feat(ui): show the review at a glance
 ce03beb  chore: ledger rows from the smoke runs
 86ec93f  feat: meter the reviewers, verify the revision, stop dropping card fields
-f92eb16  feat(gate): anti-empty check measures instead of demanding digits
-c29b5f1  fix: review seat ran in the wrong directory
-d64c95f  feat: point-to-point review
 ```
 
-工作树干净；`doctor` 干净。
+工作树干净；`doctor` 干净；13 道闸全过（语法已含 `shell/` 外的 28 个 py）。
+
+**本轮留下的三张图**（人眼验收用，本地未入库）：
+`board/shots/20261020-shell-page.png`（页面，0 透明度抓取）、
+`board/shots/20261020-shell-window.png`（真窗口含标题栏）。
