@@ -82,6 +82,11 @@ namespace BoardShell
         static bool TrayHintShown;
         static string ShotPath;
         static bool ShotVisible;
+        // WebView2 初始化是异步的：⛔ 绝不能在 UI 线程上 .Result/.Wait —— 那会把消息循环
+        // 卡住，而初始化回调恰恰要靠消息循环才能回来 ⇒ 死锁／超时（2026-10-20 实测：双击卡死）
+        static bool _initDone;
+        static string _initError = "";
+        static bool _navDone;
 
         const string MUTEX_NAME = "allworktogether-board-shell";
         const string WAKE_NAME = "allworktogether-board-shell-wake";
@@ -148,47 +153,61 @@ namespace BoardShell
 
         // ---------- 窗口 ----------
 
-        static void BuildWindow()
+        static void BuildWindow(bool hidden = false)
         {
             Win = new Form();
-            Win.Text = "看板 · allworktogether";
+            Win.Text = "看板";
             Win.BackColor = Color.FromArgb(14, 16, 20);
             Win.MinimumSize = new Size(760, 480);
             Win.StartPosition = FormStartPosition.Manual;
             Win.Icon = LoadIcon();
-            ApplyPlacement(Win);
+            if (hidden)
+            {
+                // 自检/截图用：真窗口、真渲染，但人看不见
+                Win.FormBorderStyle = ShotVisible ? FormBorderStyle.Sizable : FormBorderStyle.None;
+                Win.ShowInTaskbar = ShotVisible;
+                Win.Opacity = ShotVisible ? 1.0 : 0.0;
+                Win.Bounds = new Rectangle(0, 0, 1360, 860);
+            }
+            else
+            {
+                ApplyPlacement(Win);
+            }
 
             View = new WebView2();
             View.Dock = DockStyle.Fill;
             View.DefaultBackgroundColor = Color.FromArgb(14, 16, 20);
             Win.Controls.Add(View);
 
-            Win.Resize += delegate
+            if (!hidden)
             {
-                // 最小化＝收进托盘（用户要求「做好最小化到托盘」）
-                if (Win.WindowState == FormWindowState.Minimized)
+                Win.Resize += delegate
                 {
-                    Win.Hide();
-                    Win.WindowState = FormWindowState.Normal;
-                    if (!TrayHintShown) { Balloon("还在跑", "双击托盘图标回到看板"); TrayHintShown = true; }
-                }
-            };
-            Win.FormClosing += delegate(object s, FormClosingEventArgs e)
-            {
-                if (e.CloseReason == CloseReason.UserClosing && Tray != null)
+                    // 最小化＝收进托盘（用户要求「做好最小化到托盘」）
+                    if (Win.WindowState == FormWindowState.Minimized)
+                    {
+                        Win.Hide();
+                        Win.WindowState = FormWindowState.Normal;
+                        if (!TrayHintShown) { Balloon("还在跑", "双击托盘图标回到看板"); TrayHintShown = true; }
+                    }
+                };
+                Win.FormClosing += delegate(object s, FormClosingEventArgs e)
                 {
-                    // 关闭先收进托盘；真要退出走托盘菜单
-                    e.Cancel = true;
-                    Win.Hide();
-                    if (!TrayHintShown) { Balloon("已收进托盘", "看板还在后台；退出请右键托盘图标"); TrayHintShown = true; }
-                }
-            };
-            Win.FormClosed += delegate { SavePlacement(); };
+                    if (e.CloseReason == CloseReason.UserClosing && Tray != null)
+                    {
+                        // 关闭先收进托盘；真要退出走托盘菜单
+                        e.Cancel = true;
+                        Win.Hide();
+                        if (!TrayHintShown) { Balloon("已收进托盘", "看板还在后台；退出请右键托盘图标"); TrayHintShown = true; }
+                    }
+                };
+                Win.FormClosed += delegate { SavePlacement(); };
+            }
 
             Win.Shown += delegate
             {
                 DarkTitleBar(Win.Handle);
-                InitView();
+                InitView();                 // async void：立刻返回，不占 UI 线程
             };
         }
 
@@ -212,16 +231,16 @@ namespace BoardShell
             catch { }
         }
 
-        static void InitView()
+        static async void InitView()
         {
             try
             {
-                var udf = Path.Combine(ProjectDir, "board", "webview2");
-                var env = CoreWebView2Environment.CreateAsync(null, udf, null).Result;
-                View.EnsureCoreWebView2Async(env).Wait(TimeSpan.FromSeconds(20));
+                var udf = UserDataDir();
+                var env = await CoreWebView2Environment.CreateAsync(null, udf, null);
+                await View.EnsureCoreWebView2Async(env);
 
                 var core = View.CoreWebView2;
-                if (core == null) { Fail("WebView2 初始化失败（内核没起来）"); return; }
+                if (core == null) throw new Exception("内核起来了，但 CoreWebView2 是空的");
 
                 core.Settings.AreDevToolsEnabled = DevTools;
                 core.Settings.IsStatusBarEnabled = false;
@@ -238,14 +257,27 @@ namespace BoardShell
                 };
                 core.ProcessFailed += delegate(object s, CoreWebView2ProcessFailedEventArgs e)
                 {
-                    ShowFallback("渲染进程挂了：" + e.ProcessFailedKind);
+                    ShowErrorPanel("渲染进程挂了：" + e.ProcessFailedKind
+                                   + "\n按 F5 或关掉重开一次看板。");
                 };
+                core.NavigationCompleted += delegate { _navDone = true; };
 
+                _initError = "";
+                _initDone = true;
                 View.Source = new Uri(Url);
             }
             catch (Exception ex)
             {
-                Fail("WebView2 起不来：" + ex.GetType().Name + " " + ex.Message);
+                _initError = ex.GetType().Name + "：" + ex.Message;
+                if (ex.InnerException != null) _initError += " ／ " + ex.InnerException.Message;
+                _initDone = true;
+                Log("init failed: " + _initError);
+                ShowErrorPanel(
+                    "WebView2 没起来。\n\n" + _initError +
+                    "\n\n常见原因：\n" +
+                    "1) 已经有一个看板窗口没关（用户数据目录被占用）\n" +
+                    "2) WebView2 运行时缺失（Win11 自带；Win10 装 Evergreen Runtime）\n\n" +
+                    "日志：" + LogFile);
             }
         }
 
@@ -301,23 +333,43 @@ namespace BoardShell
                 ? FormWindowState.Normal : FormWindowState.Maximized;
         }
 
-        static void ShowFallback(string why)
-        {
-            try
-            {
-                var html = "<html><body style='background:#0e1014;color:#e8eaed;font:14px Segoe UI,sans-serif;padding:40px'>"
-                         + "<h2>界面没起来</h2><p style='color:#8b94a1'>" + why + "</p>"
-                         + "<p>后台还在：<code>python tools/server.py</code><br>日志："
-                         + LogFile + "</p></body></html>";
-                View.CoreWebView2.NavigateToString(html);
-            }
-            catch { }
-        }
-
-        static void Fail(string why)
+        // 出错不弹模态框（弹框会把窗口挡死，用户只会觉得「卡死」）：
+        // 直接把原因写进窗口里，窗口还能动、还能复制文字。
+        static void ShowErrorPanel(string why)
         {
             Log(why);
-            if (ShotPath == null) MessageBox.Show(why, "看板壳", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            try
+            {
+                var core = View != null ? View.CoreWebView2 : null;
+                if (core != null)
+                {
+                    var html = "<html><body style='background:#0e1014;color:#e8eaed;"
+                             + "font:14px/1.7 \"Segoe UI\",\"Microsoft YaHei\",sans-serif;padding:40px'>"
+                             + "<h2 style='color:#f85149;margin:0 0 12px'>界面没起来</h2>"
+                             + "<pre style='white-space:pre-wrap;color:#c8d0da;background:#11141a;"
+                             + "border:1px solid #2a303a;border-radius:10px;padding:14px'>"
+                             + System.Security.SecurityElement.Escape(why) + "</pre>"
+                             + "<p style='color:#8b94a1'>关掉这个窗口再开一次；还是不行看 <code>board\\shell.log</code>。</p>"
+                             + "</body></html>";
+                    core.NavigateToString(html);
+                    return;
+                }
+            }
+            catch { }
+            try
+            {
+                if (View != null) View.Visible = false;
+                var lab = new Label();
+                lab.Dock = DockStyle.Fill;
+                lab.ForeColor = Color.FromArgb(232, 234, 237);
+                lab.BackColor = Color.FromArgb(14, 16, 20);
+                lab.Padding = new Padding(32);
+                lab.Font = new Font("Microsoft YaHei UI", 10f);
+                lab.Text = "界面没起来\n\n" + why + "\n\n关掉这个窗口再开一次；还是不行看 board\\shell.log。";
+                Win.Controls.Add(lab);
+                lab.BringToFront();
+            }
+            catch { }
         }
 
         // ---------- 窗口位置 ----------
@@ -596,39 +648,51 @@ namespace BoardShell
             while (DateTime.Now < until)
             {
                 if (done()) return true;
-                Application.DoEvents();
+                Application.DoEvents();          // 让 async 的续体有机会跑（这里就是消息循环）
                 Thread.Sleep(40);
             }
             return done();
         }
 
+        // 自检/截图走的是**和真实窗口完全同一条路径**（BuildWindow + InitView）。
+        // ⛔ 以前自检自己另写一套初始化，结果「自检全绿、双击卡死」——这就是为什么必须同一条路。
+        static bool BootHidden(out string why)
+        {
+            why = "";
+            BuildWindow(true);
+            Win.Show();
+            if (ShotVisible)
+            {
+                Win.TopMost = true;              // SetForegroundWindow 常被拒，TopMost 才真的在最上面
+                Win.Activate();
+                SetForegroundWindow(Win.Handle);
+            }
+            if (!Pump(delegate { return _initDone; }, 30000))
+            {
+                why = "初始化 30 秒没回来";
+                return false;
+            }
+            if (_initError != "")
+            {
+                why = _initError;
+                return false;
+            }
+            return true;
+        }
+
         static int SelfTest()
         {
-            Form f = null; WebView2 wv = null;
             try
             {
                 if (!EnsureServer(true)) { Say("SELFTEST FAIL: server"); return 2; }
-                f = MakeHiddenForm(false);
-                wv = new WebView2();
-                wv.Dock = DockStyle.Fill;
-                wv.DefaultBackgroundColor = Color.FromArgb(14, 16, 20);
-                f.Controls.Add(wv);
-                bool ready = false;
-                wv.CoreWebView2InitializationCompleted += delegate(object s,
-                    CoreWebView2InitializationCompletedEventArgs e) { ready = e.IsSuccess; };
-                f.Show();
-                wv.EnsureCoreWebView2Async(CoreWebView2Environment.CreateAsync(null, UserDataDir(), null).Result).Wait(TimeSpan.FromSeconds(20));
-                Pump(delegate { return ready; }, 20000);
-                if (!ready || wv.CoreWebView2 == null)
+                string why;
+                if (!BootHidden(out why))
                 {
-                    Say("SELFTEST FAIL: webview2 init");
+                    Say("SELFTEST FAIL: " + why);
                     return 2;
                 }
-
-                bool nav = false;
-                wv.CoreWebView2.NavigationCompleted += delegate { nav = true; };
-                wv.Source = new Uri(Url);
-                Pump(delegate { return nav; }, 20000);
+                Say("init   = ok");
+                bool nav = Pump(delegate { return _navDone; }, 30000);
                 Say("nav    = " + nav);
 
                 string js = "JSON.stringify({title:document.title,"
@@ -636,7 +700,7 @@ namespace BoardShell
                           + "cols:document.querySelectorAll('.col').length,"
                           + "term:!!document.getElementById('term'),"
                           + "msg:!!document.getElementById('btn-msg')})";
-                var t = wv.CoreWebView2.ExecuteScriptAsync(js);
+                var t = View.CoreWebView2.ExecuteScriptAsync(js);
                 Pump(delegate { return t.IsCompleted; }, 10000);
                 // ExecuteScriptAsync 回的是 JSON 字符串字面量：里面的引号是 \" 转义的，
                 // 先还原成正常文本再判定（否则会一直判「没有这个字段」）
@@ -670,42 +734,19 @@ namespace BoardShell
             }
             finally
             {
-                try { if (f != null) f.Close(); } catch { }
+                try { if (Win != null) Win.Close(); } catch { }
                 StopServerIfOwned();      // 自检自己起的后端不留垃圾进程
             }
         }
 
-        static int TakeShot()        {
-            Form f = null; WebView2 wv = null;
+        static int TakeShot()
+        {
             try
             {
                 if (!EnsureServer(true)) { Say("SHOT FAIL: server"); return 2; }
-                f = MakeHiddenForm(ShotVisible);
-                wv = new WebView2();
-                wv.Dock = DockStyle.Fill;
-                wv.DefaultBackgroundColor = Color.FromArgb(14, 16, 20);
-                f.Controls.Add(wv);
-
-                if (ShotVisible)
-                {
-                    f.Shown += delegate { DarkTitleBar(f.Handle); };
-                }
-                f.Show();
-                if (ShotVisible)
-                {
-                    // 置顶再截：SetForegroundWindow 常被系统拒绝，靠 TopMost 才能保证真的在最上面
-                    f.TopMost = true;
-                    f.Activate();
-                    SetForegroundWindow(f.Handle);
-                }
-
-                wv.EnsureCoreWebView2Async(CoreWebView2Environment.CreateAsync(null, UserDataDir(), null).Result).Wait(TimeSpan.FromSeconds(20));
-                Pump(delegate { return wv.CoreWebView2 != null; }, 20000);   // 属性要等初始化事件回来才不为空
-                if (wv.CoreWebView2 == null) { Say("SHOT FAIL: webview2 init"); return 2; }
-                bool nav = false;
-                wv.CoreWebView2.NavigationCompleted += delegate { nav = true; };
-                wv.Source = new Uri(Url);
-                Pump(delegate { return nav; }, 20000);
+                string why;
+                if (!BootHidden(out why)) { Say("SHOT FAIL: " + why); return 2; }
+                Pump(delegate { return _navDone; }, 30000);
                 Thread.Sleep(1500);                       // 等卡片画出来
                 Pump(delegate { return false; }, 600);
 
@@ -714,7 +755,7 @@ namespace BoardShell
 
                 if (ShotVisible)
                 {
-                    var r = f.Bounds;
+                    var r = Win.Bounds;
                     using (var bmp = new Bitmap(r.Width, r.Height))
                     using (var g = Graphics.FromImage(bmp))
                     {
@@ -726,7 +767,7 @@ namespace BoardShell
                 {
                     using (var fs = File.Create(ShotPath))
                     {
-                        var t = wv.CoreWebView2.CapturePreviewAsync(
+                        var t = View.CoreWebView2.CapturePreviewAsync(
                             CoreWebView2CapturePreviewImageFormat.Png, fs);
                         Pump(delegate { return t.IsCompleted; }, 15000);
                     }
@@ -742,7 +783,7 @@ namespace BoardShell
             }
             finally
             {
-                try { if (f != null) f.Close(); } catch { }
+                try { if (Win != null) Win.Close(); } catch { }
                 StopServerIfOwned();      // 自检自己起的后端不留垃圾进程
             }
         }

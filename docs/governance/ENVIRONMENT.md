@@ -451,3 +451,38 @@ Get-Process -Id $c.OwningProcess | Select Id,StartTime
 **处置**：截图/自测别去杀别人的进程，**换个端口**（`boardshell.exe --port=8790 --url=http://127.0.0.1:8790/…`）；日常用就重启一次看板（托盘退出再开）。
 
 **判据**：「单独跑测试全绿、界面上某个新接口 404」——先查端口上是谁在服务，别怀疑路由写错。
+
+---
+
+## E-32 · 在 UI 线程上等 WebView2 初始化＝双击卡死（2026-10-20 实测，用户报的「卡死 + 初始化失败」）
+
+**现象**：双击「看板」→ 窗口白着不动（卡死）→ 弹出「WebView2 初始化失败」。
+
+**根因**：`Win.Shown` 里同步等异步初始化：
+
+```csharp
+var env = CoreWebView2Environment.CreateAsync(...).Result;   // ⛔ UI 线程上阻塞
+View.EnsureCoreWebView2Async(env).Wait(TimeSpan.FromSeconds(20));  // ⛔ 再阻塞 20 秒
+```
+
+`CreateAsync` / `EnsureCoreWebView2Async` 的完成回调**要回到 UI 线程**（WinForms 的 SynchronizationContext），
+而 UI 线程正卡在 `.Result` 上等它 ⇒ 谁都动不了。20 秒后 `Wait` 超时抛异常，被 catch 成「初始化失败」。
+
+**正解**：`async void InitView()` + `await`，让出线程，回调自然能回来：
+
+```csharp
+static async void InitView()
+{
+    var env = await CoreWebView2Environment.CreateAsync(null, UserDataDir(), null);
+    await View.EnsureCoreWebView2Async(env);
+    ...
+}
+```
+
+**为什么自检没抓住（这才是真正的教训）**：当时的 `--selftest` **自己另写了一套初始化**（而且是在没有消息循环的环境里 `.Wait()`，所以不卡），
+于是「自检全绿、双击卡死」。⇒ **自检必须和真实路径共用同一段代码**：现在自检走的就是 `BuildWindow(true) + InitView()`，
+只把窗口设成 0 透明度。⛔ 以后加自检别另起炉灶。
+
+**附带两条**：
+- 出错**不要弹模态框**（弹框把窗口挡住，用户只会觉得「卡死」）——现在是把原因写进窗口里（`ShowErrorPanel`）。
+- 卡死的那个进程会**占着 `board/webview2` 用户数据目录**，之后每次启动都初始化失败；先 `Stop-Process -Name boardshell` 再试。

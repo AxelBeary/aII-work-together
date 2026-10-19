@@ -93,6 +93,10 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 - **E-25** 接口字段被当契约 / 首页白烧 CPU / 压测自重
 - **E-26** 每请求重建 SQLite 连接＝纯税（已改固定线程池）
 - **E-27** 反空跑闸把统计注释逼进产物（已按 D-012 改成机器测量）
+- **E-28** WebView2 五坑（csc/net462、0 透明度自检、DLL 位置…）
+- **E-29** 唤醒会话两点（未知 sessionID 会新建会话；重复唤醒＝重复回复）
+- **E-31** 旧 server 进程还在 8777 ⇒ 新界面配旧接口报 not found
+- **E-32** **在 UI 线程上等 WebView2 初始化＝双击卡死**（用户实报）；根教训是「自检不能另起炉灶」——现在自检与真实窗口共用 `BuildWindow + InitView`
 
 另有两条**行为**教训，不在环境文档里但在项目记忆里：
 
