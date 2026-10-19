@@ -74,6 +74,31 @@ def main():
     if smoke_bad:
         fails.append("子命令烟测")
 
+    # 1c 界面 JS 语法（整页脚本一个错字就白屏；有 node 才查，没有就跳过）
+    import re
+    import shutil as _sh
+    node = _sh.which("node")
+    if node:
+        html = (ROOT / "tools" / "ui.html").read_text(encoding="utf-8")
+        m = re.search(r"<script>(.*?)</script>", html, re.S)
+        if not m:
+            print(f"  ✗ {'界面语法':<10} 找不到 script 块")
+            fails.append("界面语法")
+        else:
+            tmp = ROOT / "board" / "_ui_check.js"
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(m.group(1), encoding="utf-8")
+            p = subprocess.run([node, "--check", str(tmp)], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace")
+            tmp.unlink(missing_ok=True)
+            okjs = p.returncode == 0
+            print(f"  {'✓' if okjs else '✗'} {'界面语法':<10} " +
+                  (f"{len(m.group(1))} 字符" if okjs else (p.stderr or "")[:60]))
+            if not okjs:
+                fails.append("界面语法")
+    else:
+        print(f"  - {'界面语法':<10} 没装 node，跳过")
+
     # 2 回归
     ok, _ = run("回归库", [PY, "tests/run_regression.py"])
     if not ok:
@@ -98,6 +123,11 @@ def main():
     ok, _ = run("并发隔离", [PY, "tests/test_ui_concurrency.py"])
     if not ok:
         fails.append("并发隔离")
+
+    # 4d 接口形状契约（托盘/界面都靠这些字段，改后端不能静默弄坏它们）
+    ok, _ = run("接口契约", [PY, "tests/test_ui_api.py"])
+    if not ok:
+        fails.append("接口契约")
 
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])

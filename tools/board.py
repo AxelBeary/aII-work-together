@@ -256,8 +256,12 @@ def verify_chain(cid: str):
     return _store().verify_chain(cid)
 
 
-def replay(cid: str):
-    """从事件流重放出当前状态（事件流＝唯一真相）。"""
+def replay(cid: str, events=None):
+    """从事件流重放出当前状态（事件流＝唯一真相）。
+
+    events 允许调用方传入已读好的事件流，避免同一份日志被扫两遍
+    （列表页每张卡都要重放一次，重复扫描会翻倍）。
+    """
     card = require_card(cid)
     st = {
         "id": cid,
@@ -283,7 +287,7 @@ def replay(cid: str):
         "holder_model": None,
         "holder_effort": None,
     }
-    for ev in load_journal(cid):
+    for ev in (load_journal(cid) if events is None else events):
         st["events"] += 1
         k = ev.get("type")
         if k == "claim":

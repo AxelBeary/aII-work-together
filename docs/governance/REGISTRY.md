@@ -107,3 +107,18 @@
 | 汇总缓存原子写 | `tools/projects.py` | 已修 | 临时文件 + `os.replace` |
 
 `tools/check.py` 现为 **9 道闸**（新增「多项目」「并发隔离」）。
+
+### 全部项目总览 + 接口契约（2026-10-20）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 全部项目总览 | `tools/server.py`（`__all__`）+ `tools/ui.html` | 已实现 | 下拉框「全部项目」；每张卡带项目名；每列最多画 60 张 |
+| 首页不再重放全部卡 | `tools/server.py`（`api_state`） | 已简化 | 张数改由前端从卡片列表自己数，后端零重放 |
+| 一份日志只读一次 | `tools/board.py`（`replay(cid, events=...)`） | 已优化 | 列表页每卡的日志扫描从 2 遍降到 1 遍 |
+| 托盘状态显示 | `tray/BoardTray.cs`（`ShowStatus`） | 已修 | 改读 `/api/cards`；以前读 `/api/state` 恒显示 0 张 |
+| 接口形状契约（14 条） | `tests/test_ui_api.py` | PASS | 含「总览不串项目」「重号被拒且原卡不变」 |
+| 规模基准 | `tests/bench_scale.py` | 工具 | 20 项目 × 15 卡最慢 34ms；重规模需机器空闲时手跑 |
+| 界面 JS 语法闸 | `tools/check.py`（有 node 才查） | 已加 | 整页脚本一个错字就白屏，必须机器查 |
+| 使用说明补充 | `docs/怎么用.md` | 已补 | 托盘 + 网页看板的鼠标操作 |
+
+`tools/check.py` 现为 **11 道闸**（新增「接口契约」「界面语法」）。

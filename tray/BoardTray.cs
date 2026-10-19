@@ -247,11 +247,17 @@ namespace BoardTray
             EnsureServer();
             try
             {
-                var s = _http.GetStringAsync(BaseUrl + "api/state").Result;
-                int total = 0, done = 0;
-                total = Count(s, "\"id\":\"");
-                done = Count(s, "\"state\":\"完成\"");
-                Balloon("现在的状态", "共 " + total + " 张卡，已完成 " + done + " 张");
+                // ⚠️ 必须读 api/cards：api/state 只给项目列表和当前项目，里面没有卡片，
+                // 以前在这儿数字段导致「永远是 0 张」。
+                var s = _http.GetStringAsync(BaseUrl + "api/cards").Result;
+                int total = Count(s, "\"id\":\"");
+                int done = Count(s, "\"state\":\"完成\"");
+                int pending = Count(s, "\"state\":\"拍板中\"");
+                int running = Count(s, "\"state\":\"进行中\"");
+                string msg = "共 " + total + " 张卡：完成 " + done +
+                             "，进行中 " + running;
+                if (pending > 0) msg += "，等你拍板 " + pending;
+                Balloon("现在的状态", msg);
             }
             catch (Exception ex) { Balloon("读不到状态", ex.Message); }
         }

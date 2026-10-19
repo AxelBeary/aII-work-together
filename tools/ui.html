@@ -54,6 +54,7 @@ main{padding:18px 22px 60px}
 .tag.rw{background:#3d1c1c;color:#ff9c9c}
 .tag.ai{background:#173d28;color:#8cffb4}
 .tag.cost{background:#20283a;color:#9fb8e0}
+.tag.proj{background:#2c2450;color:#c4b5fd}
 .empty{color:#39414d;text-align:center;padding:14px;font-size:12px}
 dialog{border:none;border-radius:14px;background:var(--panel);color:var(--fg);
   padding:0;width:min(680px,92vw);max-height:88vh;box-shadow:0 20px 60px #000a}
@@ -188,17 +189,23 @@ async function loadState(){
   CUR.state = s;
   CUR.project = CUR.project || s.current;
   const sel = $("proj");
-  sel.innerHTML = s.projects.map(p =>
-    `<option value="${p.name}" ${p.name===CUR.project?"selected":""}>${p.name}（${p.cards}）</option>`
-  ).join("");
-  $("projinfo").textContent = s.current_path;
+  const opts = [`<option value="__all__" ${CUR.project==="__all__"?"selected":""}>全部项目（${s.projects.length}）</option>`];
+  s.projects.forEach(p => {
+    opts.push(`<option value="${esc(p.name)}" ${p.name===CUR.project?"selected":""}>${esc(p.name)}（${p.cards}）</option>`);
+  });
+  sel.innerHTML = opts.join("");
+  const all = CUR.project === "__all__";
+  $("projinfo").textContent = all ? "所有项目的卡合并显示（只看不改项目）" : s.current_path;
+  $("btn-run").disabled = all;
+  $("btn-run").title = all ? "跑一轮要指定项目：先在上面选一个具体项目" : "";
   return s;
 }
 
-function statCards(s){
-  const c = s.counts || {};
+function statCards(cards){
+  const c = {};
+  cards.forEach(x => c[x.state] = (c[x.state]||0) + 1);
   const items = [
-    ["全部", s.total],
+    ["全部", cards.length],
     ["进行中", c["进行中"]||0],
     ["待拍板", c["拍板中"]||0],
     ["待验收", (c["待验收"]||0)+(c["核验中"]||0)],
@@ -206,10 +213,15 @@ function statCards(s){
   ];
   $("stats").innerHTML = items.map(([k,v]) =>
     `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+  // 下拉里的张数用刚拿到的实时数，别用后端 15 秒缓存的那份
+  const sel = $("proj");
+  const opt = sel.options[sel.selectedIndex];
+  if(opt) opt.textContent = `${CUR.project}（${cards.length}）`;
 }
 
 function cardHtml(c){
   const tags = [];
+  if(c.project) tags.push(`<span class="tag proj">${esc(c.project)}</span>`);
   if(c.engine && c.engine!=="any") tags.push(`<span class="tag">${c.engine}</span>`);
   if(c.model && c.model!=="any") tags.push(`<span class="tag">${String(c.model).split('/').pop()}</span>`);
   if(c.human_gate && c.human_gate!=="none") tags.push(`<span class="tag gate">需你拍板</span>`);
@@ -229,15 +241,19 @@ function cardHtml(c){
 function esc(s){ return String(s??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
 
 function render(cards){
+  const CAP = 60;              // 每列最多画这么多张，几十个项目时不至于把浏览器卡死
   const by = {};
   STATE_ORDER.forEach(s => by[s]=[]);
   cards.forEach(c => (by[c.state] || (by[c.state]=[])).push(c));
   $("board").innerHTML = STATE_ORDER.map(s => {
     const list = by[s]||[];
     if(!list.length && ["核验中","待返工","阻塞"].includes(s)) return "";
-    const inner = list.length
-      ? list.map(cardHtml).join("")
-      : `<div class="empty">—</div>`;
+    let inner = '<div class="empty">—</div>';
+    if(list.length){
+      inner = list.slice(0, CAP).map(cardHtml).join("");
+      if(list.length > CAP)
+        inner += `<div class="empty">还有 ${list.length - CAP} 张 —— 选具体项目看全部</div>`;
+    }
     return `<div class="col"><h2>${s}<em>${list.length}</em></h2><div class="list">${inner}</div></div>`;
   }).join("");
   document.querySelectorAll(".card").forEach(el =>
@@ -246,23 +262,32 @@ function render(cards){
 
 async function refresh(){
   try{
-    const s = await loadState();
+    await loadState();
     const d = await api("/api/cards" + q());
     CUR.cards = d.cards;
-    statCards(s);
+    statCards(d.cards);
     render(d.cards);
   }catch(e){ toast("刷新失败："+e.message, true); }
 }
 
 function startPoll(){
   if(pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(()=>{ if(!document.querySelector("dialog[open]")) refresh(); }, 5000);
+  // 全部项目总览要扫几十个库，刷新别太勤
+  const ms = CUR.project === "__all__" ? 15000 : 5000;
+  pollTimer = setInterval(()=>{ if(!document.querySelector("dialog[open]")) refresh(); }, ms);
 }
 
 /* ---------- 单卡详情 ---------- */
+function projOf(id){
+  const c = (CUR.cards||[]).find(x => x.id === id);
+  return (c && c.project_path) || CUR.project;
+}
+
 async function openCard(id){
   try{
-    const c = await api("/api/card"+q()+"&id="+encodeURIComponent(id));
+    const proj = projOf(id);
+    const c = await api("/api/card?project=" + encodeURIComponent(proj) +
+                        "&id=" + encodeURIComponent(id));
     $("c-title").textContent = c.title;
     $("c-state").textContent = c.state;
     const kv = [];
@@ -312,7 +337,7 @@ async function openCard(id){
 async function human(id, decision, note){
   try{
     await api("/api/human", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({project:CUR.project, id, decision, note, who:"owner"})});
+      body: JSON.stringify({project: projOf(id), id, decision, note, who:"owner"})});
     dlgCard.close();
     toast(decision==="approve" ? "已批准" : "已驳回，agent 下轮会按你的理由改");
     refresh();
@@ -327,7 +352,7 @@ const dlgNew = $("dlg-new"), dlgCard = $("dlg-card"), dlgRun = $("dlg-run");
 $("btn-new").onclick = () => dlgNew.showModal();
 $("btn-refresh").onclick = () => { refresh(); toast("已刷新"); };
 $("btn-run").onclick = () => { dlgRun.showModal(); pollRun(); };
-$("proj").onchange = e => { CUR.project = e.target.value; refresh(); };
+$("proj").onchange = e => { CUR.project = e.target.value; startPoll(); refresh(); };
 
 $("btn-create").onclick = async () => {
   const body = {

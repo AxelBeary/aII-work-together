@@ -41,6 +41,9 @@ import projects as P       # noqa: E402
 
 UI = Path(__file__).resolve().parent / "ui.html"
 
+# 跨项目总览用的伪项目名（不是真目录）
+ALL_PROJECTS = "__all__"
+
 _run_lock = threading.Lock()
 _run_state = {"running": False, "project": None, "started": None}
 _run_log_path = ROOT / "board" / "ui-run.log"
@@ -54,23 +57,25 @@ _BOARD_LOCK = threading.RLock()
 
 # ---------- 数据整形 ----------
 
-def _card_view(cid: str) -> dict | None:
+def _card_view(cid: str, light: bool = False) -> dict | None:
     try:
-        st = B.replay(cid)
+        events = B.load_journal(cid)      # 一份日志只读一次，重放也复用它
+        st = B.replay(cid, events=events)
         card = B.get_card(cid) or {}
     except SystemExit:
         return None
     usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
              "cost": 0.0, "available": False}
     submit = st.get("submit") or {}
-    for ev in B.load_journal(cid):
-        if ev.get("type") == "usage":
-            u = ev.get("usage") or {}
-            if u.get("available"):
-                usage["available"] = True
-                for k in ("input", "output", "cache_read", "cache_write"):
-                    usage[k] += int(u.get(k) or 0)
-                usage["cost"] += float(u.get("cost") or 0)
+    if not light:
+        for ev in events:
+            if ev.get("type") == "usage":
+                u = ev.get("usage") or {}
+                if u.get("available"):
+                    usage["available"] = True
+                    for k in ("input", "output", "cache_read", "cache_write"):
+                        usage[k] += int(u.get(k) or 0)
+                    usage["cost"] += float(u.get("cost") or 0)
     return {
         "id": cid,
         "title": st["title"],
@@ -115,35 +120,70 @@ def _switch(project: str | None) -> Path:
 # ---------- 接口实现 ----------
 
 def api_state(q):
+    """首页只需要「项目列表 + 当前项目是谁」。
+
+    ⚠️ 这里刻意不算各状态的张数：那个数字前端手里已经有（它就是靠 /api/cards 渲染的），
+    后端再算一遍等于把每张卡的事件流重放一次，纯属白烧 CPU，还会和卡片列表短暂不一致。
+    """
     ps = P.project_summary()
     projects = [{"name": p["name"], "path": p["path"],
                  "cards": p.get("cards", 0),
                  "states": p.get("states", {}),
                  "ok": p.get("ok", False)} for p in ps]
-    root = _switch(q.get("project", [None])[0])
-    cur_cards = [_card_view(c) for c in B.card_ids()]
-    cur_cards = [c for c in cur_cards if c]
-    counts = {}
-    for c in cur_cards:
-        counts[c["state"]] = counts.get(c["state"], 0) + 1
+    project = q.get("project", [None])[0]
+    if project == ALL_PROJECTS:
+        root = P.resolve_root(None)      # 总览模式不切项目，路径仅用于显示
+    else:
+        root = _switch(project)
     return {
         "current": root.name,
         "current_path": str(root),
         "workspace": str(B.WORKSPACE),
         "projects": projects,
-        "counts": counts,
-        "total": len(cur_cards),
     }
 
 
 def api_cards(q):
-    _switch(q.get("project", [None])[0])
+    project = q.get("project", [None])[0]
+    if project == ALL_PROJECTS:
+        return {"all": True, "cards": _all_cards()}
+    _switch(project)
     out = []
     for cid in B.card_ids():
         v = _card_view(cid)
         if v:
             out.append(v)
     return {"cards": out}
+
+
+def _all_cards():
+    """把所有项目的卡汇到一张板上（跨项目总览）。
+
+    刻意用 light 模式：总览只要「谁、什么状态」，不要每张卡的用量明细，
+    否则几十个项目几千张卡会把界面拖死。
+    """
+    out = []
+    prev_root, prev_ws = B.ROOT, B.WORKSPACE
+    try:
+        for p in P.list_projects():
+            if not p.get("exists"):
+                continue
+            root = Path(p["path"])
+            try:
+                B.set_root(root)
+                B.set_workspace(P.workspace_of(root))
+                for cid in B.card_ids():
+                    v = _card_view(cid, light=True)
+                    if v:
+                        v["project"] = p["name"]
+                        v["project_path"] = p["path"]
+                        out.append(v)
+            except Exception:
+                continue          # 某个项目库坏了不能拖垮整个总览
+    finally:
+        B.set_root(prev_root)
+        B.set_workspace(prev_ws)
+    return out
 
 
 def api_card(q):
