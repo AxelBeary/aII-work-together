@@ -150,3 +150,20 @@
 | 使用文档 | `docs/点对点评审.md` + `docs/怎么用.md` 末尾 | 已写 | 含「为什么不建聊天室」与已知问题 |
 
 已知问题：反空跑闸（必须包含数字）把统计注释逼进译文正文，见 ENVIRONMENT.md **E-27**。
+
+### 评审闭环 + 图标 + 快捷方式（2026-10-20 收工批次）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 评审席记账 | `tools/consult.py` | 已实现 | 每席一条 `usage` 事件（`phase: consult` / `consult-verify`），成本表不再漏半张 |
+| 改后核对 | `consult.verify_fix` + `parse_verify` | 已实现 | 实测 b1 6/6、b2 11/12，剩 1 条；糊话记为「未知」不当 0（测试 C7） |
+| 卡片自定义字段不丢 | `tools/storage.py`（`meta` 列 + 老库补列） | 已修 | 测试 C9；反向测试停用后 C9 变红（`consult_files 丢了：None`） |
+| 评审席可带角度 | `--consult "...@native,...@faithful"` | 已实现 | 实测 opus 看母语读感、deepseek 逐句对照，两席结论各自成立 |
+| 看板显示评审 | `tools/server.py`＋`tools/ui.html` | 已实现 | 卡片标签 `评审 2` / `未改 1`；详情一行摘要；契约测试已钉 `consult` 字段 |
+| 反空跑闸改口径 | `tools/board.py`（`gate_l3`/`MIN_NONSPACE`） | 已改（D-012） | 回归 24 条全过；旧件留档 `gate-archive/` |
+| 代码画图标 | `tools/make_icon.py` | 已实现 | 纯标准库；`System.Drawing.Icon` 解析成功、PNG 256×256 ARGB |
+| 桌面快捷方式 | `看板.lnk` → `open-board.cmd` | 已创建 | 回读验证目标/工作区/图标/最小化；**尚未被人双击** |
+| 网页图标 | `/favicon.ico`、`/assets/board.png` | 已实现 | HTTP 200，5293 / 2288 字节，首页已引用 |
+| 复核席跑错目录（整盘搜的根因） | `tools/orchestrator.py` | 已修 | 复核/专家团改用卡片工作区；提示词禁止整盘搜索 |
+
+规模：`tools/`＋`tests/` 共 24 个 py 文件 ≈ 295 KB；闸门 **12 道**、回归 **24 条**。
