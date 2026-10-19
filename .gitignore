@@ -10,6 +10,12 @@ build/
 *.pem
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+
+# 看板运行时数据（卡片是本地状态，不进库）
+board/cards/
+board/board.html
 
 # 项目记忆（本机私有，不进库）——与 .opencode/memory/.gitignore 一致
 .opencode/memory/
