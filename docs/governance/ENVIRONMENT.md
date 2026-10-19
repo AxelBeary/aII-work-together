@@ -57,3 +57,23 @@
 - 本项目首轮 3 席调研，发牌席抽验 5 条：**4 条属实、1 条链接路径错**（`/docs/codex/non-interactive-mode` → 404，正确为 `/docs/non-interactive-mode`），**内容本身无误**。
 - **结论**：子代理在「结论与判断」上表现好（会主动标「未见」「未证」），**易错点是可机械核对的字串**——链接路径、星数、版本号。
 - **做法**：抽验优先抽**数字与 URL**（机器可判、成本低），不必重读其论证过程。
+
+## E-08 · 子代理模型可用性实测（取证 2026-10-19，一天内 5 次失败）
+
+**背景**：本项目同一天派出两批共 6 席，**前 4 次尝试全部失败**，全部是模型/网络侧问题，不是任务问题。
+
+| 模型 | 结果 | 报错原文（要点） |
+|---|---|---|
+| 默认免费池（不指定 model） | ❌ 3/3 全败 | `OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address` |
+| `opencode-go/gpt-6-luna` | ✅ 首批 3/3 通过 → ⚠️ 同日稍后 **❌ 3/3 全败** | `Country, region, or territory not supported` |
+| `claudecodesale/claude-sonnet-5-5` | ❌ | `当前地区暂不支持访问模型 claude-sonnet-5-5` |
+| `opencode/deepseek-v4.1-flash` | ❌ | `Upstream request failed: Insufficient account funds` |
+| **`opencode-go/deepseek-v4.1-flash`** | ✅ **本次 3/3 通过** | —（与主代理同款模型、同 provider，资金与地区都确定可用） |
+
+**结论与做法**：
+1. **派子代理时显式指定 `opencode-go/deepseek-v4.1-flash`**（＝主代理自己用的那款）。理由最硬：主代理能跑 ⇒ 该模型在本机、本地区、本账户下**确定可用**，不会出现「地区不支持」或「余额不足」。
+2. ⛔ **不要靠默认模型池**：免费池被网络侧封禁，且报错原因（`abusive traffic from this IP`）与账号无关，改配置也治不了。
+3. **同一个模型可用性会漂**：`gpt-6-luna` 同一天内先可用后区域封禁 ⇒ **⛔ 不要把「刚才还能用」当稳态**，每次派工都要按回执判，失败即换。
+4. 失败会话 `sessionID` 会返回，但上下文已被污染，**重派比续跑划算**。
+
+**可复跑**：`tools.opencode.models({ provider: "opencode-go" })` 列出候选；派工时 `subagent` 带 `model: "opencode-go/deepseek-v4.1-flash"`。

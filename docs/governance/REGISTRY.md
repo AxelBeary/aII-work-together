@@ -17,3 +17,7 @@
 | 2026-10-19 | P3 本机资产与约束 | `docs/research/20261019-agent-board-survey/P3-本机可复用资产与约束__调研席C__本机实测.md` | 调研席 C | 已交（部分抽验） | 24,494 字节；AGENTS.md 三段行号锚点核对一致 |
 | 2026-10-19 | 发牌席抽验记录 | `docs/research/20261019-agent-board-survey/99_发牌席抽验记录.md` | 发牌席 | 已验（PASS） | 5 条抽验：4 属实、1 链接错 |
 | 2026-10-19 | 合并摘要（人话版） | `docs/research/20261019-agent-board-survey/98_合并摘要__发牌席__人话版.md` | 发牌席 | 已验（PASS） | 三席结论合并＋许可红线＋下一步 |
+| 2026-10-19 | 架构期派工单（总单＋D1/D2/D3） | `docs/design/20261019-architecture-deepdive/` | 发牌席 | 已交（待验） | 受 D-002 约束：本批不写代码 |
+| 2026-10-19 | D3 Symphony 规格＋MAST 失效映射 | `docs/research/20261019-architecture-deepdive/D3-Symphony规格与MAST失效映射__调研席D3__外部公开资料.md` | 调研席 D3 | 已交（待抽验） | 38,102 字节；sha256 前 8 = `4F60F5C1`；自报 8 机制／14 失效／13 输入 已核 |
+| 2026-10-19 | D1 卡片数据模型与状态机 | `docs/design/20261019-architecture-deepdive/D1-卡片数据模型与状态机__设计席D1__设计稿.md` | 设计席 D1 | 进行中（后台） | 文件已在盘 46,833 字节；**未回执、未亲验** |
+| 2026-10-19 | D2 租约与验收判据 | `docs/design/20261019-architecture-deepdive/D2-租约与验收判据__设计席D2__设计稿.md` | 设计席 D2 | 进行中（后台） | 文件已在盘 45,112 字节；**未回执、未亲验** |
