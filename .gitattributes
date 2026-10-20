@@ -1,0 +1,30 @@
+# 行尾约定（Windows 项目：脚本必须是 CRLF，代码与文档用 LF）
+#
+# 为什么要有这个文件：`open-board.cmd` 与 `shell/build.cmd` 曾经是 LF-only，
+# cmd.exe 对 LF 的 if/goto 块解析不稳，属「双击没反应」那类静默失败的来源。
+# 这里按类型钉死，避免以后又被编辑器改回 LF。
+
+# Windows 脚本：必须 CRLF（cmd.exe / PowerShell 都按 CRLF 写）
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# 代码与文档：LF（跨平台工具链友好）
+*.py    text eol=lf
+*.cs    text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+# 二进制：不做任何行尾转换（否则会被改坏）
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.dll   binary
+*.exe   binary
+*.db    binary
