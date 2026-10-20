@@ -1090,7 +1090,29 @@ namespace BoardShell
                 Say("cols ok= " + okCols + "  title ok= " + okTitle
                                   + "  term ok= " + okTerm + "  msg ok= " + okMsg
                                   + "  filters ok= " + okFilt);
-                bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt;
+
+                // 多选：真点两下勾选框，看底部操作栏有没有出来（无卡片时跳过）
+                string js2 = "(()=>{var p=document.querySelectorAll('.pick');"
+                           + "var b=document.getElementById('selbar');"
+                           + "var h0=b?b.classList.contains('hide'):false;"
+                           + "if(p.length<2) return JSON.stringify({sel:-1,hidden0:h0});"
+                           + "p[0].click();p[1].click();"
+                           + "return JSON.stringify({sel:document.querySelectorAll('.card.sel').length,"
+                           + "bar:b?!b.classList.contains('hide'):false,"
+                           + "hidden0:h0,"
+                           + "n:document.getElementById('sel-n').textContent});})()";
+                var t2 = View.CoreWebView2.ExecuteScriptAsync(js2);
+                Pump(delegate { return t2.IsCompleted; }, 10000);
+                string raw2 = t2.IsCompleted ? (t2.Result ?? "") : "";
+                string norm2 = raw2.Replace("\\\"", "\"").Replace("\\\\", "\\");
+                Say("multi  = " + norm2);
+                bool okMulti = norm2.Contains("\"sel\":-1")          // 卡不够，跳过
+                            || (norm2.Contains("\"sel\":2")
+                                && norm2.Contains("\"bar\":true")
+                                && norm2.Contains("\"hidden0\":true")   // 没选时不能露出来
+                                && norm2.Contains("\"n\":\"2\""));
+                Say("multi ok= " + okMulti);
+                bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt && okMulti;
                 Say(pass ? "SELFTEST PASS" : "SELFTEST FAIL");
                 return pass ? 0 : 2;
             }

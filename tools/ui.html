@@ -51,12 +51,23 @@ main{padding:18px 22px 60px}
 .chip:hover{border-color:#39424f;color:var(--fg)}
 .chip.on{background:#1b2431;border-color:#3b5b8a;color:#cfe0ff}
 .chip.on em{color:#8fa9cc}
+/* 多选（批量跑 / 批量取消）：卡片右上角小方框；选中后底部浮出一条操作栏 */
+.card .pick{position:absolute;right:9px;top:9px;width:15px;height:15px;cursor:pointer;
+  accent-color:#4c8bf5;opacity:.45;transition:opacity .15s}
+.card:hover .pick,.card.sel .pick{opacity:1}
+.card.sel{border-color:#3b5b8a;box-shadow:inset 0 0 0 1px #3b5b8a}
+.selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;display:flex;
+  align-items:center;gap:10px;background:#1a2029;border:1px solid #2f3a48;border-radius:12px;
+  padding:10px 14px;box-shadow:0 12px 40px #000a;z-index:60;font-size:13px}
+.selbar b{color:#cfe0ff;font-size:15px}
+.selbar .spacer{width:22px}
+.selbar.hide{display:none}
 .col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
   justify-content:space-between;color:#c8d0da}
 .col h2 em{color:var(--mut);font-style:normal}
 .col body,.col .list{padding:9px;display:flex;flex-direction:column;gap:8px;min-height:40px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer;position:relative}
 .card:hover{border-color:#3c4757;background:#20252e}
 .card .id{font-size:11px;color:var(--acc);font-family:ui-monospace,Consolas,monospace}
 .card .t{font-weight:600;margin:3px 0 6px;font-size:13px;line-height:1.45}
@@ -273,11 +284,28 @@ body.term-on .toast{bottom:340px}
 
 <div class="toast" id="toast"></div>
 
+<div class="selbar hide" id="selbar">
+  <b id="sel-n">0</b><span>张已选</span>
+  <div class="spacer"></div>
+  <button class="btn" id="sel-clear">清空</button>
+  <button class="btn" id="sel-cancel">取消这些卡</button>
+  <button class="btn-primary" id="sel-run">跑一轮</button>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","核验中","拍板中","完成"];
 let CUR = {project:null, cards:[], state:null};
 let FILTER = null;            // 顶部状态筛选：null＝全部（只画有卡的列，见 render）
+const SEL = new Set();        // 多选的卡号（批量跑 / 批量取消）
+
+function updateSelBar(){
+  const n = SEL.size;
+  $("sel-n").textContent = n;
+  $("selbar").classList.toggle("hide", n === 0);
+  document.querySelectorAll(".card").forEach(el =>
+    el.classList.toggle("sel", SEL.has(el.dataset.id)));
+}
 let pollTimer = null;
 
 function toast(msg, isErr){
@@ -355,7 +383,9 @@ function cardHtml(c){
   if(cs.unfixed > 0) tags.push(`<span class="tag rw">未改 ${cs.unfixed}</span>`);
   else if(cs.unfixed === -1) tags.push(`<span class="tag rw">未改?</span>`);
   const blk = c.blocked_reason ? `<div class="g" style="color:#d9a441">${esc(c.blocked_reason).slice(0,60)}</div>` : "";
-  return `<div class="card" data-id="${c.id}">
+  return `<div class="card ${SEL.has(c.id)?"sel":""}" data-id="${c.id}">
+    <input type="checkbox" class="pick" data-pick="${c.id}" ${SEL.has(c.id)?"checked":""}
+           title="选中这张（可以批量跑 / 批量取消）">
     <div class="id">${c.id}</div>
     <div class="t">${esc(c.title)}</div>
     ${c.goal?`<div class="g">${esc(c.goal)}</div>`:""}
@@ -401,6 +431,14 @@ function render(cards){
   }).join("");
   document.querySelectorAll(".card").forEach(el =>
     el.addEventListener("click", ()=>openCard(el.dataset.id)));
+  document.querySelectorAll(".pick").forEach(el => {
+    el.onclick = ev => {
+      ev.stopPropagation();          // 别让勾选顺手把详情打开
+      if(el.checked) SEL.add(el.dataset.pick); else SEL.delete(el.dataset.pick);
+      updateSelBar();
+    };
+  });
+  updateSelBar();
 }
 
 async function refresh(){
@@ -408,6 +446,9 @@ async function refresh(){
     await loadState();
     const d = await api("/api/cards" + q());
     CUR.cards = d.cards;
+    // 选中的卡可能已经不在当前项目/已被删：剪掉，否则「已选 3 张」里有一张是鬼
+    const alive = new Set(d.cards.map(c => c.id));
+    [...SEL].forEach(x => { if(!alive.has(x)) SEL.delete(x); });
     statCards(d.cards);
     render(d.cards);
   }catch(e){ toast("刷新失败："+e.message, true); }
@@ -570,6 +611,41 @@ $("btn-run-start").onclick = async () => {
     if(!runPoll) runPoll = setInterval(pollRun, 2000);
     pollRun();
   }catch(e){ toast(e.message, true); }
+};
+
+/* ---------- 多选批量动作 ---------- */
+$("sel-clear").onclick = () => { SEL.clear(); render(CUR.cards || []); };
+
+$("sel-run").onclick = async () => {
+  const ids = [...SEL];
+  if(!ids.length) return;
+  try{
+    await api("/api/bulk", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project:CUR.project, action:"run", ids,
+                            engine: $("f-run-engine") ? $("f-run-engine").value : undefined})});
+    toast(`已开始跑 ${ids.length} 张（只跑选中的）`);
+    if(!dlgRun.open) dlgRun.showModal();
+    if(!runPoll) runPoll = setInterval(pollRun, 2000);
+    pollRun();
+  }catch(e){ toast(e.message, true); }
+};
+
+$("sel-cancel").onclick = async () => {
+  const ids = [...SEL];
+  if(!ids.length) return;
+  if(!confirm(`把这 ${ids.length} 张卡标成「已取消」？\n（卡片不会删，只是从这里移走）`)) return;
+  try{
+    const r = await api("/api/bulk", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project:CUR.project, action:"cancel", ids, who:"owner"})});
+    toast(`已取消 ${r.cancelled.length} 张` +
+          (r.skipped.length ? `，跳过 ${r.skipped.length} 张（状态不允许）` : ""));
+    SEL.clear();
+    refresh();
+  }catch(e){
+    toast(String(e.message).indexOf("令牌") >= 0
+      ? "取消要人令牌（和拍板同一把）：先按提示创建 ~/.board-human-owner.tok 再试"
+      : e.message, true);
+  }
 };
 
 /* ---------- 留言（跨会话传话）---------- */

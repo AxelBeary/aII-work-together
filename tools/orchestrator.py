@@ -571,6 +571,10 @@ def cmd_run(a):
 
     results = []
     skipped = {}          # 卡号 → 跳过原因（每张只报一次，⛔ 别每轮刷屏）
+    only = set()
+    if getattr(a, "cards", None):
+        only = {x.strip() for x in str(a.cards).replace("，", ",").split(",") if x.strip()}
+        log(f"只跑指定卡：{', '.join(sorted(only))}", "step")
 
     def pick(limit):
         """挑最多 limit 张能接的卡（精确匹配优先）。
@@ -581,6 +585,8 @@ def cmd_run(a):
         cand = []
         for d in B.card_refs():
             if not d.is_dir():
+                continue
+            if only and d.name not in only:
                 continue
             try:
                 st = B.replay(d.name)
@@ -787,6 +793,8 @@ def main():
     s.add_argument("--model", default=None)
     s.add_argument("--effort", default=None)
     s.add_argument("--max", type=int, default=5, help="最多处理几张卡")
+    s.add_argument("--cards", default=None,
+                   help="只处理这些卡（逗号分隔 C1,C2）——界面「选中后跑一轮」用它")
     s.add_argument("--consult", default=None,
                    help='点对点评审席（初稿→评审→再改一轮）：'
                         '"b1:opencode:claudecodesale/claude-opus-5-5,b2:qoderclicn:"')

@@ -248,4 +248,13 @@
 | Q1 #11 `_WriteTx.__enter__` 漏连接 | `tools/storage.py`（BEGIN 失败先 close 再抛） | 已修 | 全量闸绿 |
 | Q1 #12 托盘端口不透传 | `tray.OpenBoard` 传 `--port=`／`--project=` | 已修 | 代码级；未起可见托盘验证 |
 
-规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件；预算与依赖闸 **31 条**；留言闸 **17 条**。
+### D 批 · 多选批量 ＋ 端到端实跑验收（2026-10-21，D-019）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 多选（勾选框 ＋ 底部操作栏） | `tools/ui.html`（`SEL`／`.pick`／`.selbar`） | 已做 | 壳自检真点击：`sel:2 bar:true hidden0:true n:"2"` |
+| 批量跑（只跑选中的） | `orchestrator run --cards`、`server.api_bulk` | 已做 | `--cards` 过滤在 `pick()` 里；非法动作/空选择被拒 |
+| 批量取消（要人令牌） | `server.api_bulk` action=cancel | 已做 | 无令牌 403；有令牌只动选中那张；留痕 actor=human |
+| 端到端实跑（人肉验收） | 临时项目 `%TEMP%\opencode\hello-run` | PASS | 认领→opencode 8s→L1-L3→异会话复核→完成；`out/hello.txt` 177B；$0.0058 |
+
+规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件；预算与依赖闸 **37 条**；留言闸 **17 条**；子命令 **28 条**。

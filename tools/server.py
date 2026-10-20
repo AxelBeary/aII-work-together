@@ -382,6 +382,11 @@ def _register_token(who):
 
 def api_run(body):
     root = _switch(body.get("project"))
+    return _start_run(root, body)
+
+
+def _start_run(root, body, cards=None):
+    """起一轮编排（后台子进程）。cards 给了就只跑这几张（界面「选中后跑一轮」）。"""
     if not _run_lock.acquire(blocking=False):
         raise RuntimeError("已经有一轮在跑了，等它结束")
     try:
@@ -392,6 +397,8 @@ def api_run(body):
         _run_log_path.parent.mkdir(parents=True, exist_ok=True)
         _run_log_path.write_text("", encoding="utf-8")
         n = int(body.get("max") or 3)
+        if cards:
+            n = max(n, len(cards))
         engine = body.get("engine") or "opencode"
         model = body.get("model") or ""
         cmd = [sys.executable, str(Path(__file__).resolve().parent / "orchestrator.py"),
@@ -399,6 +406,8 @@ def api_run(body):
                "run", "--max", str(n), "--engine", engine]
         if model:
             cmd += ["--model", model]
+        if cards:
+            cmd += ["--cards", ",".join(cards)]
 
         def _worker():
             try:
@@ -415,6 +424,44 @@ def api_run(body):
     except Exception:
         _run_lock.release()
         raise
+
+
+def api_bulk(body):
+    """多选后的批量动作（界面「选中 N 张」那一排按钮）。
+
+    ⚠️ 只做两个动作，理由：
+      · run   —— 是 agent 侧动作，不越过人闸；
+      · cancel —— 「已取消」按状态机只允许 human，所以**必须带令牌**，和拍板同一把钥匙。
+        ⛔ 不做「批量删除」：删卡是不可逆动作，只能一张一张来（`board rm` 还要 --yes）。
+    """
+    root = _switch(body.get("project"))
+    ids = [str(x).strip() for x in (body.get("ids") or []) if str(x).strip()]
+    if not ids:
+        raise ValueError("没选卡")
+    act = body.get("action")
+    if act == "run":
+        return _start_run(root, dict(body, max=len(ids)), cards=ids)
+    if act == "cancel":
+        who = (body.get("who") or "owner").strip()
+        ok_tok, why = _verify_token(who)
+        if not ok_tok:
+            raise PermissionError(why)
+        _register_token(who)
+        done, skipped = [], []
+        for cid in ids:
+            if not B.get_card(cid):
+                skipped.append(f"{cid}（不存在）")
+                continue
+            st = B.replay(cid)
+            if (st["state"], "已取消") not in B.TRANSITIONS:
+                skipped.append(f"{cid}（{st['state']} 不能取消）")
+                continue
+            B.append_event(cid, {"type": "cancel", "actor": "human", "who": who})
+            B.release(cid)         # 有租约就放掉，别留僵尸占卡
+            done.append(cid)
+        P.invalidate_summary_cache()
+        return {"ok": True, "cancelled": done, "skipped": skipped}
+    raise ValueError("action 只能是 run / cancel")
 
 
 def api_run_log(q):
@@ -594,7 +641,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json({"error": "请求体不是 JSON"}, 400)
         routes = {"/api/card": api_create, "/api/human": api_human,
-                  "/api/run": api_run,
+                  "/api/run": api_run, "/api/bulk": api_bulk,
                   "/api/messages": api_message_send,
                   "/api/messages/ack": api_message_ack,
                   "/api/term/run": api_term_run,

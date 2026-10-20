@@ -310,19 +310,68 @@ def test_project_default_budget():
        out.strip()[:60])
 
 
+# ---------- 8. 多选批量：参数校验 / 人闸 / 只动选中的 ----------
+def test_bulk():
+    import board as B
+    import server as S
+    proj = fresh_proj("bulk")
+    B.set_root(str(proj))
+    a = add(proj, "--title", "批量取消", "--goal", "x")
+    b = add(proj, "--title", "保留不动", "--goal", "x")
+
+    for body, label in (({"ids": []}, "空选择"),
+                        ({"ids": [a], "action": "rm"}, "非法动作")):
+        try:
+            S.api_bulk(dict(body, project=proj.name))
+            ok(f"{label}要被拒", False)
+        except ValueError:
+            ok(f"{label}要被拒", True)
+
+    # 人闸：没有令牌不能批量取消
+    try:
+        S.api_bulk({"project": proj.name, "ids": [a], "action": "cancel",
+                    "who": "no-such-seat"})
+        ok("没有令牌不能批量取消", False)
+    except PermissionError:
+        ok("没有令牌不能批量取消", True)
+
+    # 有令牌：只动选中的那张
+    import cli as C
+    old = os.environ.get("USERPROFILE")
+    os.environ["USERPROFILE"] = str(SANDBOX / "home")
+    try:
+        (SANDBOX / "home").mkdir(parents=True, exist_ok=True)
+        tok = C.human_token("owner")
+        tok.write_text("t" * 24, encoding="utf-8")
+        r = S.api_bulk({"project": proj.name, "ids": [a], "action": "cancel",
+                        "who": "owner"})
+    finally:
+        if old is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = old
+
+    ok("有令牌能批量取消选中的那张", r.get("cancelled") == [a], str(r))
+    ok("对照：没选中的那张没被动", B.replay(b)["state"] == "待认领",
+       B.replay(b)["state"])
+    ok("取消留痕是人做的（actor=human）",
+       any(ev.get("type") == "cancel" and ev.get("actor") == "human"
+           for ev in B.load_journal(a)), "")
+
+
 def main():
     SANDBOX.mkdir(parents=True, exist_ok=True)
     try:
         for fn in (test_budget_stop, test_deps, test_error_class,
                    test_budget_owner_rule, test_diff, test_alert_line,
-                   test_project_default_budget):
+                   test_project_default_budget, test_bulk):
             print(f"\n--- {fn.__name__} ---")
             fn()
         print(f"\n{'=' * 50}")
         if fails:
             print(f"✗ 未通过：{'、'.join(fails)}")
             return 1
-        print("✓ 预算/依赖/错误分级/刹车权限/拍板 diff/提醒/默认预算 七组反向测试全过")
+        print("✓ 预算/依赖/错误分级/刹车权限/拍板 diff/提醒/默认预算/批量 八组反向测试全过")
         return 0
     finally:
         shutil.rmtree(SANDBOX, ignore_errors=True)

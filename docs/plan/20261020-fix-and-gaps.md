@@ -43,3 +43,15 @@
 
 ## 收工动作
 每批：`python tools/check.py --quick` 全绿 → 提交（显式路径）→ 更新 DECISIONS / REGISTRY / HANDOFF / ENVIRONMENT（新坑）。
+
+## E 批 · 2026-10-21（用户追加拍板）
+
+| 项 | 状态 |
+|---|---|
+| 看板列布局：只画有卡的列 ＋ 顶部状态筛选（D-018） | 已完成（6d04297） |
+| 提醒声音：Windows 系统音（SystemSounds.Asterisk） | 已完成 |
+| 项目默认预算（oard project default --max-cost …） | 已完成 |
+| Q1 剩余五条（托盘管道 / msg --json / 托盘 UI 线程 / _WriteTx / 端口透传） | 已完成 |
+| 多选批量（跑一轮 / 取消，要人令牌）（D-019） | 已完成 |
+| 端到端实跑验收（真引擎 8s，.0058，177B 交付物） | PASS |
+| 导出日报 | **按用户要求暂不做** |
