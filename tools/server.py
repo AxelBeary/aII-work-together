@@ -62,6 +62,14 @@ _BOARD_LOCK = threading.RLock()
 
 # ---------- 数据整形 ----------
 
+def _log_bytes(cid: str) -> int:
+    try:
+        p = B.card_dir(cid) / "run.log"
+        return p.stat().st_size if p.exists() else 0
+    except Exception:
+        return 0
+
+
 def _card_view(cid: str, light: bool = False) -> dict | None:
     try:
         events = B.load_journal(cid)      # 一份日志只读一次，重放也复用它
@@ -96,6 +104,7 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
         "id": cid,
         "title": st["title"],
         "state": st["state"],
+        "log_bytes": _log_bytes(cid),
         "holder": st["holder"],
         "engine": st["engine"],
         "model": st["model"],
@@ -466,6 +475,32 @@ def api_bulk(body):
     raise ValueError("action 只能是 run / cancel")
 
 
+def api_card_log(q):
+    """一点一点读某张卡的运行日志（界面在卡片里看实时输出）。
+
+    since＝已经拿到的字节数；返回新增部分 + 文件总长 + 是否还在跑。
+    文件被重写（新一轮开跑清空）时 size 会变小，前端据此清屏重来。
+    """
+    _switch(q.get("project", [None])[0])
+    cid = q.get("id", [None])[0]
+    if not cid:
+        raise ValueError("缺 id")
+    try:
+        since = int(q.get("since", ["0"])[0] or 0)
+    except ValueError:
+        since = 0
+    p = B.card_dir(cid) / "run.log"
+    if not p.exists():
+        return {"size": 0, "log": "", "running": False}
+    data = p.read_bytes()
+    if since > len(data):
+        since = 0
+    chunk = data[since:].decode("utf-8", "replace")
+    st = B.replay(cid)
+    return {"size": len(data), "log": chunk[-20000:],
+            "running": st["state"] in ("进行中", "核验中")}
+
+
 def api_run_log(q):
     if _run_log_path.exists():
         return {"running": _run_state["running"],
@@ -618,6 +653,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/state": api_state,
             "/api/cards": api_cards,
             "/api/card": api_card,
+            "/api/card/log": api_card_log,
             "/api/cost": api_cost,
             "/api/run/log": api_run_log,
             "/api/messages": api_messages,

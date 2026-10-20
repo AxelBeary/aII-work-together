@@ -49,9 +49,35 @@ def ts():
     return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z")
 
 
+_LOG_CTX = threading.local()      # 当前线程正在跑的卡（并行时每卡一个线程）
+
+
 def log(msg, kind="info"):
     mark = {"info": "·", "ok": "✓", "warn": "!", "err": "✗", "step": "→"}.get(kind, "·")
-    print(f"{mark} {msg}")
+    line = f"{mark} {msg}"
+    print(line)
+    # 同时写一份「这张卡的运行日志」：界面上不离开卡片就能看实时输出
+    # （⛔ 用线程局部变量：并行跑多卡时不能互相串行）
+    cid = getattr(_LOG_CTX, "cid", None)
+    if cid:
+        try:
+            f = B.card_dir(cid) / "run.log"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with f.open("a", encoding="utf-8") as fh:
+                fh.write(f"{datetime.now().strftime('%H:%M:%S')} {line}\n")
+        except Exception:
+            pass          # 日志写不进去不该把活干不成
+
+
+def open_card_log(cid: str):
+    """开始处理一张卡：切到它的日志上下文，并把上一次的日志清掉。"""
+    _LOG_CTX.cid = cid
+    try:
+        f = B.card_dir(cid) / "run.log"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("", encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _rework_context(cid: str) -> str:
@@ -236,6 +262,7 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
             consult_spec: str = None) -> str:
     """跑完一张卡的全流程。返回最终状态。"""
     card = B.get_card(cid)
+    open_card_log(cid)          # 之后的 log() 都会同时写进这张卡的 run.log
 
     # ---- 认领 ----
     if not dry:
@@ -648,6 +675,7 @@ def cmd_run(a):
             if a.dry_run:
                 break
 
+    _LOG_CTX.cid = None          # 汇总行不属于任何一张卡，别写进最后那张卡的日志
     print()
     log("=== 本轮汇总 ===", "step")
     for cid, oc in results:

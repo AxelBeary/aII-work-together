@@ -68,6 +68,10 @@ main{padding:18px 22px 60px}
 .search:focus{outline:none;border-color:#3b5b8a}
 .card .ago{font-size:11px;color:#6c7683;margin-left:6px;font-weight:400}
 .card .ago.stale{color:#c98b3a}
+/* 卡片详情里的实时输出 */
+.clog{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:10px;
+  font-size:11px;line-height:1.6;max-height:220px;overflow:auto;white-space:pre-wrap;
+  font-family:ui-monospace,Consolas,monospace;color:#b8c1cd;margin:6px 0 12px}
 .col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
   justify-content:space-between;color:#c8d0da}
@@ -174,6 +178,12 @@ body.term-on .toast{bottom:340px}
   <span class="sub" id="projinfo"></span>
   <div class="spacer"></div>
   <input id="search" class="search" placeholder="搜卡号 / 标题 / 目标" title="输入即过滤（Esc 清空）">
+  <select id="sort" class="search" style="width:118px" title="列内排序">
+    <option value="activity">按最近活动</option>
+    <option value="cost">按花费</option>
+    <option value="minutes">按时长</option>
+    <option value="id">按卡号</option>
+  </select>
   <button class="btn" id="btn-msg">留言<span class="badge" id="msg-badge"></span></button>
   <button class="btn" id="btn-term" title="Ctrl+` 开合">终端</button>
   <button class="btn" id="btn-refresh">刷新</button>
@@ -305,6 +315,7 @@ const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","�
 let CUR = {project:null, cards:[], state:null};
 let FILTER = null;            // 顶部状态筛选：null＝全部（只画有卡的列，见 render）
 let SEARCH = "";              // 搜卡关键词（卡号 / 标题 / 目标）
+let SORT = localStorage.getItem("board.sort") || "activity";   // 列内排序
 const SEL = new Set();        // 多选的卡号（批量跑 / 批量取消）
 
 function ago(ms){
@@ -326,6 +337,16 @@ function agoHtml(c){
 function matchesSearch(c, kw){
   if(!kw) return true;
   return (c.id + " " + (c.title || "") + " " + (c.goal || "")).toLowerCase().indexOf(kw) >= 0;
+}
+
+function sortList(list){
+  const c = list.slice();
+  const bg = x => x.budget || {};
+  if(SORT === "cost") c.sort((a,b) => (bg(b).cost||0) - (bg(a).cost||0));
+  else if(SORT === "minutes") c.sort((a,b) => (bg(b).minutes||0) - (bg(a).minutes||0));
+  else if(SORT === "id") c.sort((a,b) => String(a.id).localeCompare(String(b.id)));
+  else c.sort((a,b) => (b.last_at||0) - (a.last_at||0));
+  return c;
 }
 
 function updateSelBar(){
@@ -405,6 +426,9 @@ function cardHtml(c){
     if(bg.max_cost != null) parts.push(`$${bg.cost.toFixed(2)}/$${Number(bg.max_cost).toFixed(2)}`);
     if(bg.max_minutes != null) parts.push(`${bg.minutes}/${bg.max_minutes}分`);
     tags.push(`<span class="tag ${bg.over?'rw':'cost'}">${parts.join(" ")}</span>`);
+  } else if(bg.minutes > 0){
+    // 没设上限时也把时长露出来：按「时长」排序时不然看不出凭什么排的
+    tags.push(`<span class="tag">${bg.minutes} 分</span>`);
   }
   if(c.blocked_by && c.blocked_by.length) tags.push(`<span class="tag">依赖 ${c.blocked_by.length}</span>`);
   const cs = c.consult || {};
@@ -452,8 +476,8 @@ function render(cards){
     return;
   }
   $("board").innerHTML = cols.map(s => {
-    // 列内按「最后活动」倒序：正在动的卡浮上来，僵尸卡沉底（比按卡号排更贴近干活）
-    const list = (by[s]||[]).slice().sort((a,b) => (b.last_at||0) - (a.last_at||0));
+    // 列内排序：最近活动（默认）／花费／时长／卡号
+    const list = sortList(by[s]||[]);
     let inner = '<div class="empty">—</div>';
     if(list.length){
       inner = list.slice(0, CAP).map(cardHtml).join("");
@@ -547,6 +571,13 @@ async function openCard(id){
                 <span>${b} → ${a}</span></div>`;
       }).join("") + `</div>` : "";
 
+    const live = ["进行中", "核验中"].includes(c.state);
+    const hasLog = (c.log_bytes || 0) > 0;
+    const logHtml = (live || hasLog)
+      ? `<label>实时输出 <span style="font-weight:400;color:#6c7683">${
+           live ? "（正在跑，1.5 秒刷新）" : "（最后一轮的输出）"}</span></label>
+         <pre class="clog" id="c-log">—</pre>` : "";
+
     const events = (c.events||[]).map(e =>
       `<div class="ev"><b>${e.type}</b> <span style="color:#6c7683">${e.seq} · ${(e.at||"").slice(11,19)}</span>
         ${e.seat?` · ${esc(e.seat)}`:""}
@@ -557,8 +588,18 @@ async function openCard(id){
 
     $("c-body").innerHTML = `<dl class="kv">` +
       kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>
+      ${logHtml}
       ${diffHtml}
       <label>经过</label>${events || '<div class="empty">—</div>'}`;
+
+    // 实时输出：在卡片里直接看，不用另开窗口（跑的时候 1.5 秒刷一次）
+    cardLogId = (live || hasLog) ? c.id : null;
+    cardLogSize = 0;
+    if(cardLogTimer){ clearInterval(cardLogTimer); cardLogTimer = null; }
+    if(cardLogId){
+      pollCardLog();
+      if(live) cardLogTimer = setInterval(pollCardLog, 1500);
+    }
 
     const foot = [];
     if(c.state === "拍板中"){
@@ -602,6 +643,12 @@ $("proj").onchange = e => { CUR.project = e.target.value; startPoll(); refresh()
 $("search").oninput = e => { SEARCH = e.target.value || ""; render(CUR.cards || []); };
 $("search").onkeydown = e => {
   if(e.key === "Escape"){ SEARCH = ""; e.target.value = ""; render(CUR.cards || []); }
+};
+$("sort").value = SORT;
+$("sort").onchange = e => {
+  SORT = e.target.value || "activity";
+  localStorage.setItem("board.sort", SORT);
+  render(CUR.cards || []);
 };
 
 $("btn-create").onclick = async () => {
@@ -649,6 +696,32 @@ $("btn-run-start").onclick = async () => {
     pollRun();
   }catch(e){ toast(e.message, true); }
 };
+
+/* ---------- 实时输出（卡片详情里看，不用另开窗口）---------- */
+let cardLogTimer = null, cardLogSize = 0, cardLogId = null;
+
+async function pollCardLog(){
+  if(!cardLogId) return;
+  const el = $("c-log");
+  if(!el) return;
+  try{
+    const r = await api(`/api/card/log?project=${encodeURIComponent(projOf(cardLogId) || "")}` +
+                        `&id=${encodeURIComponent(cardLogId)}&since=${cardLogSize}`);
+    if(r.size < cardLogSize){ el.textContent = ""; cardLogSize = 0; }   // 新一轮把文件清空了
+    if(r.log){
+      if(el.textContent === "—") el.textContent = "";
+      el.textContent += r.log;
+      el.scrollTop = el.scrollHeight;
+    }
+    cardLogSize = r.size;
+    if(!r.running && cardLogTimer){ clearInterval(cardLogTimer); cardLogTimer = null; }
+  }catch(e){ /* 网络抖一下不打断看卡 */ }
+}
+
+dlgCard.addEventListener("close", () => {
+  if(cardLogTimer){ clearInterval(cardLogTimer); cardLogTimer = null; }
+  cardLogId = null;
+});
 
 /* ---------- 多选批量动作 ---------- */
 $("sel-clear").onclick = () => { SEL.clear(); render(CUR.cards || []); };

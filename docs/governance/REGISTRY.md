@@ -268,3 +268,12 @@
 | 性能基线（不做投机优化） | `tests/bench_scale.py` | 实测 | 20 项目×15 卡：首页 23ms／列表 5ms／详情 12ms，远低于 800ms 流畅线 |
 
 > 性能这条**没有改代码**：实测没有瓶颈，加缓存属投机优化（用户「没用的东西别做」）。
+
+### G · 卡内实时输出 ＋ 列内排序（2026-10-21，用户「这两个比较值得做」）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 每张卡一份运行日志（线程局部，不串卡） | `orchestrator._LOG_CTX` / `open_card_log`、`board/evidence/<卡>/run.log` | 已做 | 实跑 C2：8 行 357B，跑完最后两行是汇总且**没写进卡日志** |
+| 卡片详情里看实时输出（1.5s 增量轮询，跑完停） | `server.api_card_log`（`since` 字节增量）、`ui.html` `pollCardLog` | 已做 | t+4s：`size=105 running=true`；跑完：`size=357 running=false`；截图 `20261021-live-log.png` |
+| 列内排序（最近活动／花费／时长／卡号，记忆选择） | `ui.html` `SORT` / `sortList` / `#sort` | 已做 | 壳自检切三种排序：`opts:4 before:5 after:5 after2:5`（不丢卡） |
+| 卡面露出花费与时长 | `ui.html` 标签 | 已做 | 没设上限时也显示「0.3 分」，否则按花费/时长排序看不出凭据 |

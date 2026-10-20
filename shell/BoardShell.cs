@@ -1138,8 +1138,35 @@ namespace BoardShell
                             && after >= 1 && after <= before && back == before;
                 }
                 Say("search ok= " + okSearch);
+
+                // 排序：切换排序方式不能丢卡（列内排序，数量应不变）
+                string js4 = "(()=>{var sel=document.getElementById('sort');"
+                           + "if(!sel) return JSON.stringify({skip:true});"
+                           + "var before=document.querySelectorAll('.card').length;"
+                           + "sel.value='cost';sel.dispatchEvent(new Event('change'));"
+                           + "var after=document.querySelectorAll('.card').length;"
+                           + "sel.value='minutes';sel.dispatchEvent(new Event('change'));"
+                           + "var after2=document.querySelectorAll('.card').length;"
+                           + "sel.value='activity';sel.dispatchEvent(new Event('change'));"
+                           + "return JSON.stringify({opts:sel.options.length,before:before,after:after,after2:after2});})()";
+                var t4 = View.CoreWebView2.ExecuteScriptAsync(js4);
+                Pump(delegate { return t4.IsCompleted; }, 10000);
+                string norm4 = (t4.IsCompleted ? (t4.Result ?? "") : "")
+                    .Replace("\\\"", "\"").Replace("\\\\", "\\");
+                Say("sort   = " + norm4);
+                bool okSort = norm4.Contains("\"skip\":true");
+                if (!okSort)
+                {
+                    int opts = 0, b4 = 0, a4 = 0, a5 = 0;
+                    okSort = TryNum(norm4, "\"opts\":", ref opts)
+                          && TryNum(norm4, "\"before\":", ref b4)
+                          && TryNum(norm4, "\"after\":", ref a4)
+                          && TryNum(norm4, "\"after2\":", ref a5)
+                          && opts >= 4 && a4 == b4 && a5 == b4;
+                }
+                Say("sort ok= " + okSort);
                 bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt
-                         && okMulti && okSearch;
+                         && okMulti && okSearch && okSort;
                 Say(pass ? "SELFTEST PASS" : "SELFTEST FAIL");
                 return pass ? 0 : 2;
             }

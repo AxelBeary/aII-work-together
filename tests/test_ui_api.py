@@ -104,6 +104,20 @@ def main():
            isinstance(cards[0].get("last_at"), int) and cards[0]["last_at"] > 0,
            f"last_at={cards[0].get('last_at')}")
 
+        # 卡片里的实时输出：写一份 run.log，必须能读、也必须能按字节增量读
+        ev = PROJ / "board" / "evidence" / "D-001"
+        ev.mkdir(parents=True, exist_ok=True)
+        (ev / "run.log").write_text("第一行 认领\n第二行 调引擎\n", encoding="utf-8")
+        code, lg = call(f"/api/card/log?project={PROJ}&id=D-001&since=0")
+        ok("/api/card/log 能读运行日志",
+           code == 200 and "第一行" in (lg.get("log") or "") and lg.get("size", 0) > 0,
+           str(lg)[:70])
+        code, lg2 = call(f"/api/card/log?project={PROJ}&id=D-001&since=20")
+        ok("/api/card/log 支持增量（since 之后的新内容）",
+           code == 200 and "第一行 认领" not in (lg2.get("log") or "")
+           and lg2.get("size", 0) == lg.get("size", 0),
+           str(lg2)[:70])
+
         # 4 单卡详情带事件流
         code, one = call(f"/api/card?project={PROJ}&id=D-001")
         ok("/api/card 带经过（events）",
