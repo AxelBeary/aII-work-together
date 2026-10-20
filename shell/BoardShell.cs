@@ -1165,8 +1165,52 @@ namespace BoardShell
                           && opts >= 4 && a4 == b4 && a5 == b4;
                 }
                 Say("sort ok= " + okSort);
+
+                // 长字段折叠：纯函数单测（长文本必须有展开按钮，短文本必须没有）
+                string js5 = "(()=>{var L='x'.repeat(500);"
+                           + "var a=kvHtml('凭据',L), b=kvHtml('花费','$0.01');"
+                           + "return JSON.stringify({longBtn:a.indexOf('foldbtn')>=0,"
+                           + "longFull:a.indexOf('foldfull')>=0,"
+                           + "longPre:a.indexOf('foldpre')>=0,"
+                           + "shortNoBtn:b.indexOf('foldbtn')<0});})()";
+                var t5 = View.CoreWebView2.ExecuteScriptAsync(js5);
+                Pump(delegate { return t5.IsCompleted; }, 10000);
+                string norm5 = (t5.IsCompleted ? (t5.Result ?? "") : "")
+                    .Replace("\\\"", "\"").Replace("\\\\", "\\");
+                Say("fold   = " + norm5);
+                bool okFold = norm5.Contains("\"longBtn\":true")
+                           && norm5.Contains("\"longFull\":true")
+                           && norm5.Contains("\"longPre\":true")
+                           && norm5.Contains("\"shortNoBtn\":true");
+                Say("fold ok= " + okFold);
+
+                // 页面不许横向滚动（含**打开卡片详情时**——D-018 的初衷就是不靠拖动）
+                var tOpen = View.CoreWebView2.ExecuteScriptAsync(
+                    "var c=document.querySelector('.card'); if(c) openCard(c.dataset.id); 'ok'");
+                Pump(delegate { return tOpen.IsCompleted; }, 5000);
+                Thread.Sleep(900);           // 等 fetch 回来 + 弹窗渲染（渲染进程自己跑，不受 UI 线程影响）
+                string js6 = "(()=>{var W=document.documentElement.clientWidth,"
+                           + "S=document.documentElement.scrollWidth;"
+                           + "var wide=[...document.querySelectorAll('body *')]"
+                           + ".filter(e=>e.getBoundingClientRect().right>W+2).slice(0,4)"
+                           + ".map(e=>e.tagName+'#'+(e.id||'')+'.'+(e.className||'')"
+                           + "+'@'+Math.round(e.getBoundingClientRect().width));"
+                           + "var d=document.getElementById('dlg-card');"
+                           + "return JSON.stringify({W:W,S:S,"
+                           + "dlg:(d&&d.open)?Math.round(d.getBoundingClientRect().width):0,"
+                           + "dlgTop:(d&&d.open)?Math.round(d.getBoundingClientRect().top):-1,wide:wide});})()";
+                var t6 = View.CoreWebView2.ExecuteScriptAsync(js6);
+                Pump(delegate { return t6.IsCompleted; }, 10000);
+                string norm6 = (t6.IsCompleted ? (t6.Result ?? "") : "")
+                    .Replace("\\\"", "\"").Replace("\\\\", "\\");
+                Say("width  = " + norm6);
+                bool okWidth = false;
+                int vw = 0, sw = 0;
+                if (TryNum(norm6, "\"W\":", ref vw) && TryNum(norm6, "\"S\":", ref sw))
+                    okWidth = sw <= vw + 1;
+                Say("width ok= " + okWidth);
                 bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt
-                         && okMulti && okSearch && okSort;
+                         && okMulti && okSearch && okSort && okFold && okWidth;
                 Say(pass ? "SELFTEST PASS" : "SELFTEST FAIL");
                 return pass ? 0 : 2;
             }

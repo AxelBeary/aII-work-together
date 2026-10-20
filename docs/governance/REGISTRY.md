@@ -277,3 +277,5 @@
 | 卡片详情里看实时输出（1.5s 增量轮询，跑完停） | `server.api_card_log`（`since` 字节增量）、`ui.html` `pollCardLog` | 已做 | t+4s：`size=105 running=true`；跑完：`size=357 running=false`；截图 `20261021-live-log.png` |
 | 列内排序（最近活动／花费／时长／卡号，记忆选择） | `ui.html` `SORT` / `sortList` / `#sort` | 已做 | 壳自检切三种排序：`opts:4 before:5 after:5 after2:5`（不丢卡） |
 | 卡面露出花费与时长 | `ui.html` 标签 | 已做 | 没设上限时也显示「0.3 分」，否则按花费/时长排序看不出凭据 |
+| 长字段折叠（凭据 619 字 → 3 行 + 展开按钮） | `ui.html` `kvHtml` / `.foldbtn` | 已做 | 壳自检：`longBtn:true longFull:true shortNoBtn:true`；截图 `20261021-fold.png` |
+| 窄窗口标题栏换行（加排序框后 892px 会挤） | `ui.html` `header{flex-wrap:wrap}` | 已做 | 自检新增「页面不许横向滚动」断言（含打开详情时）：`W:892 S:892` |

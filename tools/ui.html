@@ -25,9 +25,9 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .btn-err{background:#5f1d1d;color:#ffd0d0}
 .btn-err:hover:not(:disabled){background:#7a2626}
 header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);
-  background:var(--panel);position:sticky;top:0;z-index:10;flex-wrap:nowrap}
-#proj{max-width:220px}
-#projinfo{max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  background:var(--panel);position:sticky;top:0;z-index:10;flex-wrap:wrap;row-gap:8px}
+#proj{max-width:200px}
+#projinfo{max-width:26vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 header button{padding:8px 14px;white-space:nowrap}
 h1{font-size:16px;font-weight:600}
 .sub{color:var(--mut);font-size:12px}
@@ -72,6 +72,11 @@ main{padding:18px 22px 60px}
 .clog{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:10px;
   font-size:11px;line-height:1.6;max-height:220px;overflow:auto;white-space:pre-wrap;
   font-family:ui-monospace,Consolas,monospace;color:#b8c1cd;margin:6px 0 12px}
+/* 长字段折叠（凭据动辄几百字，默认收起才看得见下面的东西） */
+.foldbtn{margin-left:8px;background:#1d2530;border:1px solid #2f3a48;color:#9fb8e0;
+  border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit;
+  vertical-align:baseline}
+.foldbtn:hover{border-color:#3b5b8a;color:#cfe0ff}
 .col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
   justify-content:space-between;color:#c8d0da}
@@ -449,6 +454,15 @@ function cardHtml(c){
 
 function esc(s){ return String(s??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
 
+// 长字段（凭据/目标/阻塞原因）先折叠：一整段凭据会把实时输出挤到折叠线以下
+function kvHtml(k, v){
+  const t = String(v ?? "");
+  if(t.length <= 140) return `<dt>${k}</dt><dd>${esc(t)}</dd>`;
+  return `<dt>${k}</dt><dd><span class="foldpre">${esc(t.slice(0,110))}…</span>` +
+         `<span class="foldfull" style="display:none">${esc(t)}</span>` +
+         `<button class="foldbtn" type="button" title="展开/收起">展开全文 ${t.length} 字</button></dd>`;
+}
+
 function render(cards){
   const CAP = 60;              // 每列最多画这么多张，几十个项目时不至于把浏览器卡死
   const kw = (SEARCH || "").trim().toLowerCase();
@@ -587,10 +601,22 @@ async function openCard(id){
       </div>`).join("");
 
     $("c-body").innerHTML = `<dl class="kv">` +
-      kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>
+      kv.map(([k,v])=>kvHtml(k,v)).join("") + `</dl>
       ${logHtml}
       ${diffHtml}
       <label>经过</label>${events || '<div class="empty">—</div>'}`;
+
+    // 长字段展开/收起（默认收起：凭据一整段，会把下面的实时输出挤出视野）
+    document.querySelectorAll(".foldbtn").forEach(b => {
+      b.onclick = () => {
+        const dd = b.parentElement;
+        const pre = dd.querySelector(".foldpre"), full = dd.querySelector(".foldfull");
+        const opened = full.style.display !== "none";
+        full.style.display = opened ? "none" : "inline";
+        pre.style.display = opened ? "inline" : "none";
+        b.textContent = opened ? `展开全文 ${full.textContent.length} 字` : "收起";
+      };
+    });
 
     // 实时输出：在卡片里直接看，不用另开窗口（跑的时候 1.5 秒刷一次）
     cardLogId = (live || hasLog) ? c.id : null;
