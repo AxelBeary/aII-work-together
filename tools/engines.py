@@ -101,6 +101,67 @@ def available() -> dict:
     return out
 
 
+def classify(reason: str, exit_code=None) -> dict:
+    """把失败原因分成「可重试」和「不可重试」两类（B3）。
+
+    为什么需要分：以前所有失败都走同一条路——直接 block 等人看。
+    限流/网络抖动这类**等一会儿就好**的失败，把人叫起来是白叫；
+    而鉴权/参数错这类**再试一百次也一样**的失败，自动重试只是烧钱。
+    分类只依据引擎回执的文字与退出码；判不准就返回 unknown，
+    ⛔ 不许把 unknown 当 retryable 硬重试（那会把确定性失败变成烧钱循环）。
+    """
+    s = (reason or "").lower()
+    if exit_code in (401, 403):
+        return {"class": "fatal", "hint": "鉴权失败（换钥匙/重新登录），重试无用"}
+    if exit_code in (429, 502, 503, 504, 529):
+        return {"class": "retryable", "hint": "上游限流/过载，退避后重试"}
+    FATAL = (
+        ("未安装", "引擎没装或不在 PATH"),
+        ("未知引擎", "引擎名写错了"),
+        ("api key", "钥匙无效或没配"),
+        ("unauthorized", "鉴权失败"),
+        ("not logged in", "没登录"),
+        ("未登录", "没登录"),
+        ("invalid model", "模型名无效"),
+        ("model not found", "模型不存在"),
+        ("does not exist", "模型/文件不存在"),
+        ("context length", "上下文超长，得缩提示或换模型"),
+        ("too long", "输入太长"),
+        ("token limit", "超出模型 token 上限"),
+        ("400", "请求参数被上游拒了（多半是参数/格式错）"),
+    )
+    RETRY = (
+        ("超时", "跑太久被本地超时掐断"),
+        ("timeout", "跑太久被本地超时掐断"),
+        ("timed out", "跑太久被本地超时掐断"),
+        ("429", "上游限流"),
+        ("rate limit", "上游限流"),
+        ("rate_limit", "上游限流"),
+        ("502", "上游网关错"),
+        ("503", "上游不可用"),
+        ("504", "上游网关超时"),
+        ("529", "上游过载"),
+        ("overloaded", "上游过载"),
+        ("connection", "网络连接断了"),
+        ("econnreset", "网络连接被重置"),
+        ("econnrefused", "连不上"),
+        ("etimedout", "网络超时"),
+        ("network", "网络问题"),
+        ("fetch failed", "网络请求失败"),
+        ("socket", "网络套接字错"),
+        ("temporar", "临时故障"),
+        ("空回包", "上游返回空"),
+        ("empty response", "上游返回空"),
+    )
+    for k, hint in FATAL:
+        if k in s:
+            return {"class": "fatal", "hint": hint}
+    for k, hint in RETRY:
+        if k in s:
+            return {"class": "retryable", "hint": hint}
+    return {"class": "unknown", "hint": "判不准；按不可重试处理（⛔ 不盲试）"}
+
+
 def _exec(cmd, cwd, timeout, stdin_text=None):
     """执行命令。
 

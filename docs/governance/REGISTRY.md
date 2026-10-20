@@ -218,3 +218,18 @@
 | 壳的「后端旧版」告警 | `shell/BoardShell.cs`（正则解析 + 解析失败报未知） | 已修 | 编译过、`--selftest` PASS |
 
 坑记 **E-34**。规模：闸门 **14 道**、`tools/`＋`tests/` 共 **29** 个 py 文件。
+
+### B 批 · 预算 / 错误分级 / 依赖 / 拍板 diff / 提醒（2026-10-20 第三段，D-016／D-017）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 单卡预算与时长上限（P0） | `storage.py` 三列（老库自动补列）、`board.budget_status`、`orchestrator` 四处刹车 | 已做 | 超预算 `$0.7500/$0.50` 认领被拒；超时长 11/10 分钟被拒；没超的卡能认领 |
+| 放宽只能人 | `cli.cmd_budget`（`--seat human`） | 已做 | 执行席放宽 → 退出码 1；human 放宽 → 0；收款收紧执行席可以做 |
+| 错误分级 | `engines.classify`（9 类样本）、`orchestrator.run_engine_guarded` | 已做 | 可重试试 3 次成功；不可重试 1 次停；unknown 1 次停 |
+| 卡间依赖 | `storage` `blocked_by` 列、`board.withholding`、编排器 `pick` 跳过 | 已做 | 依赖未完成认领被拒；编排器「跳过 CDN-1」且不处理 |
+| 拍板 diff | `board.diff_vs_baseline`＋认领时 `baseline` 快照；`board show`／详情页 | 已做 | 详情页「这次改了什么 27B → 169B」 |
+| 提醒 | `server.api_alert`（纯文本行）、壳 `WatchCards`＋`--notify-test`＋任务栏闪烁 | 已做 | 气泡实测弹出；`needs=C1\|failed=C3` |
+| 新闸 | `tests/test_budget_deps.py`（6 组 24 条） | PASS | 闸门 14 → **15**；子命令 27 → **28** |
+| 界面 | 新建对话框预算两栏、卡片预算/依赖标签、diff 列表、深链接 `?open=`／`?new=1` | 已做 | `board/shots/20261020-b2-list.png`、`-card.png`、`-new.png` |
+
+坑记 **E-35**。规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件。

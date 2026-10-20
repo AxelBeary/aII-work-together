@@ -62,13 +62,13 @@ main{padding:18px 22px 60px}
 .tag.proj{background:#2c2450;color:#c4b5fd}
 .empty{color:#39414d;text-align:center;padding:14px;font-size:12px}
 dialog{border:none;border-radius:14px;background:var(--panel);color:var(--fg);
-  padding:0;width:min(680px,92vw);max-height:88vh;box-shadow:0 20px 60px #000a}
+  padding:0;width:min(680px,92vw);max-height:92vh;box-shadow:0 20px 60px #000a}
 dialog::backdrop{background:#000b}
 .dhead{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
-.dbody{padding:18px 20px;overflow:auto;max-height:calc(88vh - 130px)}
+.dbody{padding:16px 20px;overflow:auto;max-height:calc(92vh - 128px)}
 .dfoot{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end;
   flex-wrap:wrap}
-label{display:block;font-size:12px;color:var(--mut);margin:14px 0 6px}
+label{display:block;font-size:12px;color:var(--mut);margin:12px 0 5px}
 label:first-child{margin-top:0}
 .row{display:flex;gap:10px}
 .row>*{flex:1}
@@ -77,6 +77,17 @@ label:first-child{margin-top:0}
 .kv dd{word-break:break-word}
 .ev{font-size:12px;border-left:2px solid var(--line);padding:4px 0 4px 12px;margin:8px 0;color:#b8c1cd}
 .ev b{color:var(--fg)}
+/* 拍板 diff（B4）：一行一个交付物，颜色区分「新增/改了/没动/没了」 */
+.difflist{margin:6px 0 14px}
+.diffrow{display:flex;gap:10px;align-items:baseline;font-size:12px;padding:4px 8px;
+  border-left:2px solid var(--line);margin:4px 0}
+.diffrow b{min-width:34px}
+.diffrow code{color:#c9d4e0}
+.diffrow span{margin-left:auto;color:var(--mut);font-variant-numeric:tabular-nums}
+.diffrow.ok{border-left-color:#2f7d4f}
+.diffrow.chg{border-left-color:#b98a2a}
+.diffrow.bad{border-left-color:#8c3232}
+.diffrow.same{opacity:.55}
 .toast{position:fixed;right:20px;bottom:20px;background:#1f2731;border:1px solid var(--line);
   border-radius:10px;padding:12px 18px;box-shadow:0 10px 30px #000a;opacity:0;transform:translateY(10px);
   transition:.2s;max-width:420px;z-index:99}
@@ -155,7 +166,7 @@ body.term-on .toast{bottom:340px}
     <label>标题（一句话说做什么）</label>
     <input id="f-title" placeholder="例：给 README 加常见问题" style="width:100%">
     <label>目标（什么样算做完）</label>
-    <textarea id="f-goal" placeholder="例：回答三个新手问题，每条不超过两句"></textarea>
+    <textarea id="f-goal" rows="2" style="height:66px" placeholder="例：回答三个新手问题，每条不超过两句"></textarea>
     <div class="row">
       <div><label>产出文件路径</label><input id="f-deliv" placeholder="board/artifacts/xxx.md" style="width:100%"></div>
       <div><label>必须包含的字眼</label><input id="f-accept" placeholder="例：常见问题" style="width:100%"></div>
@@ -167,6 +178,10 @@ body.term-on .toast{bottom:340px}
       <div><label>思考强度</label><select id="f-effort" style="width:100%">
         <option value="">默认</option><option>low</option><option>medium</option>
         <option>high</option><option>max</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>花费上限（美元，留空=不限）</label><input id="f-maxcost" placeholder="例：2.0" style="width:100%"></div>
+      <div><label>时长上限（分钟，留空=不限）</label><input id="f-maxmin" placeholder="例：40" style="width:100%"></div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:16px">
       <input type="checkbox" id="f-gate" style="width:auto" checked>
@@ -315,6 +330,15 @@ function cardHtml(c){
   if(c.rework) tags.push(`<span class="tag rw">返工 ${c.rework}</span>`);
   if(c.created_kind==="agent") tags.push(`<span class="tag ai">AI 发布</span>`);
   if(c.usage && c.usage.available) tags.push(`<span class="tag cost">$${c.usage.cost.toFixed(4)}</span>`);
+  // 预算：有上限才显示（没设上限的卡不占地方）
+  const bg = c.budget || {};
+  if(bg.max_cost != null || bg.max_minutes != null){
+    const parts = [];
+    if(bg.max_cost != null) parts.push(`$${bg.cost.toFixed(2)}/$${Number(bg.max_cost).toFixed(2)}`);
+    if(bg.max_minutes != null) parts.push(`${bg.minutes}/${bg.max_minutes}分`);
+    tags.push(`<span class="tag ${bg.over?'rw':'cost'}">${parts.join(" ")}</span>`);
+  }
+  if(c.blocked_by && c.blocked_by.length) tags.push(`<span class="tag">依赖 ${c.blocked_by.length}</span>`);
   const cs = c.consult || {};
   if(cs.seats && cs.seats.length) tags.push(`<span class="tag">评审 ${cs.seats.length}</span>`);
   if(cs.unfixed > 0) tags.push(`<span class="tag rw">未改 ${cs.unfixed}</span>`);
@@ -400,7 +424,26 @@ async function openCard(id){
     if(c.gate_problems && c.gate_problems.length) kv.push(["未过项", c.gate_problems.join("；")]);
     if(c.usage && c.usage.available)
       kv.push(["花费", `$${c.usage.cost.toFixed(4)}（入 ${c.usage.input} / 出 ${c.usage.output} / 缓存 ${c.usage.cache_read+c.usage.cache_write}）`]);
+    const bg = c.budget || {};
+    if(bg.max_cost != null || bg.max_minutes != null){
+      const lim = [];
+      if(bg.max_cost != null) lim.push(`$${Number(bg.max_cost).toFixed(2)}`);
+      if(bg.max_minutes != null) lim.push(`${bg.max_minutes} 分钟`);
+      kv.push(["预算", `${bg.over?"⚠ 已超：":""}$${bg.cost.toFixed(4)} / ${bg.minutes} 分钟（上限 ${lim.join(" / ")}）`]);
+    }
+    if(c.blocked_by && c.blocked_by.length) kv.push(["依赖", c.blocked_by.join("、")]);
     if(c.blocked_reason) kv.push(["阻塞", c.blocked_reason]);
+
+    // B4：认领前 → 现在（人不用自己跑 git diff）
+    const diff = c.diff || [];
+    const diffHtml = diff.length ? `<label>这次改了什么</label><div class="difflist">` +
+      diff.map(d => {
+        const cls = {"新增":"ok","改了":"chg","没动":"same","没了":"bad","缺件":"bad","新件":"ok"}[d.status] || "same";
+        const b = d.before.exists ? `${d.before.bytes}B` : "-";
+        const a = d.after.exists ? `${d.after.bytes}B` : "-";
+        return `<div class="diffrow ${cls}"><b>${esc(d.status)}</b> <code>${esc(d.path)}</code>
+                <span>${b} → ${a}</span></div>`;
+      }).join("") + `</div>` : "";
 
     const events = (c.events||[]).map(e =>
       `<div class="ev"><b>${e.type}</b> <span style="color:#6c7683">${e.seq} · ${(e.at||"").slice(11,19)}</span>
@@ -412,6 +455,7 @@ async function openCard(id){
 
     $("c-body").innerHTML = `<dl class="kv">` +
       kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>
+      ${diffHtml}
       <label>经过</label>${events || '<div class="empty">—</div>'}`;
 
     const foot = [];
@@ -465,6 +509,8 @@ $("btn-create").onclick = async () => {
     engine: $("f-engine").value || undefined,
     model: $("f-model").value || undefined,
     effort: $("f-effort").value || undefined,
+    max_cost_usd: $("f-maxcost").value || undefined,
+    max_minutes: $("f-maxmin").value || undefined,
   };
   try{
     const r = await api("/api/card", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -646,6 +692,12 @@ pollBadge();
 if(location.search.indexOf("term=1") >= 0) termToggle(true);
 const demoCmd = (location.search.match(/[?&]cmd=([^&]+)/) || [])[1];
 if(demoCmd) termRun(decodeURIComponent(demoCmd.replace(/\+/g, " ")));
+
+// 深链接：?open=<卡号> 直接打开那张卡的详情（"你看下 C123" 甩个链接就能点到同一个界面）
+//   ?new=1 直接弹出新建对话框（截图/演示也靠它，省得用鼠标点）
+const openId = (location.search.match(/[?&]open=([^&]+)/) || [])[1];
+if(openId) refresh().then(() => openCard(decodeURIComponent(openId)));
+if(location.search.indexOf("new=1") >= 0) setTimeout(() => dlgNew.showModal(), 300);
 </script>
 </body>
 </html>

@@ -20,6 +20,7 @@
 // ⚠️ C# 5（csc 4.0.30319）：⛔ 不要用插值字符串 / nameof / 表达式体成员。
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -49,6 +50,21 @@ namespace BoardShell
         static extern IntPtr GetForegroundWindow();
         [DllImport("kernel32.dll")]
         static extern bool AttachConsole(int dwProcessId);
+
+        // 任务栏闪烁（B2：窗口最小化/收进托盘时，光弹气泡不够——气泡会被专注助手吞掉）
+        [StructLayout(LayoutKind.Sequential)]
+        struct FlashInfo
+        {
+            public uint cbSize;
+            public IntPtr hwnd;
+            public uint dwFlags;
+            public uint uCount;
+            public uint dwTimeout;
+        }
+        [DllImport("user32.dll")]
+        static extern bool FlashWindowEx(ref FlashInfo fi);
+        const uint FLASHW_ALL = 3;
+        const uint FLASHW_TIMERNOFG = 12;
 
         // 让后端「跟着壳一起死」：壳被强杀（任务管理器/卡死）时，子进程不会变孤儿占着 8777。
         // 靠 Job Object 的 KILL_ON_JOB_CLOSE，比在退出路径里 Kill() 靠谱（崩了也有兜底）。
@@ -193,17 +209,20 @@ namespace BoardShell
                 else if (a.StartsWith("--url=")) Url = a.Substring(6);
                 else if (a == "--devtools") DevTools = true;
                 else if (a == "--selftest") mode = "selftest";
+                else if (a == "--notify-test") mode = "notifytest";
                 else if (a == "--visible") ShotVisible = true;
                 else if (a.StartsWith("--shot=")) { ShotPath = a.Substring(7); }
             }
             if (Url == null) Url = "http://127.0.0.1:" + Port + "/";
             try { Directory.CreateDirectory(Path.GetDirectoryName(LogFile)); } catch { }
 
-            if (mode == "selftest" || ShotPath != null) AttachConsole(-1);   // 挂到父控制台，自检输出能看见
+            if (mode == "selftest" || ShotPath != null || mode == "notifytest")
+                AttachConsole(-1);   // 挂到父控制台，自检输出能看见
             try { Console.OutputEncoding = Encoding.UTF8; } catch { }
 
             if (mode == "selftest") return SelfTest();
             if (ShotPath != null) return TakeShot();
+            if (mode == "notifytest") return NotifyTest();
 
             // ---------- 单实例：第二次启动只把已有的窗口叫回来 ----------
             bool created;
@@ -227,6 +246,7 @@ namespace BoardShell
             BuildWindow();
             BuildTray();
             WatchWake();
+            WatchCards();          // B2：拍板中新增 / 卡住 → 气泡 + 任务栏闪烁
             Application.Run(Win);
 
             StopServerIfOwned();
@@ -637,6 +657,151 @@ namespace BoardShell
                 Tray.ShowBalloonTip(2500);
             }
             catch { }
+        }
+
+        // ---------- 提醒（B2：只推「需要你」和「失败」，⛔ 跑完了没待拍板不推）----------
+
+        static readonly HashSet<string> SeenNeeds = new HashSet<string>();
+        static readonly HashSet<string> SeenFailed = new HashSet<string>();
+        static bool AlertPrimed;      // 首次轮询只记基线：一开窗口就炸一串旧气泡＝噪音
+
+        static void WatchCards()
+        {
+            var t = new Thread(delegate ()
+            {
+                while (true)
+                {
+                    try
+                    {
+                        if (Win == null || !_serverReady) { Thread.Sleep(3000); continue; }
+                        string line = Http.GetStringAsync("http://127.0.0.1:" + Port + "/api/alert").Result;
+                        var w = Win;
+                        if (w != null && !w.IsDisposed)
+                            w.BeginInvoke((MethodInvoker)delegate { HandleAlert(line); });
+                    }
+                    catch { }
+                    Thread.Sleep(20000);      // 20 秒一轮：够快，又不至于把后端敲疼
+                }
+            });
+            t.IsBackground = true;
+            t.Name = "alerts";
+            t.Start();
+        }
+
+        static List<string> PickNew(string csv, HashSet<string> seen)
+        {
+            var fresh = new List<string>();
+            if (csv == null) return fresh;
+            foreach (var raw in csv.Split(new char[] { ',' }))
+            {
+                var x = raw.Trim();
+                if (x.Length == 0) continue;
+                if (seen.Add(x)) fresh.Add(x);
+            }
+            return fresh;
+        }
+
+        static string JoinUp(List<string> items)
+        {
+            var sb = new StringBuilder();
+            int n = 0;
+            foreach (var x in items)
+            {
+                if (n >= 3) break;
+                if (n > 0) sb.Append("、");
+                sb.Append(x);
+                n++;
+            }
+            if (items.Count > 3) sb.Append(" 等 " + items.Count + " 张");
+            return sb.ToString();
+        }
+
+        static void HandleAlert(string line)
+        {
+            // 格式：needs=C1,C2|failed=C3（server.api_alert 产出；壳不做 JSON 解析）
+            string needs = "", failed = "";
+            foreach (var part in (line ?? "").Split(new char[] { '|' }))
+            {
+                int eq = part.IndexOf('=');
+                if (eq < 0) continue;
+                var k = part.Substring(0, eq).Trim();
+                var v = part.Substring(eq + 1).Trim();
+                if (k == "needs") needs = v;
+                else if (k == "failed") failed = v;
+            }
+            var newNeeds = PickNew(needs, SeenNeeds);
+            var newFailed = PickNew(failed, SeenFailed);
+            if (!AlertPrimed)
+            {
+                AlertPrimed = true;
+                Log("alert primed needs=" + needs + " failed=" + failed);
+                return;
+            }
+            if (newNeeds.Count == 0 && newFailed.Count == 0) return;
+
+            string title, text;
+            if (newNeeds.Count > 0)
+            {
+                title = "需要你拍板";
+                text = JoinUp(newNeeds);
+                if (newFailed.Count > 0) text += "；另有 " + newFailed.Count + " 张卡住";
+            }
+            else
+            {
+                title = "有卡卡住了";
+                text = JoinUp(newFailed) + "（引擎失败/超预算/返工到顶）";
+            }
+            Balloon(title, text);
+            FlashTaskbar();
+            Log("alert " + title + "：" + text);
+        }
+
+        static void FlashTaskbar()
+        {
+            try
+            {
+                if (Win == null) return;
+                if (GetForegroundWindow() == Win.Handle) return;   // 已经在前台就别闪
+                var fi = new FlashInfo();
+                fi.cbSize = (uint)Marshal.SizeOf(typeof(FlashInfo));
+                fi.hwnd = Win.Handle;
+                fi.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+                fi.uCount = 3;
+                fi.dwTimeout = 0;
+                FlashWindowEx(ref fi);
+            }
+            catch { }
+        }
+
+        // 人眼验收用：真的弹一次气泡 + 闪任务栏（需要用户同意桌面可见，见 AGENTS.md §10）
+        static int NotifyTest()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            BuildTray();
+            BuildWindow(true);
+            var t1 = new System.Windows.Forms.Timer();
+            t1.Interval = 800;
+            t1.Tick += delegate
+            {
+                t1.Stop();
+                Balloon("需要你拍板", "C1020-test 在等你（这是一次测试提醒）");
+                FlashTaskbar();
+                Say("balloon shown at +" + Elapsed() + "ms");
+            };
+            t1.Start();
+            var t2 = new System.Windows.Forms.Timer();
+            t2.Interval = 6000;
+            t2.Tick += delegate
+            {
+                t2.Stop();
+                Say("notify-test done");
+                Application.Exit();
+            };
+            t2.Start();
+            Application.Run(Win);
+            try { if (Tray != null) { Tray.Visible = false; Tray.Dispose(); } } catch { }
+            return 0;
         }
 
         static void Restore()

@@ -165,6 +165,72 @@ def parse_review(text: str) -> tuple:
     return verdict, evidence, reason
 
 
+# ---------- B 批：预算 / 错误分级 / 依赖 ----------
+
+RETRY_DELAYS = (5, 15)      # 可重试类失败的退避（秒）；测试里可替换成 (0, 0)
+
+
+def run_engine_guarded(engine, prompt, cwd, model, effort, timeout,
+                       cid=None, seat=None, phase="run", max_retries=2):
+    """调引擎，按「可重试 / 不可重试」分级处理。返回 (Result, cls)。
+
+    ⚠️ 只对**可重试**类（限流/超时/网络）自动重试。
+       不可重试（鉴权/参数/模型不存在）与 unknown 一律立即返回交给上层判阻塞——
+       自动重试一个确定性失败只是烧钱，而且会把「配置错了」伪装成「上游不稳」。
+    """
+    attempt = 0
+    while True:
+        res = E.run(engine, prompt, cwd=cwd, model=model, effort=effort,
+                    timeout=timeout)
+        if res.ok:
+            return res, {"class": "ok"}
+        cls = E.classify(res.reason, res.exit_code)
+        if cid:
+            B.append_event(cid, {
+                "type": "engine_error", "actor": "system", "seat": seat or "system",
+                "phase": phase, "class": cls["class"], "hint": cls["hint"],
+                "reason": (res.reason or "")[:300], "attempt": attempt + 1,
+                "timeout_s": timeout})
+        if cls["class"] != "retryable" or attempt >= max_retries:
+            return res, cls
+        delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+        log(f"{phase}：{engine} 失败（{cls['hint']}）→ {delay}s 后重试"
+            f"（第 {attempt + 1}/{max_retries} 次）", "warn")
+        if delay:
+            time.sleep(delay)
+        attempt += 1
+
+
+def budget_stop(cid: str, card: dict, where: str) -> str:
+    """预算/时长超限就停手并转阻塞。返回阻塞原因（没超返回 ""）。
+
+    ⚠️ 两条硬要求（D-016 验收口径）：
+       1. 必须**停手**，⛔ 不许「再跑一轮就差不多了」；
+       2. 必须把花了多少/上限多少写进事件与阻塞原因 —— 人要能一眼看出该放宽还是该拆卡。
+    """
+    b = B.budget_status(cid, card)
+    if not b["over"]:
+        return ""
+    detail = "；".join(b["reasons"])
+    reason = f"超预算：{detail}（在「{where}」环节停手）"
+    B.append_event(cid, {"type": "budget", "actor": "system", "seat": "system",
+                         "cost": b["cost"], "minutes": b["minutes"],
+                         "max_cost": b["max_cost"], "max_minutes": b["max_minutes"],
+                         "where": where})
+    B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
+                         "reason": reason[:300]})
+    return reason
+
+
+def remaining_timeout(cid: str, card: dict) -> int:
+    """这次引擎调用最多能跑多少秒：不超过 1800，也不超过剩余预算。"""
+    b = B.budget_status(cid, card)
+    if b["max_minutes"] is None:
+        return 1800
+    left = float(b["max_minutes"]) * 60 - b["minutes"] * 60
+    return int(max(30, min(1800, left)))
+
+
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
             dry: bool = False, panel: list = None, use_worktree: bool = False,
             consult_spec: str = None) -> str:
@@ -186,6 +252,14 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     if dry:
         log(f"[dry] 会给 {engine} 发 {len(prompt)} 字符的提示", "step")
         return "dry"
+
+    # 开工前再看一眼预算：认领里已经拦过一次，这里防「认领后、开跑前」被别处改小
+    if not dry:
+        why = budget_stop(cid, card, "开工前")
+        if why:
+            B.release(cid)
+            log(why, "err")
+            return "budget-exceeded"
 
     # 并行模式：在独立 worktree 里跑，避免踩别人的文件
     # 工作区：项目注册表里设的 workspace（默认＝项目根）
@@ -216,7 +290,9 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     hb_thread.start()
     t0 = time.time()
     try:
-        res = E.run(engine, prompt, cwd=work_dir, model=model, effort=effort)
+        res, cls = run_engine_guarded(
+            engine, prompt, work_dir, model, effort,
+            remaining_timeout(cid, card), cid=cid, seat=seat, phase="执行")
     finally:
         hb_stop.set()
     dur = time.time() - t0
@@ -254,11 +330,22 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     else:
         log("用量：引擎未报告（标未知）", "warn")
 
+    # 跑完立刻算账：超了就不许再提交（D-016：超限必须停手并转阻塞）
+    if not dry:
+        why = budget_stop(cid, card, "执行后")
+        if why:
+            B.release(cid)
+            log(why, "err")
+            return "budget-exceeded"
+
     if not res.ok:
+        hint = cls.get("hint") or "未分类"
+        tail = "（可重试类已自动重试过）" if cls.get("class") == "retryable" else ""
+        reason = f"引擎失败[{cls.get('class', 'unknown')}]：{res.reason}｜{hint}{tail}"
         B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
-                             "reason": f"引擎失败：{res.reason}"[:300]})
+                             "reason": reason[:300]})
         B.release(cid)
-        log(f"引擎未正常结束：{res.reason[:120]}", "err")
+        log(f"引擎未正常结束：{reason[:160]}", "err")
         return "engine-failed"
 
     # ---- 点对点评审（可选）：B 初稿 → B1/B2 独立提意见 → B 自己改一轮 ----
@@ -303,7 +390,10 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
                 )
                 t1 = time.time()
                 try:
-                    r2 = E.run(engine, fix_prompt, cwd=work_dir, model=model, effort=effort)
+                    r2, cls2 = run_engine_guarded(
+                        engine, fix_prompt, work_dir, model, effort,
+                        remaining_timeout(cid, card), cid=cid, seat=seat,
+                        phase="评审后修改")
                     log(f"修改轮 ok={r2.ok} 用时 {time.time() - t1:.0f}s",
                         "ok" if r2.ok else "err")
                     B.append_event(cid, {"type": "usage", "seat": seat, "engine": engine,
@@ -354,11 +444,16 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"派专家团复核（{'/'.join(panel)}）…", "step")
         votes = []
         for ex in panel:
-            res_i = E.run(engine, experts.build_prompt(ex, rprompt),
-                          cwd=work_dir, model=model, effort=effort)
+            res_i, cls_i = run_engine_guarded(
+                engine, experts.build_prompt(ex, rprompt), work_dir, model, effort,
+                remaining_timeout(cid, card), cid=cid, seat=rseat, phase=f"复核-{ex}")
             (ev_dir / f"panel__{ex}__{uuid.uuid4().hex[:6]}.json").write_text(
                 json.dumps(res_i.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8")
+            B.append_event(cid, {"type": "usage", "seat": rseat, "engine": engine,
+                                 "model": res_i.model_used or model,
+                                 "usage": res_i.usage, "phase": f"panel-{ex}",
+                                 "duration_ms": res_i.duration_ms})
             v, evd, rsn = parse_review(res_i.text) if res_i.ok else ("fail", "", res_i.reason)
             votes.append({"expert": ex, "ok": res_i.ok, "verdict": v,
                           "evidence": evd, "reason": rsn})
@@ -374,12 +469,19 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"派复核席 {rseat} 独立核验…", "step")
         # ⚠️ 必须用这张卡的工作区，不是脚本所在项目：
         # 复核席跑错目录会找不到交付物，然后自己去整盘搜（实测把 C: 和 E: 全扫了一遍）
-        rres = E.run(engine, rprompt, cwd=work_dir, model=model, effort=effort)
+        rres, rcls = run_engine_guarded(
+            engine, rprompt, work_dir, model, effort, remaining_timeout(cid, card),
+            cid=cid, seat=rseat, phase="复核")
         (ev_dir / f"review__{rseat}__{uuid.uuid4().hex[:6]}.json").write_text(
             json.dumps(rres.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        B.append_event(cid, {"type": "usage", "seat": rseat, "engine": engine,
+                             "model": rres.model_used or model,
+                             "usage": rres.usage, "phase": "review",
+                             "duration_ms": rres.duration_ms})
         if not rres.ok:
             B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
-                                 "reason": f"复核引擎失败：{rres.reason}"[:300]})
+                                 "reason": (f"复核引擎失败[{rcls.get('class')}]："
+                                            f"{rres.reason}")[:300]})
             B.release(cid)
             log(f"复核引擎失败：{rres.reason[:120]}", "err")
             return "review-engine-failed"
@@ -468,9 +570,14 @@ def cmd_run(a):
         log(f"收信箱读不了（不挡干活）：{e}", "warn")
 
     results = []
+    skipped = {}          # 卡号 → 跳过原因（每张只报一次，⛔ 别每轮刷屏）
 
     def pick(limit):
-        """挑最多 limit 张能接的卡（精确匹配优先）。"""
+        """挑最多 limit 张能接的卡（精确匹配优先）。
+
+        B5：依赖没完成 / 预算已超的卡**在这里就被跳过**——
+           不认领、不调引擎、不消耗尝试次数，只在日志里说一次「为什么没接」。
+        """
         cand = []
         for d in B.card_refs():
             if not d.is_dir():
@@ -481,6 +588,12 @@ def cmd_run(a):
             except Exception:
                 continue
             if st["state"] not in ("待认领", "阻塞", "待返工"):
+                continue
+            why = B.withholding(d.name, card)
+            if why:
+                if d.name not in skipped:
+                    skipped[d.name] = why[0]
+                    log(f"跳过 {d.name}：{why[0]}", "info")
                 continue
             if B._match_miss(card, a.engine, a.model, a.effort):
                 continue
@@ -515,11 +628,11 @@ def cmd_run(a):
     else:
         rounds = 0
         while rounds < a.max:
-            rounds += 1
             t = pick(1)
             if not t:
                 log("没有可接的卡，收工", "ok")
                 break
+            rounds += 1
             target = t[0]
             log(f"[{rounds}/{a.max}] 处理 {target}", "step")
             results.append((target, run_one(target, a.engine, a.seat, a.model,

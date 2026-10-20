@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS cards (
   irreversible   INTEGER DEFAULT 0,
   allow_no_numbers INTEGER DEFAULT 0,
   source_card    TEXT,
+  -- 单卡预算（D-016）：引擎时长与花费的上限。NULL＝不限（旧卡/旧脚本行为不变）
+  max_cost_usd   REAL,
+  max_minutes    INTEGER,
+  -- 卡间依赖：这些卡没完成之前，编排器不许接（跳过，不消耗尝试）
+  blocked_by     TEXT DEFAULT '[]',
   meta           TEXT DEFAULT '{}',
   created_at     TEXT,
   created_by     TEXT,
@@ -166,6 +171,13 @@ class Store:
         cols = {r[1] for r in c.execute("PRAGMA table_info(cards)")}
         if "meta" not in cols:
             c.execute("ALTER TABLE cards ADD COLUMN meta TEXT DEFAULT '{}'")
+        # 2026-10-20（B 批）：预算与依赖。老库补列，⛔ 不重建表
+        if "max_cost_usd" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN max_cost_usd REAL")
+        if "max_minutes" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN max_minutes INTEGER")
+        if "blocked_by" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN blocked_by TEXT DEFAULT '[]'")
         c.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)",
                   (str(SCHEMA_VERSION),))
 
@@ -190,7 +202,8 @@ class Store:
     def save_card(self, card: dict):
         cols = ("id", "title", "goal", "territory", "deliverables",
                 "accept_patterns", "human_gate", "engine", "model", "effort",
-                "irreversible", "allow_no_numbers", "source_card", "meta",
+                "irreversible", "allow_no_numbers", "source_card",
+                "max_cost_usd", "max_minutes", "blocked_by", "meta",
                 "created_at", "created_by", "created_kind")
         # 卡片上任何「不在固定列里」的字段都进 meta。
         # ⚠️ 以前这些字段是被**静默丢弃**的：卡上写了 consult_files，
@@ -209,11 +222,11 @@ class Store:
                     v = "any"
                 elif c == "human_gate":
                     v = "none"
-                elif c in ("territory", "deliverables", "accept_patterns"):
+                elif c in ("territory", "deliverables", "accept_patterns", "blocked_by"):
                     v = []
                 elif c == "meta":
                     v = {}
-            if c in ("territory", "deliverables", "accept_patterns"):
+            if c in ("territory", "deliverables", "accept_patterns", "blocked_by"):
                 v = json.dumps(v or [], ensure_ascii=False)
             elif c == "meta":
                 v = json.dumps(meta, ensure_ascii=False)
@@ -241,7 +254,7 @@ class Store:
     @staticmethod
     def _row_to_card(r):
         d = dict(r)
-        for k in ("territory", "deliverables", "accept_patterns"):
+        for k in ("territory", "deliverables", "accept_patterns", "blocked_by"):
             try:
                 d[k] = json.loads(d.get(k) or "[]")
             except Exception:

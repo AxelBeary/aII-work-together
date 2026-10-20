@@ -361,6 +361,12 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
     if st["state"] not in ("待认领", "阻塞", "待返工"):
         die(f"卡片当前状态「{st['state']}」，不可认领")
     card = require_card(cid)
+    # ⚠️ 依赖与预算两条闸放在「认领」这一层，而不是只在编排器里：
+    #    编排器只是**一个**调用方；直接 `board claim` 的 agent 也必须被挡住，
+    #    否则规则只在一个入口生效＝形同没有（D-016）。
+    blocked = withholding(cid, card)
+    if blocked:
+        die("这张卡现在不能开工：\n  - " + "\n  - ".join(blocked))
     miss = _match_miss(card, engine, model, effort)
     if miss:
         die("这张卡的执行规格与你声明的不符：" + "；".join(miss)
@@ -381,6 +387,9 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
                        "engine": engine, "model": model, "effort": effort,
                        "epoch": epoch, "lease_dir": LEASE_NAME})
+    # B4：认领时给交付物拍快照（「before」），之后拍板的人不用自己跑 git diff
+    append_event(cid, {"type": "baseline", "actor": "system", "seat": seat,
+                       "files": _snapshot_deliverables(card)})
     return True
 
 
@@ -510,6 +519,116 @@ def gate_l3(cid: str, card: dict) -> tuple:
                 f"至少 {MIN_NONSPACE} 个）——疑似空壳或占位符")
     return (len(problems) == 0), problems, checks
 
+
+
+# ---------- 预算 / 依赖 / 改动对照（B 批，2026-10-20）----------
+
+DONE_STATES = ("完成", "已取消")
+
+
+def budget_status(cid: str, card: dict = None, events: list = None) -> dict:
+    """算这张卡「已经花了多少」和「上限是多少」。
+
+    口径（写死，别再各算各的）：
+      · 花费 = 所有 usage 事件里引擎**真报了**的 cost 之和（没报的不当 0，标 unknown）
+      · 时长 = 所有 usage 事件的 duration_ms 之和（引擎实际跑的时间，
+              不含卡在「拍板中」等人的天数）
+    超限判定：任一项 > 上限即超。上限为空＝不限。
+    """
+    card = card if card is not None else get_card(cid)
+    events = events if events is not None else load_journal(cid)
+    cost, ms, unknown = 0.0, 0, 0
+    for ev in events:
+        if ev.get("type") != "usage":
+            continue
+        u = ev.get("usage") or {}
+        if u.get("available"):
+            cost += float(u.get("cost") or 0)
+        else:
+            unknown += 1
+        ms += int(ev.get("duration_ms") or 0)
+    max_cost = card.get("max_cost_usd")
+    max_min = card.get("max_minutes")
+    over = []
+    if max_cost is not None and cost > float(max_cost):
+        over.append(f"花费 ${cost:.4f} 超过上限 ${float(max_cost):.2f}")
+    if max_min is not None and ms / 60000.0 > float(max_min):
+        over.append(f"引擎时长 {ms / 60000.0:.1f} 分钟超过上限 {int(max_min)} 分钟")
+    return {"cost": round(cost, 4), "minutes": round(ms / 60000.0, 1),
+            "max_cost": max_cost, "max_minutes": max_min,
+            "unknown_runs": unknown, "over": bool(over), "reasons": over}
+
+
+def withholding(cid: str, card: dict = None) -> list:
+    """这张卡现在**能不能开工**：返回挡住它的原因（空＝能开工）。
+
+    依赖未完成 → 「依赖 C1（进行中）」；预算已超 → 上限原因。
+    ⚠️ 只看「已完成/已取消」以外的状态都算没完成——包括「完成」以外的所有状态，
+       宁可不接，也不要抢跑（抢跑的代价是拿半截上游产出做出错的活）。
+    """
+    card = card if card is not None else get_card(cid)
+    out = []
+    for dep in card.get("blocked_by") or []:
+        dep = str(dep)
+        if not get_card(dep):
+            out.append(f"依赖 {dep} 不存在")
+            continue
+        dst = replay(dep)["state"]
+        if dst not in DONE_STATES:
+            out.append(f"依赖 {dep} 还没完成（{dst}）")
+    b = budget_status(cid, card)
+    out.extend(b["reasons"])
+    return out
+
+
+def diff_vs_baseline(cid: str, card: dict = None) -> list:
+    """交付物「认领前 → 现在」的对照（B4：拍板的人不用自己跑 git diff）。
+
+    基线来自 claim 时记的 baseline 事件；没有基线（旧卡/人直接提交）就全标「无基线」。
+    """
+    card = card if card is not None else get_card(cid)
+    base = None
+    for ev in load_journal(cid):
+        if ev.get("type") == "baseline":
+            base = {f["path"]: f for f in ev.get("files", [])}
+    out = []
+    for item in card.get("deliverables", []):
+        rel = item if isinstance(item, str) else item.get("path")
+        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        after = {"exists": p.exists(), "bytes": 0, "sha8": None}
+        if p.exists():
+            after = {"exists": True, "bytes": p.stat().st_size, "sha8": sha8(p)}
+        b = (base or {}).get(rel)
+        if b is None:
+            status = "新件" if after["exists"] else "缺件"
+            before = {"exists": False, "bytes": 0, "sha8": None}
+        else:
+            before = {"exists": b.get("exists"), "bytes": b.get("bytes", 0),
+                      "sha8": b.get("sha8")}
+            if not after["exists"]:
+                status = "没了"
+            elif not before["exists"]:
+                status = "新增"
+            elif before["sha8"] == after["sha8"]:
+                status = "没动"
+            else:
+                status = "改了"
+        out.append({"path": rel, "status": status, "before": before, "after": after})
+    return out
+
+
+def _snapshot_deliverables(card: dict) -> list:
+    """认领时给交付物拍个快照（B4 的「before」）。"""
+    files = []
+    for item in card.get("deliverables", []):
+        rel = item if isinstance(item, str) else item.get("path")
+        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        if p.exists():
+            files.append({"path": rel, "exists": True, "bytes": p.stat().st_size,
+                          "sha8": sha8(p), "mtime_ms": int(p.stat().st_mtime * 1000)})
+        else:
+            files.append({"path": rel, "exists": False, "bytes": 0, "sha8": None})
+    return files
 
 
 def _match_miss(card: dict, engine, model, effort) -> list:

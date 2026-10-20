@@ -61,7 +61,7 @@ def main():
 
     # 1b 子命令烟测：每条 --help 都要能起来（抓「导入漏了 / 参数写坏」）
     subs = ["init", "project", "open", "add", "new", "publish", "ready", "ls",
-            "show", "claim", "beat", "block", "submit", "verify", "review",
+            "show", "claim", "budget", "beat", "block", "submit", "verify", "review",
             "human", "reclaim", "audit", "doctor", "html", "overview",
             "inbox", "all", "stats", "cost", "rm", "msg"]
     smoke_bad = []
@@ -145,6 +145,11 @@ def main():
     ok, _ = run("租约竞态", [PY, "tests/test_lease_race.py"])
     if not ok:
         fails.append("租约竞态")
+
+    # 4h 预算刹车/依赖/错误分级/刹车权限/拍板 diff（B 批，反空跑对照齐全）
+    ok, _ = run("预算与依赖", [PY, "tests/test_budget_deps.py"])
+    if not ok:
+        fails.append("预算与依赖")
 
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])

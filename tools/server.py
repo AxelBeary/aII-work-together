@@ -108,6 +108,10 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
         "created_kind": st["created_kind"],
         "events": st["events"],
         "blocked_reason": st.get("blocked_reason"),
+        "budget": B.budget_status(cid, card, events),
+        # 列表页不逐卡算 sha（会反复读文件）；详情页才给 before/after
+        "diff": [] if light else B.diff_vs_baseline(cid, card),
+        "blocked_by": card.get("blocked_by") or [],
         "gate_ok": not (submit.get("gate", {}) or {}).get("problems"),
         "gate_problems": (submit.get("gate", {}) or {}).get("problems", []),
         "review_verdict": (st.get("review") or {}).get("verdict"),
@@ -165,6 +169,34 @@ def api_state(q):
         "server": {"pid": os.getpid(), "started": _STARTED_AT,
                    "code_mtime": int(_CODE_MTIME)},
     }
+
+
+def api_alert(q):
+    """桌面壳用的极简告警行（壳不做 JSON 解析，只按字符切）。
+
+    只报两类：**需要人拍板**的、**失败/超预算/返工到顶**的。
+    ⛔ 不许把「跑完了、没待拍板」也报上来——那种通知是噪音，用户会直接关掉通知，
+       连带把真警报一起关掉（这条比「通知少一点」严重得多）。
+    """
+    project = q.get("project", [None])[0]
+    if project == ALL_PROJECTS:
+        project = None
+    # ⚠️ 必须**无条件**切：B.ROOT 是模块级全局，不切就会读到「上一个请求的项目」。
+    #    实测 2026-10-20：不切时壳收到的永远是工具自己那 5 张卡（needs= 恒为空）。
+    _switch(project)
+    needs, failed = [], []
+    for cid in B.card_ids():
+        try:
+            st = B.replay(cid)
+        except Exception:
+            continue
+        if st["state"] == "拍板中":
+            needs.append(cid)
+        elif st["state"] == "阻塞":
+            r = st.get("blocked_reason") or ""
+            if any(k in r for k in ("失败", "超预算", "返工")):
+                failed.append(cid)
+    return "needs=" + ",".join(needs) + "|failed=" + ",".join(failed)
 
 
 def api_cards(q):
@@ -257,6 +289,16 @@ def api_cost(q):
     return {"total": total, "by_card": by_card}
 
 
+def _num_or_none(v, cast=float):
+    """把界面传来的 '' / None 当成「不限」，数字照转，杂字直接拒。"""
+    if v is None or v == "":
+        return None
+    try:
+        return cast(float(v))
+    except (TypeError, ValueError):
+        raise ValueError(f"预算要写数字或留空，收到：{v}")
+
+
 def api_create(body):
     root = _switch(body.get("project"))
     title = (body.get("title") or "").strip()
@@ -282,6 +324,9 @@ def api_create(body):
         "created_kind": "human",
         "irreversible": bool(body.get("irreversible")),
         "source_card": None,
+        "max_cost_usd": _num_or_none(body.get("max_cost_usd")),
+        "max_minutes": _num_or_none(body.get("max_minutes"), int),
+        "blocked_by": body.get("blocked_by") or [],
     }
     B.create_card(card)
     B.append_event(cid, {"type": "created", "actor": "human",
@@ -508,6 +553,14 @@ class Handler(BaseHTTPRequestHandler):
                 ctype = "image/x-icon" if f.suffix == ".ico" else "image/png"
                 return self._send(200, f.read_bytes(), ctype)
             return self._send(404, "", "text/plain; charset=utf-8")
+        if u.path == "/api/alert":
+            # 纯文本一行，壳里直接 StartWith/IndexOf，不用 JSON 解析
+            try:
+                with _BOARD_LOCK:
+                    body = api_alert(q)
+            except Exception as e:
+                body = f"error={str(e)[:80]}"
+            return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8")
         routes = {
             "/api/state": api_state,
             "/api/cards": api_cards,

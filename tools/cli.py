@@ -37,6 +37,9 @@ def cmd_new(a):
     cid = a.id or f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}"
     if B.get_card(cid):
         B.die(f"卡片已存在：{cid}")
+    # 预算从命令行来的是字符串，先归一成数字（none/不限 → None）
+    mc = _parse_limit(getattr(a, "max_cost", None), float)
+    mm = _parse_limit(getattr(a, "max_minutes", None), int)
     card = {
         "id": cid, "title": a.title, "goal": a.goal or "",
         "territory": a.territory or [], "deliverables": a.deliverable or [],
@@ -51,6 +54,10 @@ def cmd_new(a):
         "created_kind": "agent" if a.seat and a.seat != "human" else "human",
         "irreversible": bool(a.irreversible),
         "source_card": getattr(a, "from_card", None),
+        # —— 预算与依赖（D-016 / B 批）——
+        "max_cost_usd": None if mc == "none" else mc,
+        "max_minutes": None if mm == "none" else mm,
+        "blocked_by": getattr(a, "blocked_by", None) or [],
     }
     B.create_card(card)
     B.append_event(cid, {"type": "created", "actor": card["created_kind"],
@@ -69,6 +76,15 @@ def cmd_new(a):
         spec.append(f"思考={card['effort']}")
     if spec:
         print(f"  执行规格：{' / '.join(spec)}")
+    if card["max_cost_usd"] is not None or card["max_minutes"] is not None:
+        lim = []
+        if card["max_cost_usd"] is not None:
+            lim.append(f"${card['max_cost_usd']:.2f}")
+        if card["max_minutes"] is not None:
+            lim.append(f"{card['max_minutes']} 分钟")
+        print(f"  预算：{' / '.join(lim)}（超了会停下转阻塞）")
+    if card["blocked_by"]:
+        print(f"  依赖：{'、'.join(card['blocked_by'])}（没完成就不接）")
 
 
 def cmd_publish(a):
@@ -162,6 +178,26 @@ def cmd_show(a):
     print(f"  返工    {st['rework']} 次")
     if st["blocked_reason"]:
         print(f"  阻塞    {st['blocked_reason']}")
+    b = B.budget_status(a.id, card)
+    if b["max_cost"] is not None or b["max_minutes"] is not None:
+        lim = []
+        if b["max_cost"] is not None:
+            lim.append(f"${float(b['max_cost']):.2f}")
+        if b["max_minutes"] is not None:
+            lim.append(f"{int(b['max_minutes'])} 分钟")
+        mark = "  ⚠ 已超" if b["over"] else ""
+        print(f"  预算    已花 ${b['cost']:.4f} / {b['minutes']} 分钟"
+              f"（上限 {' / '.join(lim)}）{mark}")
+    elif b["cost"] or b["minutes"]:
+        print(f"  用量    已花 ${b['cost']:.4f} / {b['minutes']} 分钟（未设上限）")
+    if b["unknown_runs"]:
+        print(f"          ⚠ 有 {b['unknown_runs']} 次引擎没报用量（那部分费用未知）")
+    if card.get("blocked_by"):
+        deps = []
+        for dep in card["blocked_by"]:
+            dst = B.replay(str(dep))["state"] if B.get_card(str(dep)) else "不存在"
+            deps.append(f"{dep}（{dst}）")
+        print(f"  依赖    {'、'.join(deps)}")
     if card.get("goal"):
         print(f"  目标    {card['goal']}")
     if card.get("territory"):
@@ -172,6 +208,14 @@ def cmd_show(a):
         print(f"  提交    {st['submit'].get('note','')}")
     if st["review"]:
         print(f"  复核    {st['review'].get('verdict')} by {st['review'].get('seat')}")
+    diff = B.diff_vs_baseline(a.id, card)
+    if diff:
+        print("  改动（认领前 → 现在）：")
+        for d in diff:
+            bf, af = d["before"], d["after"]
+            left = f"{bf['bytes']}B" if bf.get("exists") else "-"
+            right = f"{af['bytes']}B" if af.get("exists") else "-"
+            print(f"    {d['status']:<3} {d['path']}  {left} → {right}")
     print(f"  事件    {st['events']} 条")
     if a.events:
         print("\n  事件流：")
@@ -184,6 +228,83 @@ def cmd_claim(a):
     B.ok(f"认领成功：{a.id} → {a.seat}")
     print(f"  引擎={a.engine} 模型={a.model or 'any'} 思考={a.effort or 'any'}")
     print(f"  ⚠ 每 {B.HB_INTERVAL}s 内至少跑一次 beat，否则 {B.LEASE_TTL}s 后被回收")
+
+
+def _parse_limit(v, cast):
+    """解析预算上限：数字 / none＝取消上限。"""
+    if v is None:
+        return None
+    s = str(v).strip().lower()
+    if s in ("none", "off", "unlimited", "不限"):
+        return "none"
+    try:
+        return cast(float(s))
+    except ValueError:
+        B.die(f"预算上限要写数字或 none，收到：{v}")
+
+
+def cmd_budget(a):
+    """看／改单卡预算与依赖（D-016）。
+
+    红线：**收紧随便改，放宽只能人来。**
+    预算是防跑飞的刹车；执行席要是能自己松刹车，这条防线就等于没有。
+    「不限 → 有限」算收紧（可以）；「有限 → 更大/不限」算放宽（要 `--seat human`）。
+    """
+    card = B.require_card(a.id)
+    seat = (getattr(a, "seat", None) or "").strip()
+    is_human = seat == "human"
+    new_cost = _parse_limit(getattr(a, "max_cost", None), float)
+    new_min = _parse_limit(getattr(a, "max_minutes", None), int)
+    new_deps = getattr(a, "blocked_by", None)
+    drop_deps = getattr(a, "unblock", False)
+
+    changes, loose = [], []
+    if new_cost is not None:
+        old = card.get("max_cost_usd")
+        val = None if new_cost == "none" else float(new_cost)
+        if val is None or (old is not None and val > float(old)):
+            loose.append(f"花费上限 {old} → {val if val is not None else '不限'}")
+        changes.append(("max_cost_usd", val))
+    if new_min is not None:
+        old = card.get("max_minutes")
+        val = None if new_min == "none" else int(new_min)
+        if val is None or (old is not None and val > int(old)):
+            loose.append(f"时长上限 {old} → {val if val is not None else '不限'}")
+        changes.append(("max_minutes", val))
+    if new_deps is not None:
+        changes.append(("blocked_by", list(new_deps)))
+    if drop_deps:
+        loose.append("清空依赖")
+        changes.append(("blocked_by", []))
+
+    if not changes:
+        b = B.budget_status(a.id, card)
+        print(f"\n【{a.id}】{card.get('title', '')}")
+        print(f"  已花    ${b['cost']:.4f} / {b['minutes']} 分钟"
+              f"（{b['unknown_runs']} 次未报用量）")
+        print(f"  上限    花费 {b['max_cost'] if b['max_cost'] is not None else '不限'} / "
+              f"时长 {b['max_minutes'] if b['max_minutes'] is not None else '不限'}"
+              f"{'  ⚠ 已超' if b['over'] else ''}")
+        if card.get("blocked_by"):
+            print(f"  依赖    {'、'.join(card['blocked_by'])}")
+        return
+
+    if loose and not is_human:
+        B.die("放宽预算/去掉依赖只能人来做（加 --seat human）：\n  - "
+              + "\n  - ".join(loose))
+    merged = {k: v for k, v in card.items() if k != "meta"}
+    for k, v in changes:
+        merged[k] = v
+    B._store().save_card(merged)
+    B.append_event(a.id, {"type": "budget_set", "actor": "human" if is_human else "agent",
+                          "seat": seat or "agent",
+                          "max_cost_usd": merged.get("max_cost_usd"),
+                          "max_minutes": merged.get("max_minutes"),
+                          "blocked_by": merged.get("blocked_by") or [],
+                          "note": "；".join(loose) if loose else "收紧/改依赖"})
+    B.ok(f"已更新 {a.id} 的预算/依赖")
+    for k, v in changes:
+        print(f"  {k} = {v if v is not None else '不限'}")
 
 
 def guard_transition(cid: str, to_state: str, actor: str):
@@ -265,7 +386,7 @@ def cmd_submit(a):
     if verdict == "pass":
         B.ok("L1-L3 全过 → 待验收")
         for r in r1:
-            print(f"  {r['path']}  {r.get('bytes','?')}B  B.sha8={r.get('B.sha8','-')}")
+            print(f"  {r['path']}  {r.get('bytes','?')}B  sha8={r.get('sha8','-')}")
     else:
         print("✗ 闸门未过，已记录但不进「待验收」：")
         for p in problems:
@@ -1286,6 +1407,12 @@ def main():
     s.add_argument("--model", default="any", help="指定模型（如 deepseek-v4.1-flash）")
     s.add_argument("--effort", default="any",
                    help="思考强度：low/medium/high/max/any")
+    s.add_argument("--max-cost", dest="max_cost", type=str, default=None,
+                   help="单卡花费上限（美元，如 2.0）；超了编排器停下转阻塞")
+    s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None,
+                   help="单卡引擎时长上限（分钟）；超了停下转阻塞")
+    s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None,
+                   help="卡间依赖：这些卡没完成之前不许接")
     s.add_argument("--id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_new)
@@ -1303,6 +1430,9 @@ def main():
     s.add_argument("--engine", default="any")
     s.add_argument("--model", default="any")
     s.add_argument("--effort", default="any")
+    s.add_argument("--max-cost", dest="max_cost", type=str, default=None)
+    s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None)
+    s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None)
     s.add_argument("--id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_new)
@@ -1319,6 +1449,9 @@ def main():
     s.add_argument("--engine", default="any")
     s.add_argument("--model", default="any")
     s.add_argument("--effort", default="any")
+    s.add_argument("--max-cost", dest="max_cost", type=str, default=None)
+    s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None)
+    s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None)
     s.add_argument("--id")
     s.add_argument("--seat", required=True, help="发布者身份（不可匿名）")
     s.add_argument("--from-card", help="由哪张卡派生")
@@ -1346,6 +1479,17 @@ def main():
     s.add_argument("--model", default=None)
     s.add_argument("--effort", default=None)
     s.set_defaults(f=cmd_claim)
+
+    s = sub.add_parser("budget", help="看/改单卡预算与依赖（放宽只能人来做）")
+    s.add_argument("id")
+    s.add_argument("--max-cost", dest="max_cost", type=str, default=None,
+                   help="花费上限（美元）；none＝取消上限（仅 human）")
+    s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None,
+                   help="引擎时长上限（分钟）；none＝取消上限（仅 human）")
+    s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None)
+    s.add_argument("--unblock", action="store_true", help="清空依赖（仅 human）")
+    s.add_argument("--seat", default=None, help="放宽预算/去依赖必须写 human")
+    s.set_defaults(f=cmd_budget)
 
     s = sub.add_parser("beat", help="心跳")
     s.add_argument("id")
