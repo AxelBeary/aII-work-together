@@ -141,6 +141,11 @@ def main():
     if not ok:
         fails.append("留言")
 
+    # 4g 租约竞态/提交闸/回收/终端白名单/L1 旧文件/旧布局迁移（专测异常路径）
+    ok, _ = run("租约竞态", [PY, "tests/test_lease_race.py"])
+    if not ok:
+        fails.append("租约竞态")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

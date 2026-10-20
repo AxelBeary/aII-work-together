@@ -202,6 +202,17 @@ class Store:
         vals = []
         for c in cols:
             v = card.get(c)
+            # 老布局/外部调用可能缺字段：给列默认值，⛔ 别把 None 写进有默认值的列
+            # （2026-10-20 实测：迁移后的卡 model=None，`board ls` 直接 TypeError）
+            if v is None:
+                if c in ("engine", "model", "effort"):
+                    v = "any"
+                elif c == "human_gate":
+                    v = "none"
+                elif c in ("territory", "deliverables", "accept_patterns"):
+                    v = []
+                elif c == "meta":
+                    v = {}
             if c in ("territory", "deliverables", "accept_patterns"):
                 v = json.dumps(v or [], ensure_ascii=False)
             elif c == "meta":
@@ -317,15 +328,40 @@ class Store:
 
     def try_claim(self, cid: str, seat: str, engine=None, model=None,
                   effort=None, epoch: int = 0, ttl_s: int = 600,
-                  now_ms: int = None):
+                  now_ms: int = None, on_reclaim=None):
         """原子认领。返回 (ok, 原因)。
 
-        互斥来自 leases.card_id 的 PRIMARY KEY：INSERT 撞键＝别人已持有。
-        ⛔ 不是「先查后插」。
+        互斥来自 leases.card_id 的 PRIMARY KEY + BEGIN IMMEDIATE。
+
+        ⚠️ 2026-10-20 修（复核席 Q1 抓到的**致命竞态**，主代理复现 4/12）：
+           旧实现撞键后「先读 → reclaim() 无条件 DELETE → 递归重试 INSERT」，
+           而 reclaim 删的是「此刻表里那一行」——包括别的线程几百微秒前刚插进去的新租约。
+           于是 12 个线程抢一张超时卡，能有 4~6 个**同时**返回成功，红线③当场失效。
+           现在：**整段一个写事务**里做「读 → 带条件删（CAS，用 at_ms+seat 当版本号）
+           → 插入」，删不到就认输，不再递归重试。
         """
         now_ms = now_ms or _now_ms()
+        reclaimed = None
         try:
             with self.write() as c:
+                row = c.execute("SELECT * FROM leases WHERE card_id=?", (cid,)).fetchone()
+                if row is not None:
+                    age = (now_ms - (row["at_ms"] or 0)) / 1000
+                    ttl = row["ttl_s"] or ttl_s
+                    if age <= ttl:
+                        return False, f"卡片已被占用（{row['seat']}，心跳 {int(age)}s 前）"
+                    # 超时：同一个事务里先删旧的（CAS），再插新的
+                    cur = c.execute(
+                        "DELETE FROM leases WHERE card_id=? AND at_ms=? AND seat=?",
+                        (cid, row["at_ms"], row["seat"]))
+                    if cur.rowcount != 1:
+                        return False, "回收时被别人抢先（CAS 失败），请重试一次"
+                    c.execute(
+                        "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
+                        "VALUES(?,?,?,?,?,?)",
+                        (cid, row["seat"], "reclaimed", _ts(), _now_ms(),
+                         f"心跳超时 {int(age)}s（认领时自动回收）"))
+                    reclaimed = dict(row)
                 c.execute(
                     "INSERT INTO leases(card_id,seat,engine,model,effort,epoch,"
                     "at_ms,ttl_s) VALUES(?,?,?,?,?,?,?,?)",
@@ -334,19 +370,14 @@ class Store:
                     "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
                     "VALUES(?,?,?,?,?,?)",
                     (cid, seat, "acquire", _ts(), now_ms, engine or ""))
-            return True, ""
         except sqlite3.IntegrityError:
-            cur = self.get_lease(cid)
-            if not cur:
-                return False, "被别人抢先了"
-            age = (now_ms - (cur.get("at_ms") or 0)) / 1000
-            if age > (cur.get("ttl_s") or ttl_s):
-                # 超时 → 回收后重试一次
-                self.reclaim(cid, reason=f"心跳超时 {int(age)}s")
-                return self.try_claim(cid, seat, engine, model, effort, epoch,
-                                      ttl_s, now_ms)
-            return False, (f"卡片已被占用（{cur.get('seat')}，"
-                           f"心跳 {int(age)}s 前）")
+            return False, "被别人抢先了"
+        if reclaimed is not None and on_reclaim is not None:
+            try:
+                on_reclaim(reclaimed)
+            except Exception:
+                pass          # 事件是留痕，写不进去不该把认领判失败
+        return True, ""
 
     def touch_lease(self, cid: str, seat: str):
         with self.write() as c:
@@ -370,14 +401,24 @@ class Store:
         return cur
 
     def reclaim(self, cid: str, reason: str = "心跳超时"):
-        cur = self.get_lease(cid)
+        """回收一张卡的租约。返回被回收的租约 dict；没有或 CAS 失败返回 None。
+
+        ⚠️ 带版本号的条件删除（同 try_claim）：并发下只有一个人能回收成功。
+        """
         with self.write() as c:
-            c.execute("DELETE FROM leases WHERE card_id=?", (cid,))
+            row = c.execute("SELECT * FROM leases WHERE card_id=?", (cid,)).fetchone()
+            if not row:
+                return None
+            cur = c.execute(
+                "DELETE FROM leases WHERE card_id=? AND at_ms=? AND seat=?",
+                (cid, row["at_ms"], row["seat"]))
+            if cur.rowcount != 1:
+                return None
             c.execute(
                 "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
                 "VALUES(?,?,?,?,?,?)",
-                (cid, (cur or {}).get("seat"), "reclaimed", _ts(), _now_ms(), reason))
-        return cur
+                (cid, row["seat"], "reclaimed", _ts(), _now_ms(), reason))
+        return dict(row)
 
     def expired_leases(self, now_ms: int = None):
         now_ms = now_ms or _now_ms()
@@ -507,6 +548,52 @@ class Store:
             "leases": self._read_conn().execute("SELECT COUNT(*) n FROM leases").fetchone()["n"],
             "size": self.path.stat().st_size if self.path.exists() else 0,
         }
+
+
+def migrate_from_files(legacy_dir, store, verbose: bool = False) -> int:
+    """把旧「文件即卡」布局迁进 SQLite。幂等：已有同号卡就跳过。
+
+    旧布局（SQLite 之前）：`board/cards/<卡号>/card.json` ＋ `journal.jsonl`。
+    ⚠️ 2026-10-20 补：`board.migrate_if_needed` 一直在调这个函数，但它**从来没存在过**
+       ——只要项目里有旧 cards/ 目录且新库是空的，`set_root` 立刻 AttributeError，
+       等于从旧版升级上来的项目第一条命令就崩（Q1 复核复现）。
+    口径：只读旧文件、不删不改；事件按原顺序重放，哈希链按新库规则重算。
+    """
+    legacy_dir = Path(legacy_dir)
+    if not legacy_dir.exists():
+        return 0
+    n = 0
+    for d in sorted(p for p in legacy_dir.iterdir() if p.is_dir()):
+        cj = d / "card.json"
+        if not cj.exists():
+            continue
+        try:
+            card = json.loads(cj.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cid = card.get("id") or d.name
+        if store.get_card(cid):
+            continue                       # 幂等
+        card["id"] = cid
+        store.save_card(card)
+        n += 1
+        jl = d / "journal.jsonl"
+        if not jl.exists():
+            continue
+        for line in jl.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            if verbose:
+                print(f"  · {cid} 重放 {ev.get('type')}")
+            store.append_event(cid, ev)
+    return n
 
 
 class _WriteTx:

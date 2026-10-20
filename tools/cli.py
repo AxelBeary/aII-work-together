@@ -138,9 +138,11 @@ def cmd_ls(a):
     print("-" * 108)
     for r in rows:
         hold = r["holder"] or "-"
-        mdl = (r["model"] if r["model"] != "any" else "-")[:20]
+        mdl = (r.get("model") or "any")
+        mdl = "-" if mdl == "any" else mdl
         print(f"{r['id']:<12} {r['state']:<7} {hold:<9} "
-              f"{r['engine']:<10} {mdl:<22} {r['effort']:<6} {r['title'][:26]}")
+              f"{r.get('engine') or 'any':<10} {mdl[:20]:<22} "
+              f"{r.get('effort') or 'any':<6} {(r.get('title') or '')[:26]}")
     print(f"\n共 {len(rows)} 张")
 
 
@@ -245,9 +247,9 @@ def cmd_block(a):
 
 
 def cmd_submit(a):
-    st = B.replay(a.id)
-    if st["holder"] != a.seat:
-        B.die(f"你不是持有者（当前 {st['holder']}）")
+    # ⚠️ 2026-10-20 修：以前只比 replay 里的 holder，而租约表可能已经被回收
+    #    ⇒ 旧持有者照样能提交（Q1 复核复现：退出码 0、L1-L3 全过）。
+    guard_holder(a.id, a.seat)
     card = B.get_card(a.id)
     # 提交即跑 L1-L3
     ok1, p1, r1 = B.gate_l1(a.id, card)
@@ -443,36 +445,26 @@ def cmd_human(a):
     B.ok(f"人已{a.decision}：{a.id}")
 
 def cmd_reclaim(a):
+    """回收超时租约（走库，不走早已不存在的 lease/active 目录）。
+
+    ⚠️ 2026-10-20 修：旧实现遍历 `cards/<id>/lease/active/`，那是文件时代的布局，
+       SQLite 版里这个目录从来不存在 ⇒ 永远 0 命中，却照样打印「✓ 回收完成：0 个」，
+       而 `doctor` 同时报「超时未回收」——两把尺互相打架（Q1 复核复现）。
+    """
+    st = B._store()
+    rows = st.expired_leases()
+    if not rows:
+        print("✓ 没有超时租约（无可回收）")
+        return
     n = 0
-    for d in B.card_refs():
-        if not d.is_dir():
-            continue
-        lease = d / "lease" / "active"
-        if not lease.exists():
-            continue
-        for old in list(lease.iterdir()):
-            if not old.is_dir():
-                continue
-            try:
-                hb = B.jread(old / "owner.json").get("at_ms", 0)
-            except Exception:
-                hb = 0
-            age = (B.now_ms() - hb) / 1000
-            if age > B.LEASE_TTL:
-                dest = d / "lease" / "reclaimed"
-                dest.mkdir(parents=True, exist_ok=True)
-                try:
-                    os.replace(old, dest / old.name)
-                except OSError:
-                    continue
-                B.jwrite(dest / old.name / "reclaim.json",
-                       {"reclaimed_at": B.ts(), "reason": "B.heartbeat timeout",
-                        "timeout_s": B.LEASE_TTL, "previous_owner": old.name})
-                B.append_event(d.name, {"type": "reclaim", "seat": "system",
-                                      "previous": old.name, "age_s": int(age)})
-                print(f"  · 回收 {d.name}：{old.name}（{int(age)}s 无心跳）")
-                n += 1
-    B.ok(f"回收完成：{n} 个")
+    for r in rows:
+        cur = B._reclaim_lease(r["card_id"], reason=f"心跳超时 {r['age_s']}s")
+        if cur:
+            n += 1
+            print(f"  · 回收 {r['card_id']}：{cur.get('seat')}（{r['age_s']}s 无心跳）")
+    print(f"回收 {n} of {len(rows)}（口径＝租约条数）")
+    if n != len(rows):
+        B.die("有租约没回收成功（并发改写？）——再跑一次 board reclaim")
 
 
 def cmd_audit(a):

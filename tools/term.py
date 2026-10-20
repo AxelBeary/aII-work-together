@@ -42,7 +42,6 @@ _STATE = {
 DENY_SUB = {"rm", "human"}          # 删卡要人明确点头；拍板走令牌接口
 SHELL_META = set("|&;><$`^()%\n\r\t")
 
-
 def _split(cmd):
     """按空格切，支持简单引号；不处理任何 shell 语法。"""
     out, cur, quote = [], "", None
@@ -83,9 +82,15 @@ def plan(cmd: str):
     head, rest = toks[0].lower(), toks[1:]
 
     if head == "board":
-        if rest and rest[0] in DENY_SUB:
-            raise ValueError(f"「board {rest[0]}」不在白名单里："
-                             "删卡/人工拍板请用界面上的按钮（要令牌）或自己开终端")
+        # ⚠️ 2026-10-20 修：旧写法只看 rest[0]，于是 `board -p x rm …` /
+        #    `board --root . human …` 直接绕过黑名单（Q1 复核复现）。
+        #    现在**任何位置**出现被禁的子命令词都拒（fail-closed）：
+        #    宁可误拒一个正好叫 rm 的项目名，也不放过一次删卡。
+        denied = [t for t in rest if t.lower() in DENY_SUB]
+        if denied:
+            raise ValueError(
+                f"「board {denied[0]}」不在白名单里（放在全局旗标后面也一样）："
+                "删卡/人工拍板请用界面上的按钮（要令牌）或自己开终端")
         return [sys.executable, str(ROOT / "tools" / "board.py")] + rest, "看板命令"
 
     if head == "orch":

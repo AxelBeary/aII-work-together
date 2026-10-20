@@ -202,3 +202,19 @@
 | 启动实测 | `board/shell.log` | 已测 | 窗口 **0.13s**、页面 **1.33s**（修前 3–4s） |
 
 坑记 **E-33**。
+
+### A 批 · 红线与假防线（2026-10-20 第二轮，Q1 复核后）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 租约回收竞态（致命） | `tools/storage.py`（`try_claim` 同事务 CAS、`reclaim` 带版本条件） | 已修 | 12 线程抢超时卡：**4/12 → 1/12**；新鲜租约 0 人抢到 |
+| 回收留痕统一 | `storage.reclaim` + `board._reclaim_lease` + `board.claim(on_reclaim)` | 已修 | 回收后 `replay` 能看到 `reclaim` 事件 |
+| `submit` 必须持租约 | `tools/cli.py` `cmd_submit` 起手 `guard_holder` | 已修 | 删掉租约行后 submit → 退出码 1「你没有活跃租约」 |
+| `board reclaim` 走库 | `tools/cli.py` `cmd_reclaim` | 已修 | 输出 `回收 1 of 1`；没东西时明说「无可回收」 |
+| 终端白名单不可绕过 | `tools/term.py`（任何位置出现 `rm`/`human` 一律拒） | 已修 | 4 种绕法全拒；`board -p demo stats` 仍放行 |
+| 旧布局迁移函数真的存在 | `tools/storage.py` `migrate_from_files` | 已补 | 老布局 fixture 首条命令不崩、跑两次不重复迁 |
+| L1 真查 mtime | `tools/board.py` `gate_l1` | 已修 | 旧文件提交 → 报「旧文件，比认领早 N 分钟」；真改过 → 过 |
+| 新闸 | `tests/test_lease_race.py`（6 组 14 条） | PASS | 闸门 13 → **14** |
+| 壳的「后端旧版」告警 | `shell/BoardShell.cs`（正则解析 + 解析失败报未知） | 已修 | 编译过、`--selftest` PASS |
+
+坑记 **E-34**。规模：闸门 **14 道**、`tools/`＋`tests/` 共 **29** 个 py 文件。

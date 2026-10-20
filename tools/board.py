@@ -346,12 +346,13 @@ def _lease_owner(lease):
 
 
 def _reclaim_lease(cid: str, lease=None, reason: str = "heartbeat timeout"):
+    """回收并留痕。返回被回收的租约 dict（没有则 None）。"""
     cur = _store().reclaim(cid, reason=reason)
     if cur:
         append_event(cid, {"type": "reclaim", "seat": "system",
                            "previous": cur.get("seat"), "reason": reason})
-        return True
-    return False
+        return cur
+    return None
 
 
 def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = None) -> bool:
@@ -367,8 +368,14 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
               f"思考={card.get('effort')}\n  你声明：引擎={engine} 模型={model} 思考={effort}"
             + "\n  （用 board.py ready 找你匹配的活）")
     epoch = st.get("epoch", 0) + 1
-    okc, why = _store().try_claim(cid, seat, engine, model, effort,
-                                  epoch=epoch, ttl_s=LEASE_TTL)
+    okc, why = _store().try_claim(
+        cid, seat, engine, model, effort, epoch=epoch, ttl_s=LEASE_TTL,
+        # 认领时若顺手回收了超时租约，也要在**事件流**里留痕
+        # （否则表和事件流各说一套：Q1 复核指出的第三个洞）
+        on_reclaim=lambda old: append_event(cid, {
+            "type": "reclaim", "seat": "system",
+            "previous": old.get("seat"),
+            "reason": "心跳超时（认领时自动回收）"}))
     if not okc:
         die(why)
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
@@ -404,8 +411,15 @@ def sha8(p: Path) -> str:
 
 
 def gate_l1(cid: str, card: dict) -> tuple:
-    """L1 产物存在性：文件在、字节>0、mtime 在认领窗口内。"""
+    """L1 产物存在性：文件在、字节>0、**mtime 不早于认领时刻**。
+
+    ⚠️ 2026-10-20 修：docstring 一直写着「mtime 在认领窗口内」，代码却没查——
+       于是 agent 拿一个三天前的旧文件顶交付物也能过（Q1 复核复现）。
+       现在真查：交付物 mtime 必须 ≥ 最后一次 claim 事件的时间（留 5 秒时钟容差）。
+    """
     st = replay(cid)
+    claims = [e for e in load_journal(cid) if e.get("type") == "claim"]
+    claim_ms = claims[-1].get("at_ms") if claims else 0
     problems, results = [], []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
@@ -414,10 +428,18 @@ def gate_l1(cid: str, card: dict) -> tuple:
             problems.append(f"缺件：{rel}")
             results.append({"path": rel, "exists": False})
             continue
-        size = p.stat().st_size
+        stat = p.stat()
+        size = stat.st_size
+        mtime_ms = int(stat.st_mtime * 1000)
+        stale = bool(claim_ms and mtime_ms < claim_ms - 5000)
         if size == 0:
             problems.append(f"零字节：{rel}")
-        results.append({"path": rel, "exists": True, "bytes": size, "sha8": sha8(p)})
+        if stale:
+            age_min = (claim_ms - mtime_ms) / 60000.0
+            problems.append(f"旧文件：{rel} 的 mtime 比认领早 {age_min:.1f} 分钟（像是没动过）")
+        results.append({"path": rel, "exists": True, "bytes": size,
+                        "sha8": sha8(p), "mtime_ms": mtime_ms,
+                        "stale": stale})
     return (len(problems) == 0), problems, results
 
 

@@ -992,10 +992,17 @@ namespace BoardShell
                     Log("backend has no code_mtime ⇒ 旧版本进程");
                     return "后端是旧版（关掉看板再开一次就会用新代码）";
                 }
-                var digits = "";
-                for (int j = i + 13; j < s.Length && char.IsDigit(s[j]); j++) digits += s[j];
+                var mm = System.Text.RegularExpressions.Regex.Match(
+                    s, "\"code_mtime\"\\s*:\\s*(\\d+)");
+                var digits = mm.Success ? mm.Groups[1].Value : "";
                 long running;
-                if (!long.TryParse(digits, out running)) return null;
+                if (!long.TryParse(digits, out running))
+                {
+                    // ⚠️ 解析不了要报「未知」，⛔ 不能静默当成「不旧」
+                    // （旧写法从 i+13 手切，正好落在 ": " 的空格上 ⇒ 这道防线从来没生效过）
+                    Log("code_mtime 解析失败：" + s.Substring(Math.Max(0, i), Math.Min(40, s.Length - i)));
+                    return "后端版本未知（没读到 code_mtime）；关掉看板再开一次更保险";
+                }
                 if (running < disk - 1)
                 {
                     Log("backend stale: running=" + running + " disk=" + disk);
