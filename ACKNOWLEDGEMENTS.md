@@ -40,6 +40,7 @@
 | `waypost` | 无许可证文件（README 明写「暂未选许可证（私有仓）」） | 值班／守护形态 |
 | `renforge-mcp` | **MIT**（Copyright (c) 2026 RenForge contributors） | 仅调研其 MCP 形态，**未包含其任何代码** |
 
+> `renforge-mcp` 的上游：<https://github.com/alex-jordan547/renforge-mcp>（以该仓 LICENSE 为准）。
 > 上述前三个项目没有许可证文本，因此本项目**没有复制它们的代码或文档原文**，相关能力均为独立实现；
 > 按版权法「无许可证＝保留所有权利」处理。`renforge-mcp` 虽是 MIT，本项目也没有引用其代码。
 
