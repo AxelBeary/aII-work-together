@@ -66,6 +66,11 @@ namespace BoardShell
         const uint FLASHW_ALL = 3;
         const uint FLASHW_TIMERNOFG = 12;
 
+        // 系统自带提醒声（用户 2026-10-20 拍板：走 Windows 自己的提醒通道，别自造提示音）
+        [DllImport("user32.dll")]
+        static extern bool MessageBeep(uint uType);
+        const uint MB_ICONASTERISK = 0x00000040;
+
         // 让后端「跟着壳一起死」：壳被强杀（任务管理器/卡死）时，子进程不会变孤儿占着 8777。
         // 靠 Job Object 的 KILL_ON_JOB_CLOSE，比在退出路径里 Kill() 靠谱（崩了也有兜底）。
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -751,9 +756,18 @@ namespace BoardShell
                 title = "有卡卡住了";
                 text = JoinUp(newFailed) + "（引擎失败/超预算/返工到顶）";
             }
-            Balloon(title, text);
-            FlashTaskbar();
+            AlertBalloon(title, text);
             Log("alert " + title + "：" + text);
+        }
+
+        // 提醒＝气泡（Win11 由系统通知中心接管）＋ Windows 提醒音 ＋ 任务栏闪烁。
+        // ⛔ 不自己放 wav：用户要「Windows 自带提醒通道」，那就用系统音，别引入音频文件。
+        static void AlertBalloon(string title, string text)
+        {
+            Balloon(title, text);
+            try { System.Media.SystemSounds.Asterisk.Play(); }
+            catch { try { MessageBeep(MB_ICONASTERISK); } catch { } }
+            FlashTaskbar();
         }
 
         static void FlashTaskbar()
@@ -785,9 +799,8 @@ namespace BoardShell
             t1.Tick += delegate
             {
                 t1.Stop();
-                Balloon("需要你拍板", "C1020-test 在等你（这是一次测试提醒）");
-                FlashTaskbar();
-                Say("balloon shown at +" + Elapsed() + "ms");
+                AlertBalloon("需要你拍板", "C1020-test 在等你（这是一次测试提醒）");
+                Say("balloon+sound shown at +" + Elapsed() + "ms");
             };
             t1.Start();
             var t2 = new System.Windows.Forms.Timer();
@@ -1049,6 +1062,7 @@ namespace BoardShell
                 string js = "JSON.stringify({title:document.title,"
                           + "h1:(document.querySelector('h1')||{}).textContent||'',"
                           + "cols:document.querySelectorAll('.col').length,"
+                          + "filt:!!document.getElementById('filters'),"
                           + "term:!!document.getElementById('term'),"
                           + "msg:!!document.getElementById('btn-msg')})";
                 var t = View.CoreWebView2.ExecuteScriptAsync(js);
@@ -1062,6 +1076,7 @@ namespace BoardShell
                 bool okTitle = norm.Contains("看板");
                 bool okTerm = norm.Contains("\"term\":true");
                 bool okMsg = norm.Contains("\"msg\":true");
+                bool okFilt = norm.Contains("\"filt\":true");
                 bool okCols = false;
                 var i = norm.IndexOf("\"cols\":");
                 if (i > 0)
@@ -1069,11 +1084,13 @@ namespace BoardShell
                     int n = 0;
                     var digits = "";
                     for (int j = i + 7; j < norm.Length && char.IsDigit(norm[j]); j++) digits += norm[j];
-                    if (int.TryParse(digits, out n) && n >= 3) okCols = true;
+                    // 只画有卡的列之后，空项目时是 0 列（画的是「还没有卡」提示）
+                    if (int.TryParse(digits, out n) && n >= 1) okCols = true;
                 }
                 Say("cols ok= " + okCols + "  title ok= " + okTitle
-                                  + "  term ok= " + okTerm + "  msg ok= " + okMsg);
-                bool pass = nav && okTitle && okCols && okTerm && okMsg;
+                                  + "  term ok= " + okTerm + "  msg ok= " + okMsg
+                                  + "  filters ok= " + okFilt);
+                bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt;
                 Say(pass ? "SELFTEST PASS" : "SELFTEST FAIL");
                 return pass ? 0 : 2;
             }

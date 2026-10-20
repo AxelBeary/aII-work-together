@@ -42,6 +42,15 @@ main{padding:18px 22px 60px}
 .stat b{display:block;font-size:20px;line-height:1.2}
 .stat span{color:var(--mut);font-size:11px}
 .board{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:12px}
+/* 状态筛选条：8 列在 1360px 里塞不下，以前「拍板中」列默认在屏幕外要拖动才看得见。
+   现在默认只画**有卡的列**，顶部按状态筛。 */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{background:#14171d;border:1px solid var(--line);color:var(--mut);border-radius:999px;
+  padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+.chip em{color:#6c7683;font-style:normal;margin-left:5px;font-variant-numeric:tabular-nums}
+.chip:hover{border-color:#39424f;color:var(--fg)}
+.chip.on{background:#1b2431;border-color:#3b5b8a;color:#cfe0ff}
+.chip.on em{color:#8fa9cc}
 .col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
   justify-content:space-between;color:#c8d0da}
@@ -156,6 +165,7 @@ body.term-on .toast{bottom:340px}
 
 <main>
   <div class="stats" id="stats"></div>
+  <div class="filters" id="filters"></div>
   <div class="board" id="board"></div>
 </main>
 
@@ -267,6 +277,7 @@ body.term-on .toast{bottom:340px}
 const $ = id => document.getElementById(id);
 const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","核验中","拍板中","完成"];
 let CUR = {project:null, cards:[], state:null};
+let FILTER = null;            // 顶部状态筛选：null＝全部（只画有卡的列，见 render）
 let pollTimer = null;
 
 function toast(msg, isErr){
@@ -360,9 +371,26 @@ function render(cards){
   const by = {};
   STATE_ORDER.forEach(s => by[s]=[]);
   cards.forEach(c => (by[c.state] || (by[c.state]=[])).push(c));
-  $("board").innerHTML = STATE_ORDER.map(s => {
+
+  // 顶部筛选条（点一下只看那一种状态；再点「全部」回来）
+  $("filters").innerHTML =
+    [`<button class="chip ${FILTER?"":"on"}" data-f="">全部 <em>${cards.length}</em></button>`]
+      .concat(STATE_ORDER.map(s =>
+        `<button class="chip ${FILTER===s?"on":""}" data-f="${s}">${s} <em>${(by[s]||[]).length}</em></button>`))
+      .join("");
+  $("filters").querySelectorAll(".chip").forEach(el => {
+    el.onclick = () => { FILTER = el.dataset.f || null; render(CUR.cards || cards); };
+  });
+
+  // ⚠️ 只画**有卡的列**：8 列 × 268px 在 1360px 窗口里放不下，
+  //    以前靠横向滚动，「拍板中」默认在屏幕外——要人拖着找，等于藏起来了。
+  const cols = FILTER ? [FILTER] : STATE_ORDER.filter(s => (by[s] || []).length);
+  if(!cols.length){
+    $("board").innerHTML = '<div class="empty" style="padding:36px;font-size:13px">还没有卡 —— 点右上角「新建任务」</div>';
+    return;
+  }
+  $("board").innerHTML = cols.map(s => {
     const list = by[s]||[];
-    if(!list.length && ["核验中","待返工","阻塞"].includes(s)) return "";
     let inner = '<div class="empty">—</div>';
     if(list.length){
       inner = list.slice(0, CAP).map(cardHtml).join("");

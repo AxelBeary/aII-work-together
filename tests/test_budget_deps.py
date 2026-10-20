@@ -286,18 +286,43 @@ def test_alert_line():
        a in line2 and b in line2, line2)
 
 
+# ---------- 7. 项目默认预算：设了就继承，单卡可覆盖，不设＝不限 ----------
+def test_project_default_budget():
+    proj = fresh_proj("defaults")
+    rc, out = board(proj, "project", "default", "--max-cost", "1.5", "--max-minutes", "20")
+    ok("项目默认预算设得进", rc == 0 and "1.50" in out, out.strip()[:70])
+
+    a = add(proj, "--title", "继承默认", "--goal", "x", "--deliverable", "out/p.txt")
+    rc, out = board(proj, "show", a)
+    ok("新卡继承项目默认（没写 = 不限变成 1.50 / 20 分钟）",
+       "1.50" in out and "20 分钟" in out, out.strip()[:60])
+
+    b = add(proj, "--title", "单卡覆盖", "--goal", "x", "--deliverable", "out/q.txt",
+            "--max-cost", "0.2")
+    rc, out = board(proj, "show", b)
+    ok("单卡写的预算优先于项目默认", "0.20" in out, out.strip()[:60])
+
+    rc, out = board(proj, "project", "default", "--max-cost", "none")
+    c = add(proj, "--title", "取消默认后", "--goal", "x", "--deliverable", "out/r.txt")
+    rc, out = board(proj, "show", c)
+    ok("取消默认后新卡不限花费（但仍继承时长 20 分钟）",
+       "未设上限" not in out and "0.50" not in out and "20 分钟" in out,
+       out.strip()[:60])
+
+
 def main():
     SANDBOX.mkdir(parents=True, exist_ok=True)
     try:
         for fn in (test_budget_stop, test_deps, test_error_class,
-                   test_budget_owner_rule, test_diff, test_alert_line):
+                   test_budget_owner_rule, test_diff, test_alert_line,
+                   test_project_default_budget):
             print(f"\n--- {fn.__name__} ---")
             fn()
         print(f"\n{'=' * 50}")
         if fails:
             print(f"✗ 未通过：{'、'.join(fails)}")
             return 1
-        print("✓ 预算/依赖/错误分级/刹车权限/拍板 diff/提醒 六组反向测试全过")
+        print("✓ 预算/依赖/错误分级/刹车权限/拍板 diff/提醒/默认预算 七组反向测试全过")
         return 0
     finally:
         shutil.rmtree(SANDBOX, ignore_errors=True)

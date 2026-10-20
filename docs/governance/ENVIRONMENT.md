@@ -524,6 +524,19 @@ nav done       +1391ms
 
 ---
 
+## E-36 · `NotifyIcon` 没有 `BeginInvoke`（2026-10-20 编译期踩到）
+
+**现象**：托盘的 `ShowStatus` 改到后台线程去等 HTTP 之后，要回 UI 线程弹气泡，写 `_tray.BeginInvoke(...)`
+——编译报 `CS1061: NotifyIcon 不包含 BeginInvoke`。
+
+**根因**：`NotifyIcon` 是**组件**不是 `Control`，没有窗口句柄，自然没有 `Invoke/BeginInvoke`。
+
+**修法**：准备一个隐藏的 `Control _sync`，在 UI 线程启动时先碰一下 `.Handle` 建句柄，
+之后后台线程统一走 `OnUI(Action)`（`InvokeRequired` → `BeginInvoke`）。
+⛔ 别在后台线程第一次访问 `.Handle`——那会把句柄建在错误的线程上。
+
+---
+
 ## E-32 · 在 UI 线程上等 WebView2 初始化＝双击卡死（2026-10-20 实测，用户报的「卡死 + 初始化失败」）
 
 **现象**：双击「看板」→ 窗口白着不动（卡死）→ 弹出「WebView2 初始化失败」。

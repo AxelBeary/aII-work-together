@@ -624,8 +624,18 @@ class _WriteTx:
     def __enter__(self):
         self.conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA busy_timeout=30000")
-        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self.conn.execute("PRAGMA busy_timeout=30000")
+            self.conn.execute("BEGIN IMMEDIATE")
+        except Exception:
+            # ⚠️ 2026-10-20 修（Q1 #11）：PRAGMA/BEGIN 失败时连接会挂着没人关。
+            #    长跑（多线程/多进程）下泄漏的 fd + 未释放的写锁会把后面的写入全卡住。
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
+            raise
         return self.conn
 
     def __exit__(self, exc_type, exc, tb):

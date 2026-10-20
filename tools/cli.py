@@ -37,9 +37,14 @@ def cmd_new(a):
     cid = a.id or f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}"
     if B.get_card(cid):
         B.die(f"卡片已存在：{cid}")
-    # 预算从命令行来的是字符串，先归一成数字（none/不限 → None）
+    # 预算从命令行来的是字符串，先归一成数字（none/不限 → None）；
+    # 没带参数则继承项目默认值（D-016 补充：默认值不设＝不限）
     mc = _parse_limit(getattr(a, "max_cost", None), float)
     mm = _parse_limit(getattr(a, "max_minutes", None), int)
+    if mc is None and defaults.get("max_cost_usd") not in (None, "", "none"):
+        mc = float(defaults["max_cost_usd"])
+    if mm is None and defaults.get("max_minutes") not in (None, "", "none"):
+        mm = int(defaults["max_minutes"])
     card = {
         "id": cid, "title": a.title, "goal": a.goal or "",
         "territory": a.territory or [], "deliverables": a.deliverable or [],
@@ -729,6 +734,16 @@ def cmd_project(a):
             d["model"] = a.model
         if a.effort:
             d["effort"] = a.effort
+        # 预算默认值（D-016 补充）：不设＝新卡不限；设了则新卡自动继承，仍可单卡覆盖
+        for key, raw, cast in (("max_cost_usd", getattr(a, "max_cost", None), float),
+                               ("max_minutes", getattr(a, "max_minutes", None), int)):
+            v = _parse_limit(raw, cast)
+            if v is None:
+                continue                 # 没带这个参数＝不动
+            if v == "none":
+                d.pop(key, None)         # 明确取消
+            else:
+                d[key] = v
         # 写回
         ws = getattr(a, "workspace", None)
         if ws:
@@ -739,6 +754,11 @@ def cmd_project(a):
         wsd = P.workspace_of(B.ROOT)
         B.ok(f"本项目默认值：引擎={d.get('engine','—')} 模型={d.get('model','—')} "
            f"思考={d.get('effort','—')}")
+        bc = d.get("max_cost_usd")
+        bm = d.get("max_minutes")
+        if bc is not None or bm is not None:
+            print(f"  新卡预算：{('$%.2f' % float(bc)) if bc is not None else '不限'}"
+                  f" / {(str(int(bm)) + ' 分钟') if bm is not None else '不限'}")
         print(f"  工作区：{wsd}")
         return
 
@@ -1265,17 +1285,26 @@ def cmd_msg(a):
                          reply_to=a.reply_to, meta=meta)
         except ValueError as e:
             B.die(str(e))
-        if a.json:
-            print(M.dumps(msg))
-        else:
-            B.ok(f"已存为 #{msg['seq']}：{sender} → {a.to}"
-                 + (f"（回复 #{a.reply_to}）" if a.reply_to else ""))
         if not a.wake:
+            if a.json:
+                print(M.dumps(msg))
+            else:
+                B.ok(f"已存为 #{msg['seq']}：{sender} → {a.to}"
+                     + (f"（回复 #{a.reply_to}）" if a.reply_to else ""))
             return 0
         state, detail = M.wake(st, msg["seq"], engine=a.wake_engine,
                                model=a.wake_model, session=a.wake_session,
                                force=a.force)
-        print(f"  唤醒：{state} ｜ {detail}")
+        if a.json:
+            # ⚠️ 2026-10-20 修（Q1 #9）：以前 --json --wake 会先打一段 JSON、再打一行「唤醒：…」，
+            #    调用方 json.loads 直接炸。现在**整个输出是一个 JSON 对象**，唤醒结果放 wake 字段。
+            out = dict(msg)
+            out["wake"] = {"state": state, "detail": detail}
+            print(json.dumps(out, ensure_ascii=False))
+        else:
+            B.ok(f"已存为 #{msg['seq']}：{sender} → {a.to}"
+                 + (f"（回复 #{a.reply_to}）" if a.reply_to else ""))
+            print(f"  唤醒：{state} ｜ {detail}")
         if state == M.ST_DISPATCHED:
             return 0
         return M.EXIT_HELD if state == M.ST_HELD else M.EXIT_ERROR
@@ -1373,6 +1402,10 @@ def main():
     s.add_argument("--engine")
     s.add_argument("--model")
     s.add_argument("--effort")
+    s.add_argument("--max-cost", dest="max_cost", type=str, default=None,
+                   help="新卡默认花费上限（美元）；none＝取消默认")
+    s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None,
+                   help="新卡默认时长上限（分钟）；none＝取消默认")
     s.add_argument("--workspace", help="指定 agent 干活的工作区（默认＝项目根）")
     s.set_defaults(f=cmd_project)
 

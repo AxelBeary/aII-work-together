@@ -92,6 +92,30 @@ def main():
     ok("对照：b1 仍有 1 条新（空不是假绿）", "1 条新" in out,
        out.strip().splitlines()[0][:40])
 
+    # 3b --json --wake：整个输出必须是一个 JSON 对象（Q1 #9 修的就是这里夹人话）
+    pj = subprocess.run([sys.executable, str(ROOT / "tools" / "board.py"),
+                         "-C", str(PROJ), "msg", "send", "--to", "w1",
+                         "--body", "唤醒测试", "--from", "b1", "--json",
+                         "--wake", "--wake-engine", "opencode"],
+                        cwd=str(ROOT), env=dict(os.environ, **{
+                            "ABOARD_REGISTRY_DIR": str(SANDBOX / "reg"),
+                            "PYTHONIOENCODING": "utf-8", "ABOARD_SEAT": "tester"}),
+                        capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
+    raw = (pj.stdout or "").strip()
+    parsed = None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+    ok("--json --wake 整体是一个 JSON（不夹人话）", parsed is not None,
+       raw[:70].replace("\n", "⏎"))
+    ok("唤醒结果在 JSON 的 wake 字段里，且退出码分档",
+       isinstance(parsed, dict) and isinstance(parsed.get("wake"), dict)
+       and parsed["wake"].get("state") in ("HELD", "FAILED", "SENT", "DISPATCHED")
+       and pj.returncode in (0, 2, 3),
+       f"rc={pj.returncode} wake={parsed and parsed.get('wake')}")
+
     # 4 append-only：已读不写 messages 表，只往 msg_reads 追加
     sys.path.insert(0, str(ROOT / "tools"))
     import storage
@@ -99,7 +123,7 @@ def main():
     before = len(st.messages(limit=999))
     board("msg", "ack", str(m1["seq"]), "--as", "w1")     # 再 ack 一次
     after = len(st.messages(limit=999))
-    ok("已读不改留言表（append-only）", before == after == 3,
+    ok("已读不改留言表（append-only）", before == after and after >= 4,
        f"{before} → {after}")
     reads = st.reads("w1")
     ok("msg_reads 里 w1 有 2 条已读", len(reads) == 2, f"{len(reads)} 条")

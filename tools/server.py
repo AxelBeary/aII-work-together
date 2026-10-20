@@ -289,10 +289,14 @@ def api_cost(q):
     return {"total": total, "by_card": by_card}
 
 
-def _num_or_none(v, cast=float):
-    """把界面传来的 '' / None 当成「不限」，数字照转，杂字直接拒。"""
+def _budget_field(body, defaults, key, cast):
+    """界面留空 → 继承项目默认值；项目也没设 → 不限（None）。"""
+    v = body.get(key)
     if v is None or v == "":
-        return None
+        dv = (defaults or {}).get(key)
+        if dv in (None, "", "none"):
+            return None
+        return cast(float(dv))
     try:
         return cast(float(v))
     except (TypeError, ValueError):
@@ -324,8 +328,8 @@ def api_create(body):
         "created_kind": "human",
         "irreversible": bool(body.get("irreversible")),
         "source_card": None,
-        "max_cost_usd": _num_or_none(body.get("max_cost_usd")),
-        "max_minutes": _num_or_none(body.get("max_minutes"), int),
+        "max_cost_usd": _budget_field(body, defaults, "max_cost_usd", float),
+        "max_minutes": _budget_field(body, defaults, "max_minutes", int),
         "blocked_by": body.get("blocked_by") or [],
     }
     B.create_card(card)

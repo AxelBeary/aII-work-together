@@ -233,3 +233,19 @@
 | 界面 | 新建对话框预算两栏、卡片预算/依赖标签、diff 列表、深链接 `?open=`／`?new=1` | 已做 | `board/shots/20261020-b2-list.png`、`-card.png`、`-new.png` |
 
 坑记 **E-35**。规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件。
+
+### C 批 · 界面列布局 ＋ Q1 剩余五条（2026-10-20 第四段，D-018）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 只画有卡的列 ＋ 顶部状态筛选 | `tools/ui.html`（`FILTER`／`.chip`／`render`） | 已做 | `board/shots/20261020-b3-list.png`：三列都在窗口内，无横向滚动 |
+| 壳自检同步 | `shell/BoardShell.cs`（列数 ≥1 ＋ 筛选条存在） | PASS | `cols:1 filt:true … SELFTEST PASS` |
+| 项目默认预算 | `cli.cmd_project default --max-cost/--max-minutes`、`server._budget_field` | 已做 | 继承 1.50/20 分钟；单卡覆盖；`none` 取消 |
+| 提醒声 | `shell/BoardShell.cs` `AlertBalloon`（`SystemSounds.Asterisk`→`MessageBeep`） | 已做 | `--notify-test`：`balloon+sound shown at +919ms` |
+| Q1 #6 托盘不读管道 | `tray/BoardTray.cs` `Hook`（后台吸流到 `board/ui-server.log`） | 已修 | 托盘 `--selftest` PASS |
+| Q1 #9 `msg --json --wake` 夹人话 | `cli.cmd_msg`（整体一个 JSON，唤醒放 `wake` 字段） | 已修 | 留言闸 17 条（新增严格 json.loads 断言） |
+| Q1 #10 托盘 UI 线程等 HTTP | `tray.ShowStatus` 移到后台线程 + `OnUI` 回 UI | 已修 | 编译通过；托盘 `--selftest` PASS |
+| Q1 #11 `_WriteTx.__enter__` 漏连接 | `tools/storage.py`（BEGIN 失败先 close 再抛） | 已修 | 全量闸绿 |
+| Q1 #12 托盘端口不透传 | `tray.OpenBoard` 传 `--port=`／`--project=` | 已修 | 代码级；未起可见托盘验证 |
+
+规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件；预算与依赖闸 **31 条**；留言闸 **17 条**。

@@ -28,6 +28,18 @@ namespace BoardTray
         static int _port = 8777;
         static HttpClient _http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         static string _logFile;
+        // 后台线程要回到 UI 线程弹气泡时用：NotifyIcon 不是 Control，没有 BeginInvoke
+        static Control _sync = new Control();
+
+        static void OnUI(Action fn)
+        {
+            try
+            {
+                if (_sync.InvokeRequired) _sync.BeginInvoke(fn);
+                else fn();
+            }
+            catch { }
+        }
 
         [STAThread]
         static void Main(string[] args)
@@ -68,6 +80,7 @@ namespace BoardTray
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            try { var _h = _sync.Handle; } catch { }   // 在 UI 线程上先建句柄，后台线程才能 BeginInvoke
 
             BuildTray();
             EnsureServer();
@@ -193,6 +206,12 @@ namespace BoardTray
                     RedirectStandardError = true,
                 };
                 _server = Process.Start(psi);
+                // ⚠️ 2026-10-20 修（Q1 #6）：以前 RedirectStandardOutput/Error 了却**从来不读**，
+                //    后端往 stdout 写满管道缓冲（约 4KB）就会阻塞在 write 上——表现是「后端突然变哑」。
+                //    现在起后台线程把两端吸到 board/ui-server.log（和桌面壳一个做法）。
+                var logPath = Path.Combine(_projectDir, "board", "ui-server.log");
+                Hook(_server.StandardOutput, logPath);
+                Hook(_server.StandardError, logPath);
                 for (int i = 0; i < 16; i++)
                 {
                     Thread.Sleep(500);
@@ -208,6 +227,27 @@ namespace BoardTray
             }
         }
 
+        static void Hook(StreamReader r, string path)
+        {
+            if (r == null) return;
+            var t = new Thread(delegate ()
+            {
+                try
+                {
+                    using (var w = new StreamWriter(path, true, new UTF8Encoding(false)))
+                    {
+                        w.AutoFlush = true;
+                        string line;
+                        while ((line = r.ReadLine()) != null) w.WriteLine(line);
+                    }
+                }
+                catch { }
+            });
+            t.IsBackground = true;
+            t.Name = "server-pipe";
+            t.Start();
+        }
+
         static void OpenBoard()
         {
             // 优先用桌面壳（自带图标/无地址栏）；壳没编译过就退回浏览器
@@ -216,7 +256,11 @@ namespace BoardTray
                 var shell = Path.Combine(_projectDir, "shell", "boardshell.exe");
                 if (File.Exists(shell))
                 {
-                    Process.Start(new ProcessStartInfo(shell) { UseShellExecute = true });
+                    // Q1 #12：自定义端口要透传，否则托盘盯着 8799、壳却去开 8777 的旧后端
+                    var psi = new ProcessStartInfo(shell,
+                        "--port=" + _port + " --project=\"" + _projectDir + "\"");
+                    psi.UseShellExecute = true;
+                    Process.Start(psi);
                     return;
                 }
             }
@@ -269,22 +313,29 @@ namespace BoardTray
 
         static void ShowStatus()
         {
-            EnsureServer();
-            try
+            // Q1 #10：以前在 UI 线程上 .Result 等 HTTP，后端一慢托盘就卡住（同 E-33）
+            var t = new Thread(delegate ()
             {
-                // ⚠️ 必须读 api/cards：api/state 只给项目列表和当前项目，里面没有卡片，
-                // 以前在这儿数字段导致「永远是 0 张」。
-                var s = _http.GetStringAsync(BaseUrl + "api/cards").Result;
-                int total = Count(s, "\"id\":\"");
-                int done = Count(s, "\"state\":\"完成\"");
-                int pending = Count(s, "\"state\":\"拍板中\"");
-                int running = Count(s, "\"state\":\"进行中\"");
-                string msg = "共 " + total + " 张卡：完成 " + done +
-                             "，进行中 " + running;
-                if (pending > 0) msg += "，等你拍板 " + pending;
-                Balloon("现在的状态", msg);
-            }
-            catch (Exception ex) { Balloon("读不到状态", ex.Message); }
+                string msg;
+                try
+                {
+                    EnsureServer();
+                    // ⚠️ 必须读 api/cards：api/state 只给项目列表和当前项目，里面没有卡片，
+                    // 以前在这儿数字段导致「永远是 0 张」。
+                    var s = _http.GetStringAsync(BaseUrl + "api/cards").Result;
+                    int total = Count(s, "\"id\":\"");
+                    int done = Count(s, "\"state\":\"完成\"");
+                    int pending = Count(s, "\"state\":\"拍板中\"");
+                    int running = Count(s, "\"state\":\"进行中\"");
+                    msg = "共 " + total + " 张卡：完成 " + done + "，进行中 " + running;
+                    if (pending > 0) msg += "，等你拍板 " + pending;
+                }
+                catch (Exception ex) { msg = "读不到：" + ex.Message; }
+                OnUI(delegate { Balloon("现在的状态", msg); });
+            });
+            t.IsBackground = true;
+            t.Name = "status";
+            t.Start();
         }
 
         static int Count(string s, string needle)
