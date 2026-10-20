@@ -6,7 +6,7 @@
 
 - 本席执行的是本机只读侦察；没有联网，也没有启动任何 CLI agent、MCP 服务或游戏引擎。
 - `agent-delegation` 的三个指定文件、全局与项目纪律、记忆块及列出的本机项目说明均可读。CLI 条目属于技能中已有的历史实测摘要，不等于本次现场探活；各引擎当前版本、登录态、权限、模型路由、实际运行结果均为**未证**。
-- 同级目录复算：`Get-ChildItem -LiteralPath 'E:\GithubClone' -Directory -Force | Measure-Object` 得 **13 个目录**；与 E-02 清单对照为 **12 个列名项目目录＋1 个中文名目录**，故派工前提「12 个项目」一致，未触发「派工旧数」。控制台中文名有乱码，但数量与英文目录名可核对；本席不据乱码猜测该目录名称或用途。
+- 同级目录复算：`Get-ChildItem -LiteralPath '<repos>' -Directory -Force | Measure-Object` 得 **13 个目录**；与 E-02 清单对照为 **12 个列名项目目录＋1 个中文名目录**，故派工前提「12 个项目」一致，未触发「派工旧数」。控制台中文名有乱码，但数量与英文目录名可核对；本席不据乱码猜测该目录名称或用途。
 - RTOC 只按本机记忆块读取能力摘要；凭据文件仅运行 `Test-Path`，结果 `True`。没有打开或输出其内容，也没有发起请求。
 - 证据级别：本报告的本机文件位置、行号、目录数和凭据文件存在性为**本机只读实测**；技能转录中的引擎行为/RTOC 行为为**既有记忆或既有实测记录**，不是本轮复跑；复用价值与接入成本为**调研判断**，不是兼容性测试。
 
@@ -50,19 +50,19 @@
 
 | 资产/候选 | 盘上路径与证据锚点 | 能复用什么 | 接入代价/边界 | 本席判定 |
 |---|---|---|---|---|
-| `agent-delegation` 技能 | `C:\Users\qly19\.agents\skills\agent-delegation\SKILL.md`；§1–§5、§10；本机权威根亦见 `ENVIRONMENT.md` E-03 行 22–28。 | 任务契约、引擎调用/判错口径、权限护栏、回归/度量/续跑/验收流程，是看板规则的直接来源。 | **不改技能本体**；看板实现需把文档规则逐项转为字段/状态/验证，不是直接可执行后端。各技能与引擎数据需按版本复算。 | **可用（规则与契约）**；代码复用未证。 |
-| `sentinel-ops` 坞与治理范式 | `E:\GithubClone\sentinel-ops\AGENTS.md` §1–§3、§10 行 22–57、136–173；`dock\README.md` 行 7–25、66–76。 | 六纪律、席位/领地、插件 manifest、能力授权、状态机/审计及复核分层，可作为看板治理与扩展点设计参考。 | 全套是 Windows/Rust 插件宿主与系统看守器，契约已有项目专用限制；allworktogether 规定只借鉴范式、不共享代码（本项目 `AGENTS.md` 行 17–19）。移植代码需另行拍板并做架构适配。 | **部分可用（范式）**；直接搬代码不可用/未授权。 |
-| `agent-delegation` 项目研究档案 | `E:\GithubClone\agent-delegation\README.md` 行 3–26、31–45；`research\` 有 01–05、07–09 等方法与事实档。 | 有 CLI 事实层、复算手册和决策/证据分级，可作为看板适配器资料目录的内容源。 | README 明示它不是工具或服务（行 3–5）；目前所见项目交付以研究文档和技能为主，没有可直接接入的常驻看板后端。要产品化需新建接口层。 | **部分可用（知识资产）**；可执行底座未证。 |
-| `waypost` | `E:\GithubClone\waypost\README.md` 行 14–30、32–53、78–109；`docs\ARCHITECTURE.md` 行 5–10、27–37、39–54。 | 信箱/哨兵/无头会话的状态处理、机器可读证据链、显式状态机、影子对照、失败告警，以及不可信输入的硬边界。其分层思想与「看板＋执行臂」相邻。 | 产品目标是跨机异步信箱，不是多人任务看板；Python 单体、同步目录和 Hermes 处理链与本项目边界不同。直接复用需拆组件、消除跨机/桌面唤醒副作用并重新审计。 | **部分可用（模式/局部结构）**；代码移植收益未证。 |
-| `renforge-mcp` | `E:\GithubClone\renforge-mcp\README.md` 行 10–20、123–169、178–224；本机源目录 `src\renforge\` 存在。 | MCP server/CLI/dashboard 同时提供入口、MCP client 配置范式、运行时操作的权限/证据交互形态，可供接口层研究。 | 面向 Ren'Py 游戏编辑与运行时控制，README 标注 alpha（行 19–20）；与看板领域无直接数据契约。不得因此读 `E:\renpy` 或操作真实桌面/游戏。 | **部分可用（MCP 形态参考）**；项目代码直接复用不建议。 |
+| `agent-delegation` 技能 | `%USERPROFILE%\.agents\skills\agent-delegation\SKILL.md`；§1–§5、§10；本机权威根亦见 `ENVIRONMENT.md` E-03 行 22–28。 | 任务契约、引擎调用/判错口径、权限护栏、回归/度量/续跑/验收流程，是看板规则的直接来源。 | **不改技能本体**；看板实现需把文档规则逐项转为字段/状态/验证，不是直接可执行后端。各技能与引擎数据需按版本复算。 | **可用（规则与契约）**；代码复用未证。 |
+| `sentinel-ops` 坞与治理范式 | `<repos>\sentinel-ops\AGENTS.md` §1–§3、§10 行 22–57、136–173；`dock\README.md` 行 7–25、66–76。 | 六纪律、席位/领地、插件 manifest、能力授权、状态机/审计及复核分层，可作为看板治理与扩展点设计参考。 | 全套是 Windows/Rust 插件宿主与系统看守器，契约已有项目专用限制；allworktogether 规定只借鉴范式、不共享代码（本项目 `AGENTS.md` 行 17–19）。移植代码需另行拍板并做架构适配。 | **部分可用（范式）**；直接搬代码不可用/未授权。 |
+| `agent-delegation` 项目研究档案 | `<repos>\agent-delegation\README.md` 行 3–26、31–45；`research\` 有 01–05、07–09 等方法与事实档。 | 有 CLI 事实层、复算手册和决策/证据分级，可作为看板适配器资料目录的内容源。 | README 明示它不是工具或服务（行 3–5）；目前所见项目交付以研究文档和技能为主，没有可直接接入的常驻看板后端。要产品化需新建接口层。 | **部分可用（知识资产）**；可执行底座未证。 |
+| `waypost` | `<repos>\waypost\README.md` 行 14–30、32–53、78–109；`docs\ARCHITECTURE.md` 行 5–10、27–37、39–54。 | 信箱/哨兵/无头会话的状态处理、机器可读证据链、显式状态机、影子对照、失败告警，以及不可信输入的硬边界。其分层思想与「看板＋执行臂」相邻。 | 产品目标是跨机异步信箱，不是多人任务看板；Python 单体、同步目录和 Hermes 处理链与本项目边界不同。直接复用需拆组件、消除跨机/桌面唤醒副作用并重新审计。 | **部分可用（模式/局部结构）**；代码移植收益未证。 |
+| `renforge-mcp` | `<repos>\renforge-mcp\README.md` 行 10–20、123–169、178–224；本机源目录 `src\renforge\` 存在。 | MCP server/CLI/dashboard 同时提供入口、MCP client 配置范式、运行时操作的权限/证据交互形态，可供接口层研究。 | 面向 Ren'Py 游戏编辑与运行时控制，README 标注 alpha（行 19–20）；与看板领域无直接数据契约。不得因此读 `<隔离项目>` 或操作真实桌面/游戏。 | **部分可用（MCP 形态参考）**；项目代码直接复用不建议。 |
 | RTOC 网页型无工具 AI 信道 | 记忆块 `rtoc-channel`（全局，2026-10-18 更新）；测试 `2rtoc.env` 存在性为 True，未读内容。 | 可作为可选外部模型出口；支持 Anthropic 风格 messages 请求，单请求独立，无工具、无文件访问、无跨请求记忆。 | 请求体约 46KB 硬上限；≥64KB 可能静默空回仍计费；可用性受时段影响；只能内联材料。凭据必须外置且不入日志/卡片；本次未发请求。 | **部分可用（受限模型出口）**；作为执行臂的稳定性未证。 |
-| `E:\GithubClone\agents`、`renpyslim` 等其余目录 | `ENVIRONMENT.md` E-02 行 14–20；现场总目录计数 13。 | 本次没有逐项目审阅其源码或能力。 | 除总单明确点出的资产外未做内容盘点，不把目录存在当成可复用证据。 | **未证**。 |
+| `<repos>\agents`、`renpyslim` 等其余目录 | `ENVIRONMENT.md` E-02 行 14–20；现场总目录计数 13。 | 本次没有逐项目审阅其源码或能力。 | 除总单明确点出的资产外未做内容盘点，不把目录存在当成可复用证据。 | **未证**。 |
 
 ## ⑤ 硬约束清单（原文出处 → 看板设计影响）
 
 | # | 约束原文（节录）与原文位置 | 对看板设计的直接影响 |
 |---:|---|---|
-| 1 | 本项目 `AGENTS.md` 行 17–21：上游技能/兄弟项目只读引用；CLI 只调用不改安装/配置；RTOC 钥匙不得入文件；`E:\renpy` 不读不引。 | 适配器只调用，不得由看板代改引擎配置或上游技能；Ren'Py 隔离区不得作为测试数据/关联路径；密钥字段禁止落库。 |
+| 1 | 本项目 `AGENTS.md` 行 17–21：上游技能/兄弟项目只读引用；CLI 只调用不改安装/配置；RTOC 钥匙不得入文件；`<隔离项目>` 不读不引。 | 适配器只调用，不得由看板代改引擎配置或上游技能；Ren'Py 隔离区不得作为测试数据/关联路径；密钥字段禁止落库。 |
 | 2 | 本项目 `AGENTS.md` 行 27–32：证据优先；反空跑必须非零；退化显式报警；默认 dry-run；一文件一写者；先读环境事实。 | Done/绿灯必须有机器可回读证据和正向反例；工具失效显示 BLOCKED/告警；外部写操作默认预演；同卡/文件写入要租约。 |
 | 3 | 本项目 `AGENTS.md` 行 38–46：交件放项目内批次目录、命名带席号与口径、按领地授权。 | 看板的产物路径与任务/席位绑定；外部项目资料只读引用；交付物有防覆盖命名，不放用户桌面。 |
 | 4 | 本项目 `AGENTS.md` 行 59–66：发牌席派工与亲跑闸门，工兵不能自判，复核席另开会话；引擎校验不并行。 | 状态机区分施工与复核；禁止同执行者自行验证通过；引擎类动作获得专用互斥租约。 |
@@ -70,7 +70,7 @@
 | 6 | 本项目 `AGENTS.md` 行 82–85：PowerShell 不可写件；落盘字节复核；中文强调用「」。 | Agent 交件/心跳/租约由安全文件写入工具直接写；对脚本和产物做字节/语法门禁，避免 shell 写文件绕过。 |
 | 7 | 本项目 `AGENTS.md` 行 99–101：数字须有命令或文件锚点；完成报告写 N of M、口径与时刻；判词闭集。 | 报表强制分子分母、口径、时间和证据链接；状态限制为 PASS/FAIL/BLOCKED/未证，冲突取最严。 |
 | 8 | 本项目 `AGENTS.md` 行 132–139：不得删/移外部文件；不得落密钥；不得代过人机验证；不得上传推送；不可逆动作需放行；未经当场同意不得在真实桌面生成可见物；agent 不可关闭人类拍板卡。 | 远程同步/推送/删除/覆盖/启动桌面程序默认禁用；所有不可逆操作需要明确授权与审计；人类审批卡只能由人推进。 |
-| 9 | 全局 `C:\Users\qly19\.config\opencode\AGENTS.md` 行 9–14：改核心契约需冻结回归与反向测试；派工记度量；长任务进度契约/续跑；故障注入；L1/L2/L3 验证分级；引擎租约。 | 看板需有回归/度量/进度/租约字段与收口工作流；数值阈值不得被改成静默告警；引擎类资源串行。 |
+| 9 | 全局 `%USERPROFILE%\.config\opencode\AGENTS.md` 行 9–14：改核心契约需冻结回归与反向测试；派工记度量；长任务进度契约/续跑；故障注入；L1/L2/L3 验证分级；引擎租约。 | 看板需有回归/度量/进度/租约字段与收口工作流；数值阈值不得被改成静默告警；引擎类资源串行。 |
 | 10 | 全局纪律行 15–25：外部自证不进正档、反空跑、交件三件齐、命名与分母纪律、禁止并发写者期间 `git add -A`、修改闸门前留档旧件。 | 任务结束需独立核验；正反样例并存；提交和闸门修改动作必须保留版本证据并限制后台写入竞争。 |
 | 11 | 全局纪律行 23、项目 `AGENTS.md` 行 83：PowerShell 写文件禁令；项目 `AGENTS.md` 行 138：未经用户当场同意不得在真实桌面产物。 | 自动化执行器不得把 PowerShell 写件/启动可见 UI 当默认后端动作；若产品设计需要桌面通知，必须留在用户授权边界外直至单独拍板。 |
 | 12 | 记忆块 `persona` §七「红线禁令」：ComputerUse 触碰真实桌面需先明确同意；敏感信息不得进日志/数据库/文档/记忆。该记忆无文件行号，以**块名＋小节＋条目**定位。 | 桌面交互工具默认不可用；日志、卡片、运行回执做密钥/IP/敏感路径脱敏；不得把明文凭证作为任务附件。 |
@@ -94,20 +94,20 @@
 
 | 源 | 本报告引用位置/复算口径 |
 |---|---|
-| `E:\GithubClone\allworktogether\AGENTS.md` | 行 17–21、27–32、38–46、59–76、82–85、99–101、132–139。 |
-| `E:\GithubClone\allworktogether\docs\governance\ENVIRONMENT.md` | E-02 行 14–20；技能根/目录口径 E-03 行 22–28；RTOC 摘要 E-05 行 41–45。 |
-| `E:\GithubClone\allworktogether\docs\research\20261019-agent-board-survey\00_派工总单.md` | 只读、文件直写、证据锚点、非零计数及判词：行 14–22。 |
-| `E:\GithubClone\allworktogether\docs\research\20261019-agent-board-survey\P3_本机资产与约束.md` | 任务要求/格式/写入领地/现场复算：行 6–37。 |
-| `C:\Users\qly19\.agents\skills\agent-delegation\SKILL.md` | §1–§5 行 11–43；边界和源文档 §7 行 53–57；编排速查 §10 行 75–78。 |
-| `C:\Users\qly19\.agents\skills\agent-delegation\references\targets.md` | Hermes 行 6–20；codex 行 22–34；qoderclicn 行 36–50；OpenCode 行 52–71。 |
-| `C:\Users\qly19\.agents\skills\agent-delegation\references\orchestration-lessons.md` | 回归 §1 行 6–12；度量 §2 行 14–19；续跑 §3 行 21–29；故障 §4 行 31–36；验证 §5 行 38–43；租约 §6 行 45–51；证据 §7 行 53–60；派工 §8 行 62–70；治理 §9 行 72–76；提交留档 §11 行 87–96。 |
-| `C:\Users\qly19\.config\opencode\AGENTS.md` | 全局纪律 1–17，行 7–25；接派工行 27–31。 |
+| `<repo>\AGENTS.md` | 行 17–21、27–32、38–46、59–76、82–85、99–101、132–139。 |
+| `<repo>\docs\governance\ENVIRONMENT.md` | E-02 行 14–20；技能根/目录口径 E-03 行 22–28；RTOC 摘要 E-05 行 41–45。 |
+| `<repo>\docs\research\20261019-agent-board-survey\00_派工总单.md` | 只读、文件直写、证据锚点、非零计数及判词：行 14–22。 |
+| `<repo>\docs\research\20261019-agent-board-survey\P3_本机资产与约束.md` | 任务要求/格式/写入领地/现场复算：行 6–37。 |
+| `%USERPROFILE%\.agents\skills\agent-delegation\SKILL.md` | §1–§5 行 11–43；边界和源文档 §7 行 53–57；编排速查 §10 行 75–78。 |
+| `%USERPROFILE%\.agents\skills\agent-delegation\references\targets.md` | Hermes 行 6–20；codex 行 22–34；qoderclicn 行 36–50；OpenCode 行 52–71。 |
+| `%USERPROFILE%\.agents\skills\agent-delegation\references\orchestration-lessons.md` | 回归 §1 行 6–12；度量 §2 行 14–19；续跑 §3 行 21–29；故障 §4 行 31–36；验证 §5 行 38–43；租约 §6 行 45–51；证据 §7 行 53–60；派工 §8 行 62–70；治理 §9 行 72–76；提交留档 §11 行 87–96。 |
+| `%USERPROFILE%\.config\opencode\AGENTS.md` | 全局纪律 1–17，行 7–25；接派工行 27–31。 |
 | 记忆块 `persona` / `human` / `rtoc-channel`（global） | `persona` §三、§五–§七；`human` 身份一与「沟通带宽」、身份二；`rtoc-channel`「它是什么」「三个硬坑」「判成败」。由 memory_get 读取；记忆块不是带行号的源文件。 |
-| 同级目录现场复算 | `Get-ChildItem -LiteralPath 'E:\GithubClone' -Directory -Force | Measure-Object` → Count=13；只读目录名称查询显示 12 个已列名项目目录和 1 个中文名目录。 |
-| RTOC 凭据存在性（不读内容） | `Test-Path -LiteralPath 'C:\Users\qly19\Desktop\2rtoc.env'` → `True`。仅证明路径存在。 |
-| `E:\GithubClone\sentinel-ops\AGENTS.md` / `dock\README.md` | 席位、部署与插件宿主：AGENTS 行 22–57、136–173；dock README 行 7–25、66–76。 |
-| `E:\GithubClone\agent-delegation\README.md` | 项目性质、档案和已知事实层：行 3–5、9–27、31–45。 |
-| `E:\GithubClone\waypost\README.md` / `docs\ARCHITECTURE.md` / `docs\SECURITY.md` | 架构与安全边界：README 行 14–30、32–53、78–109；ARCHITECTURE 行 5–10、27–37、39–60；SECURITY 行 15–23。 |
-| `E:\GithubClone\renforge-mcp\README.md` | MCP/CLI/dashboard、alpha 状态与领域能力：行 10–20、123–169、178–224。 |
+| 同级目录现场复算 | `Get-ChildItem -LiteralPath '<repos>' -Directory -Force | Measure-Object` → Count=13；只读目录名称查询显示 12 个已列名项目目录和 1 个中文名目录。 |
+| RTOC 凭据存在性（不读内容） | `Test-Path -LiteralPath '<凭据文件>'` → `True`。仅证明路径存在。 |
+| `<repos>\sentinel-ops\AGENTS.md` / `dock\README.md` | 席位、部署与插件宿主：AGENTS 行 22–57、136–173；dock README 行 7–25、66–76。 |
+| `<repos>\agent-delegation\README.md` | 项目性质、档案和已知事实层：行 3–5、9–27、31–45。 |
+| `<repos>\waypost\README.md` / `docs\ARCHITECTURE.md` / `docs\SECURITY.md` | 架构与安全边界：README 行 14–30、32–53、78–109；ARCHITECTURE 行 5–10、27–37、39–60；SECURITY 行 15–23。 |
+| `<repos>\renforge-mcp\README.md` | MCP/CLI/dashboard、alpha 状态与领域能力：行 10–20、123–169、178–224。 |
 
 **非零计数（本轮实际核对口径）：** 4 个 CLI 引擎条目；18 条技能→机制映射；7 个资产/候选项；17 条硬约束；13 个同级目录（其中 12 个按 E-02 列为项目、另 1 个中文名目录）；读取 3 个指定技能文件及 2 个治理纪律文件。以上是本机资料/目录计数，不代表引擎已运行或资产已集成。

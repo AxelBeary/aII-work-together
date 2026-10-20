@@ -136,9 +136,17 @@ python tools/board.py doctor --fix      # 自动清理可修项
 | `tools/term.py` | 窗口内置终端（白名单执行） |
 | `tools/server.py` + `tools/ui.html` | 本地界面（看板 + 终端 + 留言） |
 | `shell/BoardShell.cs` | 桌面壳（WebView2，单 exe） |
-| `tools/check.py` | 一条命令跑完全部自检（13 道闸） |
+| `tools/check.py` | 一条命令跑完全部自检（15 道闸） |
 
 零依赖，Python 3.9+。
+
+## 许可与致谢
+
+- 本项目代码：**MIT**，见 [LICENSE](LICENSE)。
+- 随仓库分发的第三方二进制（Microsoft WebView2 SDK 的 3 个 DLL）及其许可证全文：
+  见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。**分发 exe 时请把这份一起给。**
+- 学过谁、借过什么思路（跨会话留言语义、治理范式、调研参考）：
+  见 [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)。
 
 ## 从哪读起
 

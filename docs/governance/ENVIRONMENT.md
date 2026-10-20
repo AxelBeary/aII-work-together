@@ -6,15 +6,15 @@
 
 ## E-01 · 工作区现状（取证 2026-10-19）
 
-- 工作区：`E:\GithubClone\allworktogether`。
+- 工作区：`<repo>`。
 - 立项目前**只有** `.opencode\memory\project.md`（69 字节）＋ `.opencode\memory\.gitignore`（内容＝`*`，即项目记忆默认不进库）。
 - 立项目前**不是** git 仓库 → 2026-10-19 由发牌席 `git init` 建立**本地库**（⛔ 无远程）。
 
-复跑：`Get-ChildItem -Force -Recurse E:\GithubClone\allworktogether | Select-Object FullName,Length`；`git -C E:\GithubClone\allworktogether status`
+复跑：`Get-ChildItem -Force -Recurse <repo> | Select-Object FullName,Length`；`git -C <repo> status`
 
 ## E-02 · 兄弟项目与本机资产（取证 2026-10-19）
 
-`E:\GithubClone\` 下同级项目：`.qoder-distill-work`、`agent-delegation`、`agents`、`allworktogether`、`cutting-room-floor`、`JIGSAW_PUZZLES`、`qodercnbackup`、`renforge-mcp`、`renpy-aistudio`、`renpyslim`、`sentinel-ops`、`waypost`（另有 1 个中文名目录）。
+`<repos>\` 下同级项目：`.qoder-distill-work`、`agent-delegation`、`agents`、`allworktogether`、`cutting-room-floor`、`JIGSAW_PUZZLES`、`qodercnbackup`、`renforge-mcp`、`renpy-aistudio`、`renpyslim`、`sentinel-ops`、`waypost`（另有 1 个中文名目录）。
 
 - **`sentinel-ops`**：本机治理范式来源（`AGENTS.md` 六纪律／部署三分法／席位制／插件六道门）。本项目**只借鉴范式**。
 - **`agent-delegation`**：派工方法学正档（技能体在 `~\.agents\skills\agent-delegation`）。
@@ -22,7 +22,7 @@
 
 ## E-03 · 技能库落点（取证 2026-10-19）
 
-- 权威根：`C:\Users\qly19\.agents\skills\`（**唯一真本**；`~\.qoder-cn\skills` 已退役）。
+- 权威根：`%USERPROFILE%\.agents\skills\`（**唯一真本**；`~\.qoder-cn\skills` 已退役）。
 - 现有技能目录（30 个，含 `_dev`）：agent-delegation／blender-modeling／fetch-analyze-data／huiyue-layout-audit／knowledge-base／neat-freak／opencode-v2-playbook／renpy-*（9 个）／safe-identifier-rename／ship-gate／simplify-codebase／skill-library-audit／software-teardown／vn-*（5 个）／zx-imgapi。
 - **用前按文件名现查**，⛔ 不记绝对路径硬编码。
 
@@ -41,7 +41,7 @@
 
 ## E-05 · RTOC 信道（可选外部模型出口，取证 2026-10-17/18）
 
-- 端点 `POST https://api.rtoc.cc/v1/messages`；钥匙在 `C:\Users\qly19\Desktop\2rtoc.env`（`sk-` 开头行）。
+- 端点 `POST https://api.rtoc.cc/v1/messages`；钥匙在 `<凭据文件>`（`sk-` 开头行）。
 - **硬坑**：请求体硬上限约 46000 字节（≥64KB 静默返回空**且照样计费**）；它本质是「被套了人设的编辑器助手」，会以「请切到能生成代码的模式」拒答；成败主要取决于**时段窗口**。
 - ⛔ 明文钥匙不得出现在任何输出／日志／文件／记忆里。详见本机记忆 `rtoc-channel`。
 
@@ -203,7 +203,7 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 
 **多项目**：
 - 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
-- 实测在 `C:\Users\qly19\AppData\Local\Temp\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
+- 实测在 `%TEMP%\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
 - `board project ls` 能汇总两个项目各自的卡片数。
 
 **并行（worktree）**：

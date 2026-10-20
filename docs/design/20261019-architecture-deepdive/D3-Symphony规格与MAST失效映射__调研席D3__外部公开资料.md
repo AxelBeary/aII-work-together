@@ -329,7 +329,7 @@ FM-1.1、FM-1.2、FM-1.3、FM-1.5、FM-2.2、FM-2.4、FM-3.2。它们的共同�
 | S3 | Symphony LICENSE（Apache-2.0） | `https://raw.githubusercontent.com/openai/symphony/main/LICENSE` | 2026-10-19 |
 | S4 | MAST 论文摘要页 | `https://arxiv.org/abs/2503.13657` | 2026-10-19 |
 | S5 | MAST 论文全文 HTML v3（含 Appendix A 定义） | `https://arxiv.org/html/2503.13657v3` | 2026-10-19 |
-| L1 | 本项目红线原文 | `E:\GithubClone\allworktogether\AGENTS.md` §4（第 70–76 行） | 2026-10-19 |
+| L1 | 本项目红线原文 | `<repo>\AGENTS.md` §4（第 70–76 行） | 2026-10-19 |
 | L2 | 派工总单／本席派工单 | `docs/design/20261019-architecture-deepdive/00_派工总单.md`／`D3_外部规格与失效模式.md` | 2026-10-19 |
 | L3 | 拍板台账（D-001／D-002） | `docs/governance/DECISIONS.md` | 2026-10-19 |
 

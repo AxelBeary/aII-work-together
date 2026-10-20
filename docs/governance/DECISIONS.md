@@ -37,7 +37,7 @@
 
 - 日期：2026-10-19（依据段于 2026-10-19 首轮调研后补充）
 - 议题：本项目的看板**以什么形态存在**、agent **怎么接进来**、**一期做到哪**、**治理强度**多高。
-- 背景：项目 2026-10-19 立项，工作区 `E:\GithubClone\allworktogether`（此前为空，仅有 `.opencode/memory/project.md`）。用户诉求原话：「让所有 agent 在一个看板内分工协作」。
+- 背景：项目 2026-10-19 立项，工作区 `<repo>`（此前为空，仅有 `.opencode/memory/project.md`）。用户诉求原话：「让所有 agent 在一个看板内分工协作」。
 
 ### 结论（用户 2026-10-19 当场拍板）
 
@@ -253,6 +253,9 @@
   - 抄：① append-only ＋ 单调 seq（`--reply-to <seq>` 任何会话可寻址）；② `wake: HELD`（送达被拦要明说）；③ 退出码分档 `0 已投递 / 2 已存但唤不醒 / 3 没成`；④ **一律不重发**（按 seq 查，不靠重试灌重复）。
   - 换：ocs 靠常驻会话的唤醒通道（Claude socket / Codex IPC）；我们是「起进程等结果」，所以**唤醒＝拿 sessionID 续一次会话**（`opencode --session` / `qoderclicn --resume`），它答完的内容自动写成 `kind=answer`、`reply_to` 指回原 seq 的留言。没有 sessionID ⇒ 记 HELD，退出码 2。
 - 落地：`tools/messages.py`、`tools/msgwake.py`、`board msg send|ls|inbox|ack|thread|wake|states`、存储两张 append-only 表（`messages` / `msg_reads` + `msg_wakes`）、闸 `tests/test_messages.py`（16 条）。
+- 来源（2026-10-21 许可核验补记）：**Open Cross-session（`ocs`）** <https://github.com/leeguooooo/open-cross-session>，MIT，Copyright (c) 2026 leeguooooo。
+  本仓库是**独立实现**（SQLite 三表 + 续会话唤醒，非其 JSONL/Unix socket 方案；退出码 2/3 的含义也不同），只借四条语义，故无代码级署名义务；
+  出于可追溯仍写进 `ACKNOWLEDGEMENTS.md`。
 - 依据（实测，2026-10-20 56 分～58 分）：同一段流程跑通首存 → 收件箱 → 已读 → 回复链路；HELD 路径退出码 2 实测；「已回复过不重发」挡住第二次投递。
 - 影响面：`storage.py`（新增三表，无 UPDATE/DELETE 接口）、`cli.py`（新增 `msg`）、`server.py`（`/api/messages*`）、界面（留言抽屉）。
 - 已声明的边界：只保证「留言按 seq 存住了」；对方看没看只能靠它自己 `inbox`/`ack`。**同一条留言不要重复 wake**（实测重复投递会多出一条重复回复）。
