@@ -107,6 +107,8 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
         "rework": st["rework"],
         "created_kind": st["created_kind"],
         "events": st["events"],
+        # 最后活动时刻（毫秒）：界面用来标「3 小时前动过」，一眼看出哪张卡在僵尸
+        "last_at": (events[-1].get("at_ms") if events else None),
         "blocked_reason": st.get("blocked_reason"),
         "budget": B.budget_status(cid, card, events),
         # 列表页不逐卡算 sha（会反复读文件）；详情页才给 before/after

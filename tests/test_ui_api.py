@@ -100,6 +100,9 @@ def main():
            and "seats" in cards[0]["consult"]
            and "unfixed" in cards[0]["consult"],
            f"consult={cards[0].get('consult')}")
+        ok("/api/cards 带最后活动时刻（界面标「几小时前动过」）",
+           isinstance(cards[0].get("last_at"), int) and cards[0]["last_at"] > 0,
+           f"last_at={cards[0].get('last_at')}")
 
         # 4 单卡详情带事件流
         code, one = call(f"/api/card?project={PROJ}&id=D-001")

@@ -1112,7 +1112,34 @@ namespace BoardShell
                                 && norm2.Contains("\"hidden0\":true")   // 没选时不能露出来
                                 && norm2.Contains("\"n\":\"2\""));
                 Say("multi ok= " + okMulti);
-                bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt && okMulti;
+
+                // 搜卡：输入卡号前 3 位必须收窄，清空必须恢复（真事件，不是读源码）
+                string js3 = "(()=>{var inp=document.getElementById('search');"
+                           + "var cs=document.querySelectorAll('.card');"
+                           + "if(!inp||!cs.length) return JSON.stringify({skip:true});"
+                           + "var before=cs.length, id=cs[0].dataset.id;"
+                           + "inp.value=id.slice(0,3);inp.dispatchEvent(new Event('input'));"
+                           + "var after=document.querySelectorAll('.card').length;"
+                           + "inp.value='';inp.dispatchEvent(new Event('input'));"
+                           + "var back=document.querySelectorAll('.card').length;"
+                           + "return JSON.stringify({before:before,after:after,back:back});})()";
+                var t3 = View.CoreWebView2.ExecuteScriptAsync(js3);
+                Pump(delegate { return t3.IsCompleted; }, 10000);
+                string norm3 = (t3.IsCompleted ? (t3.Result ?? "") : "")
+                    .Replace("\\\"", "\"").Replace("\\\\", "\\");
+                Say("search = " + norm3);
+                bool okSearch = norm3.Contains("\"skip\":true");
+                if (!okSearch)
+                {
+                    int before = 0, after = 0, back = 0;
+                    okSearch = TryNum(norm3, "\"before\":", ref before)
+                            && TryNum(norm3, "\"after\":", ref after)
+                            && TryNum(norm3, "\"back\":", ref back)
+                            && after >= 1 && after <= before && back == before;
+                }
+                Say("search ok= " + okSearch);
+                bool pass = nav && okTitle && okCols && okTerm && okMsg && okFilt
+                         && okMulti && okSearch;
                 Say(pass ? "SELFTEST PASS" : "SELFTEST FAIL");
                 return pass ? 0 : 2;
             }
@@ -1127,6 +1154,16 @@ namespace BoardShell
                 try { if (Win != null) Win.Close(); } catch { }
                 StopServerIfOwned();      // 自检自己起的后端不留垃圾进程
             }
+        }
+
+        static bool TryNum(string s, string key, ref int value)
+        {
+            int i = s.IndexOf(key);
+            if (i < 0) return false;
+            var digits = "";
+            for (int j = i + key.Length; j < s.Length && char.IsDigit(s[j]); j++) digits += s[j];
+            if (digits.Length == 0) return false;
+            return int.TryParse(digits, out value);
         }
 
         static int TakeShot()

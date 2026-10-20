@@ -62,6 +62,12 @@ main{padding:18px 22px 60px}
 .selbar b{color:#cfe0ff;font-size:15px}
 .selbar .spacer{width:22px}
 .selbar.hide{display:none}
+/* 搜卡：卡一多就靠它找，别逼人一列列扫 */
+.search{width:190px;background:#11141a;border:1px solid var(--line);border-radius:8px;
+  color:var(--fg);font-size:12px;padding:7px 10px;font-family:inherit}
+.search:focus{outline:none;border-color:#3b5b8a}
+.card .ago{font-size:11px;color:#6c7683;margin-left:6px;font-weight:400}
+.card .ago.stale{color:#c98b3a}
 .col{flex:0 0 268px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .col h2{font-size:13px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;
   justify-content:space-between;color:#c8d0da}
@@ -167,6 +173,7 @@ body.term-on .toast{bottom:340px}
   <select id="proj" title="切换项目"></select>
   <span class="sub" id="projinfo"></span>
   <div class="spacer"></div>
+  <input id="search" class="search" placeholder="搜卡号 / 标题 / 目标" title="输入即过滤（Esc 清空）">
   <button class="btn" id="btn-msg">留言<span class="badge" id="msg-badge"></span></button>
   <button class="btn" id="btn-term" title="Ctrl+` 开合">终端</button>
   <button class="btn" id="btn-refresh">刷新</button>
@@ -297,7 +304,29 @@ const $ = id => document.getElementById(id);
 const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","核验中","拍板中","完成"];
 let CUR = {project:null, cards:[], state:null};
 let FILTER = null;            // 顶部状态筛选：null＝全部（只画有卡的列，见 render）
+let SEARCH = "";              // 搜卡关键词（卡号 / 标题 / 目标）
 const SEL = new Set();        // 多选的卡号（批量跑 / 批量取消）
+
+function ago(ms){
+  if(!ms) return "";
+  const d = Date.now() - ms;
+  if(d < 60000) return "刚刚";
+  if(d < 3600000) return Math.floor(d/60000) + " 分钟前";
+  if(d < 86400000) return Math.floor(d/3600000) + " 小时前";
+  return Math.floor(d/86400000) + " 天前";
+}
+
+function agoHtml(c){
+  if(!c.last_at) return "";
+  const stale = (Date.now() - c.last_at) > 12 * 3600 * 1000;   // 半天没动＝该看一眼
+  return `<span class="${stale ? "ago stale" : "ago"}"
+      title="最后活动：${new Date(c.last_at).toLocaleString()}">${ago(c.last_at)}</span>`;
+}
+
+function matchesSearch(c, kw){
+  if(!kw) return true;
+  return (c.id + " " + (c.title || "") + " " + (c.goal || "")).toLowerCase().indexOf(kw) >= 0;
+}
 
 function updateSelBar(){
   const n = SEL.size;
@@ -386,7 +415,7 @@ function cardHtml(c){
   return `<div class="card ${SEL.has(c.id)?"sel":""}" data-id="${c.id}">
     <input type="checkbox" class="pick" data-pick="${c.id}" ${SEL.has(c.id)?"checked":""}
            title="选中这张（可以批量跑 / 批量取消）">
-    <div class="id">${c.id}</div>
+    <div class="id">${c.id}${agoHtml(c)}</div>
     <div class="t">${esc(c.title)}</div>
     ${c.goal?`<div class="g">${esc(c.goal)}</div>`:""}
     ${blk}
@@ -398,17 +427,20 @@ function esc(s){ return String(s??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&
 
 function render(cards){
   const CAP = 60;              // 每列最多画这么多张，几十个项目时不至于把浏览器卡死
+  const kw = (SEARCH || "").trim().toLowerCase();
+  if(kw) cards = cards.filter(c => matchesSearch(c, kw));
   const by = {};
   STATE_ORDER.forEach(s => by[s]=[]);
   cards.forEach(c => (by[c.state] || (by[c.state]=[])).push(c));
 
   // 顶部筛选条（点一下只看那一种状态；再点「全部」回来）
   $("filters").innerHTML =
-    [`<button class="chip ${FILTER?"":"on"}" data-f="">全部 <em>${cards.length}</em></button>`]
+    [(kw ? `<span class="chip on" style="cursor:default">搜到 ${cards.length} 张</span>` : ""),
+     `<button class="chip ${FILTER?"":"on"}" data-f="">全部 <em>${cards.length}</em></button>`]
       .concat(STATE_ORDER.map(s =>
         `<button class="chip ${FILTER===s?"on":""}" data-f="${s}">${s} <em>${(by[s]||[]).length}</em></button>`))
       .join("");
-  $("filters").querySelectorAll(".chip").forEach(el => {
+  $("filters").querySelectorAll(".chip[data-f]").forEach(el => {
     el.onclick = () => { FILTER = el.dataset.f || null; render(CUR.cards || cards); };
   });
 
@@ -420,7 +452,8 @@ function render(cards){
     return;
   }
   $("board").innerHTML = cols.map(s => {
-    const list = by[s]||[];
+    // 列内按「最后活动」倒序：正在动的卡浮上来，僵尸卡沉底（比按卡号排更贴近干活）
+    const list = (by[s]||[]).slice().sort((a,b) => (b.last_at||0) - (a.last_at||0));
     let inner = '<div class="empty">—</div>';
     if(list.length){
       inner = list.slice(0, CAP).map(cardHtml).join("");
@@ -566,6 +599,10 @@ $("btn-new").onclick = () => dlgNew.showModal();
 $("btn-refresh").onclick = () => { refresh(); toast("已刷新"); };
 $("btn-run").onclick = () => { dlgRun.showModal(); pollRun(); };
 $("proj").onchange = e => { CUR.project = e.target.value; startPoll(); refresh(); };
+$("search").oninput = e => { SEARCH = e.target.value || ""; render(CUR.cards || []); };
+$("search").onkeydown = e => {
+  if(e.key === "Escape"){ SEARCH = ""; e.target.value = ""; render(CUR.cards || []); }
+};
 
 $("btn-create").onclick = async () => {
   const body = {
