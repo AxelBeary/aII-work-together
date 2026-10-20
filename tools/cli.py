@@ -680,7 +680,7 @@ def cmd_overview(a):
     """跨项目总览页。"""
     import render as RD
     import projects as P
-    out = Path.home() / ".allworktogether" / "overview.html"
+    out = Path.home() / ".aII-work-together" / "overview.html"
     ps = P.project_summary()
     RD.render_all(ps, out)
     B.ok(f"总览已生成：{out}")

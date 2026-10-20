@@ -51,7 +51,7 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 | `docs/点对点评审.md` | 评审链路怎么用、为什么不是聊天室 |
 
 数据：每项目 `board/board.db`；证据 `board/evidence/<卡号>/`；交付物在工作区。
-全局注册表 `~/.allworktogether/registry.db`（可用 `ABOARD_REGISTRY_DIR` 隔离）。
+全局注册表 `~/.aII-work-together/registry.db`（可用 `ABOARD_REGISTRY_DIR` 隔离）。
 
 ---
 
@@ -154,6 +154,10 @@ ce03beb  chore: ledger rows from the smoke runs
 ---
 
 ## 十、进行中的批次（压缩/换会话后从这里接）
+
+> **2026-10-21 目录与命名已统一**：仓库＝文件夹＝`aII-work-together`（`E:\GithubClone\aII-work-together`），
+> 全局注册表迁到 `~/.aII-work-together`；旧名 `allworktogether` 已从代码/文档中清零（D-020）。
+> 下一步排队的：`docs/plan/20261020-fix-and-gaps.md` 的 C 批剩余项与「导出日报」（用户暂不做）。
 
 **计划文件**：`docs/plan/20261020-fix-and-gaps.md`（A/B/C 三批 + 列布局都已完成）。
 

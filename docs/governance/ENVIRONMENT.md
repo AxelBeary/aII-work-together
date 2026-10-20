@@ -14,7 +14,7 @@
 
 ## E-02 · 兄弟项目与本机资产（取证 2026-10-19）
 
-`<repos>\` 下同级项目：`.qoder-distill-work`、`agent-delegation`、`agents`、`allworktogether`、`cutting-room-floor`、`JIGSAW_PUZZLES`、`qodercnbackup`、`renforge-mcp`、`renpy-aistudio`、`renpyslim`、`sentinel-ops`、`waypost`（另有 1 个中文名目录）。
+`<repos>\` 下同级项目：`.qoder-distill-work`、`agent-delegation`、`agents`、`aII-work-together`、`cutting-room-floor`、`JIGSAW_PUZZLES`、`qodercnbackup`、`renforge-mcp`、`renpy-aistudio`、`renpyslim`、`sentinel-ops`、`waypost`（另有 1 个中文名目录）。
 
 - **`sentinel-ops`**：本机治理范式来源（`AGENTS.md` 六纪律／部署三分法／席位制／插件六道门）。本项目**只借鉴范式**。
 - **`agent-delegation`**：派工方法学正档（技能体在 `~\.agents\skills\agent-delegation`）。
@@ -202,7 +202,7 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 ## E-19 · 多项目与并行实测（取证 2026-10-19）
 
 **多项目**：
-- 注册表 `~/.allworktogether/projects.json`，只存 `name/path/defaults`，**不存卡片**。
+- 注册表 `~/.aII-work-together/projects.json`，只存 `name/path/defaults`，**不存卡片**。
 - 实测在 `%TEMP%\opencode\demo-project` 里直接 `board add` ⇒ 自动建 `board/`、自动登记、`board ls` 只看得到本项目 1 张卡；主项目不受影响。
 - `board project ls` 能汇总两个项目各自的卡片数。
 
@@ -229,7 +229,7 @@ python -c "import sys; sys.path.insert(0,'tools'); import engines as E; r1=E.run
 
 - 造 20 个项目 × 15 张卡 ＝ **300 张**，跨项目扫描 **0.21 秒**（冷）、**0.0004 秒**（15 秒缓存命中）。
 - 结论：**每项目一个 SQLite + 注册表一个 SQLite** 的架构，几十个项目量级完全够用，不需要引入服务端。
-- 缓存文件 `~/.allworktogether/summary-cache.json`，15 秒 TTL；`board all --refresh` 可强制重扫。
+- 缓存文件 `~/.aII-work-together/summary-cache.json`，15 秒 TTL；`board all --refresh` 可强制重扫。
 
 **可复跑**：`python -c "import sys;sys.path.insert(0,'tools');import projects as P;print(len(P.project_summary(use_cache=False)))"`
 

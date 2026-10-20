@@ -43,7 +43,7 @@
 | 8 | 反空跑只在有 `--accept` 时才执行 | 回归库 R08 | 改为无条件；纯文字稿需 `allow_no_numbers=true` |
 
 | 2026-10-19 | **多项目支持** | `tools/projects.py` | 发牌席 | **已验（PASS）** | 注册表只存位置；零配置自动登记；两项目实测隔离 |
-| 2026-10-19 | **跨项目总览页** | `tools/render.py` → `~/.allworktogether/overview.html` | 发牌席 | **已验（PASS）** | 每项目一行色条 + 卡片数，链接到各自看板 |
+| 2026-10-19 | **跨项目总览页** | `tools/render.py` → `~/.aII-work-together/overview.html` | 发牌席 | **已验（PASS）** | 每项目一行色条 + 卡片数，链接到各自看板 |
 | 2026-10-19 | **worktree 并行** | `tools/parallel.py` | 发牌席 | **已验（PASS）** | 2 卡并行 14s 完成；冲突实测判 BLOCKED 未覆盖 |
 | 2026-10-19 | 回归库扩到 18 条 | `tests/run_regression.py` | 发牌席 | **已验（PASS）** | 新增多项目隔离／默认值继承／并行冲突 3 条 |
 | 2026-10-20 | **用量统计** | `board.py cost` ＋ `engines.py` 用量解析 | 发牌席 | **已验（PASS）** | 实测入 26,738／出 521／缓存 47,232／$0.0045；拿不到标「未知」 |
@@ -100,7 +100,7 @@
 |---|---|---|---|
 | 多项目压测（9 条） | `tests/test_multiproject.py` | PASS（9 of 9） | 12 个项目 / 36 张卡 / 8 线程并发登记一条不丢 / 工作区还原 |
 | 界面并发隔离（真 bug 回归） | `tests/test_ui_concurrency.py` | PASS | 两项目并发 25+25 张，4 个读线程，零串号；**拆除锁则转红** |
-| 注册表目录可隔离 | `tools/projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.allworktogether` |
+| 注册表目录可隔离 | `tools/projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.aII-work-together` |
 | 建卡原子拒绝重号 | `tools/board.py`（`create_card()`） | 已修 | 重号抛 `ValueError`，不再静默覆盖 |
 | 界面并发串号 | `tools/server.py`（`_BOARD_LOCK`） | 已修 | 见 ENVIRONMENT.md E-24 |
 | 汇总不改调用方工作区 | `tools/projects.py`（`project_summary()`） | 已修 | P9 用例；反向测试确认能抓 |
@@ -130,7 +130,7 @@
 | 固定线程池（线程/连接复用） | `tools/server.py`（`PoolHTTPServer`） | 已实现 | 40 项目/1200 卡：汇总冷缓存 14→4ms，看板列表 29→15ms；`--workers 0` 可 A/B |
 | 切项目不重复 set_root | `tools/server.py`（`_switch`） | 已实现 | 省掉每请求 mkdir + 迁移检查（与数据量无关的纯税） |
 | 汇总缓存可主动失效 | `projects.invalidate_summary_cache()` | 已实现 | 建卡/拍板后项目张数立刻更新，不再滞后 15 秒 |
-| 注册表目录可隔离 | `projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.allworktogether` |
+| 注册表目录可隔离 | `projects.py`（`ABOARD_REGISTRY_DIR`） | 已实现 | 测试用沙箱注册表，不碰真实 `~/.aII-work-together` |
 | 汇总还原工作区 + 缓存原子写 | `projects.py`（`project_summary`） | 已修 | P9 用例；临时文件 + `os.replace`，避免读到半截 JSON |
 | 规模压测接入自检 | `tools/check.py --perf` | 已接 | 默认轻量 20×15（重规模见 E-25 §3 的自我约束） |
 

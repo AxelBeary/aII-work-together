@@ -611,7 +611,7 @@ class PoolHTTPServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "allworktogether-ui/1.0"
+    server_version = "aII-work-together-ui/1.0"
 
     def log_message(self, fmt, *args):
         pass          # 安静：不往控制台刷访问日志

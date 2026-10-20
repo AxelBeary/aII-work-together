@@ -193,8 +193,8 @@ namespace BoardShell
         static string _initError = "";
         static bool _navDone;
 
-        const string MUTEX_NAME = "allworktogether-board-shell";
-        const string WAKE_NAME = "allworktogether-board-shell-wake";
+        const string MUTEX_NAME = "aII-work-together-board-shell";
+        const string WAKE_NAME = "aII-work-together-board-shell-wake";
 
         [STAThread]
         static int Main(string[] args)

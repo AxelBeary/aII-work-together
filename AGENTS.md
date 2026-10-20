@@ -1,4 +1,4 @@
-# AGENTS.md — allworktogether 项目组纪律
+# AGENTS.md — aII-work-together 项目组纪律
 
 > 立：2026-10-19。本文件是**所有 agent（任何引擎／任何会话）进入本项目的唯一入口**。动手前读完本文件；涉及本机环境时再读 `docs/governance/ENVIRONMENT.md`；涉及当前拍板结论读 `docs/governance/DECISIONS.md`。
 >
@@ -36,7 +36,7 @@
 ## 2 目录与交付路径（领地）
 
 - **交付路径⛔ 投桌面**（用户明令）。所有产出落本项目内，并把**完整路径**告知用户。
-- **多项目**：每个项目在自己根目录下有一个 `board/`（卡片、日志、看板页）。全局注册表在 `~/.allworktogether/projects.json`，**只记录「项目在哪」**——删注册表不影响任何项目数据。
+- **多项目**：每个项目在自己根目录下有一个 `board/`（卡片、日志、看板页）。全局注册表在 `~/.aII-work-together/projects.json`，**只记录「项目在哪」**——删注册表不影响任何项目数据。
 - **零配置**：在任意目录跑 `board`，自动把当前目录识别为项目（向上找 `board/cards`，像 git 找 `.git`）。项目级默认引擎/模型/思考强度可设一次，之后建卡自动继承。
 - **批次目录**＝`docs/research/<YYYYMMDD>-<批次名>/`（调研批次）、`docs/design/<YYYYMMDD>-<批次名>/`（设计批次）。
 - **一个批次只占一个目录**：同一批的派工单与全部交件（含其中性质不同的席位产出）**都在同一个目录里**，方便成套验收；⛔ 不把一个批次拆到 research 与 design 两处。

@@ -5,7 +5,7 @@ render.py — 看板页渲染（单项目 + 多项目总览）
 
 两种视图：
   render_project(root)  → 单个项目的看板页（board/board.html）
-  render_all()          → 跨项目总览（~/.allworktogether/overview.html）
+  render_all()          → 跨项目总览（~/.aII-work-together/overview.html）
 
 设计原则：
   · 纯静态 HTML，零依赖、零服务器；双击即看，30 秒自动刷新
@@ -116,7 +116,7 @@ def render_project(cards: list, title: str, out_path: Path,
     nav = ""
     if has_overview:
         nav = ('<div class=nav><a href="file:///' +
-               str(Path.home() / ".allworktogether" / "overview.html").replace("\\", "/") +
+               str(Path.home() / ".aII-work-together" / "overview.html").replace("\\", "/") +
                '">全部项目 →</a></div>')
     html = f"""<!doctype html><html lang=zh><meta charset=utf-8>
 <title>{_esc(title)}</title><meta http-equiv=refresh content=30>
@@ -174,7 +174,7 @@ def render_all(projects: list, out_path: Path) -> Path:
 <header><h1>全部项目</h1>
 <span class=sub>{len(projects)} 个项目 · {total_cards} 张卡 · 完成 {total_done}</span></header>
 <div class=grid>{blocks}</div>
-<footer>生成于 {_now()} ｜ 注册表：~/.allworktogether/projects.json</footer>
+<footer>生成于 {_now()} ｜ 注册表：~/.aII-work-together/projects.json</footer>
 </html>"""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")

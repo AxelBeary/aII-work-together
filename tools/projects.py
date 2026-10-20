@@ -4,7 +4,7 @@
 projects.py — 多项目注册表（SQLite）与根目录解析
 
 为什么注册表也用 SQLite（2026-10-20，团队场景）：
-  · 原来存 ~/.allworktogether/projects.json，多进程同时登记会互相覆盖
+  · 原来存 ~/.aII-work-together/projects.json，多进程同时登记会互相覆盖
   · 团队几十个项目、多人同时操作 ⇒ 必须事务化
   · 一个库 = 一个文件，好备份
 
@@ -29,7 +29,7 @@ from pathlib import Path
 # 全局数据目录（注册表、汇总缓存）。
 # ABOARD_REGISTRY_DIR 用于隔离测试或分离多人环境；不设＝用户主目录。
 _REG_DIR = os.environ.get("ABOARD_REGISTRY_DIR")
-HOME_DIR = Path(_REG_DIR).expanduser() if _REG_DIR else Path.home() / ".allworktogether"
+HOME_DIR = Path(_REG_DIR).expanduser() if _REG_DIR else Path.home() / ".aII-work-together"
 REGISTRY_DB = HOME_DIR / "registry.db"
 BOARD_DIRNAME = "board"
 MARKER_DB = "board.db"

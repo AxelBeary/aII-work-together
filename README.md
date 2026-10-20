@@ -1,4 +1,4 @@
-# allworktogether
+# aII-work-together
 
 > **单人／小团队用的多 agent 编排看板**：让本机所有 AI agent 在同一块板上分工协作，全程可追责。
 

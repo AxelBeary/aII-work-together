@@ -1,4 +1,4 @@
-# 设计评审：allworktogether（单人多 agent 编排看板）
+# 设计评审：aII-work-together（单人多 agent 编排看板）
 
 > 评审席：外部专家 · claude-opus-5-5 · 2026-10-20
 > 口径：只读评审。读过 `tools/board.py`（L30–460、L640–850）、`tools/orchestrator.py`（L130–409）、`tools/parallel.py`（全文）、`tools/engines.py`（L100–179），并 grep 了全部 `tools/*.py`。**没有跑任何命令、没有复现**，下文写「代码可见」的都指读源码得出的结论，写「未证」的需要复跑确认。
@@ -22,7 +22,7 @@
 | 编排循环本身 | **openai/symphony `SPEC.md`** | **抄规范，不抄代码** | Symphony 绑 Linear＋Codex，不能直接用。但它的四个概念比现在的设计更成熟，值得逐字借过来：① 仓库内 `WORKFLOW.md`（YAML 头＋提示模板）＝派工单随代码版本化，替代 `build_prompt()` 里写死的提示；② **reconciliation（对账循环）**：每轮按卡片当前状态核对正在跑的进程，卡被取消/改状态就停掉对应进程——这正是你们缺的「停手」能力；③ 每卡一个隔离工作区；④ 成功不必然进 Done，可停在 handoff 态（对应你们的「拍板中」）。代价：读一遍 SPEC，改 orchestrator 主循环约 150 行。 |
 | 事件溯源＋哈希链 | immudb / SQLite＋Litestream | **换 SQLite（stdlib `sqlite3`），哈希链降级为可选** | immudb 是独立服务，过重。Litestream 解决的是「复制到云端」，本项目禁远程，不相关。SQLite 的价值是**事务和跨进程锁**：`BEGIN IMMEDIATE` 天然串行化同一库的写；`UNIQUE(card_id, seq)` 让并发追加撞号时直接失败而不是分叉；认领可以写成一条 `INSERT INTO leases ... ` 带主键约束，比 `os.mkdir` 语义更清楚。卡片目录保留，只放 `card.json`、`artifacts/`、`evidence/`；事件和租约进 `board/board.db`（WAL 模式）。代价：改 `append_event / load_journal / claim / heartbeat / release / reclaim` 六个函数，约 300 行；`audit` 和 HTML 渲染改读库。哈希链说明见下。 |
 | 哈希链本身 | git | **不值得继续加码** | 哈希是无密钥 sha256（L137–141），同一 Windows 用户下的 agent 能读源码、重算整条链，所以它只防「手抖改一行」，防不了「有意改写」。AGENTS.md §4.1 已诚实声明这一点，很好。别再往它上面投入。若真要锚定，正确的轮子是 git：收口时把链头哈希写进一次 commit 信息，git 本身就是外部哈希链。 |
-| 多项目注册表＋零配置发现 | git 的向上找 `.git`、`platformdirs` | **保留自造** | 向上找 `board/cards` 就是业界通用约定（git、npm、cargo 都这样），没有更好的轮子。唯一小改：Windows 上惯例是 `%APPDATA%\allworktogether\projects.json`，不是 `~/.allworktogether`；不改也不出事，属于可选。 |
+| 多项目注册表＋零配置发现 | git 的向上找 `.git`、`platformdirs` | **保留自造** | 向上找 `board/cards` 就是业界通用约定（git、npm、cargo 都这样），没有更好的轮子。唯一小改：Windows 上惯例是 `%APPDATA%\aII-work-together\projects.json`，不是 `~/.aII-work-together`；不改也不出事，属于可选。 |
 | 引擎适配层 | **ACP（Agent Client Protocol）** / A2A | **现有两家保留 CLI 解析；第三家起一律走 ACP；A2A 不碰** | ACP 官方列表已收录 OpenCode、Qoder CLI、Hermes Agent、Codex（经适配器），覆盖你们全部四家。它提供统一的会话、流式更新、取消、权限请求——尤其**流式更新可以直接当心跳**，正好修掉下文风险 1。但 Python SDK `agent-client-protocol` 依赖 pydantic、要求 Python ≥3.10、1.0 仍是 rc（2026-10-12 rc3），与「零依赖 3.9+」冲突。裁决：现在不迁；**不再为任何新引擎手写回执解析器**，hermes 接入时直接走 `hermes acp`（stdio JSON-RPC，可以先用 stdlib 手写最小客户端约 200 行，不引 SDK）。A2A 是跨组织网络协议，单机无收益（与记忆里「不追 A2A」一致）。 |
 | 看板 UI（静态 HTML） | Plane / Focalboard API | **静态 HTML 保留，不引外部看板** | Plane 自托管要 Postgres＋Redis＋MinIO 的 docker 栈，对单人 Windows 是纯负担；Focalboard 独立版已基本无人维护。更重要的是：一个带「批准」按钮的本地 Web 服务，agent 也能用 curl 调，会直接打穿红线②。静态只读页＋CLI 拍板是对的设计。要改的是页面**内容**，见第 4 节。 |
 | 专家团 / 多角色 | CrewAI / AutoGen / LangGraph | **保留自造** | 这三者都是「直接调模型 API」的框架，引进来等于绕开 opencode/qoder 已有的工具、权限、订阅额度，还要再管一份 API 钥匙。你们的形态（提示词库＋调 CLI＋取最严）就是这些框架里 "reviewer/critic" 模式的最小实现，100 行足够。真正的问题不是框架，而是**专家团全部用同一个引擎、同一个模型**（orchestrator.py L230 传的是执行席同款 `engine, model`），六个角色本质上是同一个模型换六种口吻，错误高度相关。改法：复核默认换引擎（opencode 执行 → qoderclicn 复核，反之亦然），这是一行配置的事，收益比加角色大。 |

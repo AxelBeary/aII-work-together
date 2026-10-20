@@ -1,6 +1,6 @@
 {
   "meta": {
-    "name": "allworktogether 回归库",
+    "name": "aII-work-together 回归库",
     "version": 1,
     "frozen_at": "2026-10-19",
     "note": "每条 = 一个已被验证过的行为。改代码后必须全过；故意改坏一条必须被抓（--break）。"

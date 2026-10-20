@@ -45,7 +45,7 @@ namespace BoardTray
         static void Main(string[] args)
         {
             bool created;
-            _mutex = new Mutex(true, "allworktogether-board-tray", out created);
+            _mutex = new Mutex(true, "aII-work-together-board-tray", out created);
             if (!created) { return; }   // 已经在跑了
 
             _appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');

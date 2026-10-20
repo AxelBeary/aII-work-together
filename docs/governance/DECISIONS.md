@@ -121,7 +121,7 @@
 | **卡片存储** | 文件即卡 → **SQLite**（每项目 `board/board.db`）。理由不是「更时髦」，而是**消除两个真缺陷的根因**：原子认领靠 `os.mkdir` 脆、journal 并发靠手写文件锁 |
 | **写路径** | 每次写**独立连接 + `BEGIN IMMEDIATE`**（SQLite 官方推荐），天然支持多线程与多进程 |
 | **读路径** | **每线程一个连接**（SQLite 连接不能跨线程共享，实测会 `bad parameter or other API misuse`） |
-| **注册表** | JSON → **SQLite**（`~/.allworktogether/registry.db`）。多人多项目同时登记，JSON 会互相覆盖 |
+| **注册表** | JSON → **SQLite**（`~/.aII-work-together/registry.db`）。多人多项目同时登记，JSON 会互相覆盖 |
 | **跨项目** | `board all`（总览）／`board inbox --all`（汇总待拍板）／`orchestrator run-all`（跨项目编排） |
 | **多人** | 每人一个 token（`~/.board-human-<who>.tok`）；归属记录进事件流；`BOARD_USER` 可固定身份 |
 | **规模** | 实测 20 项目 × 15 卡 ＝ 300 张，冷扫描 **0.21s**，缓存 0.0004s |
@@ -182,7 +182,7 @@
 
 | 议题 | 裁定 | 理由 |
 |---|---|---|
-| **多项目存储** | **数据跟项目走**：每个项目根目录一个 `board/`；全局注册表 `~/.allworktogether/projects.json` **只记位置** | 可 git、可搬、可单独备份；删注册表不伤数据 |
+| **多项目存储** | **数据跟项目走**：每个项目根目录一个 `board/`；全局注册表 `~/.aII-work-together/projects.json` **只记位置** | 可 git、可搬、可单独备份；删注册表不伤数据 |
 | **项目识别** | **零配置**：向上找 `board/cards`（像 git 找 `.git`）；任意目录直接 `board add` 自动建并登记 | 省掉「先 init」这一步 |
 | **默认值** | **项目级默认引擎/模型/思考强度**，建卡自动继承 | 最大摩擦是每次手打模型名 |
 | **并行** | **每卡一个 git worktree**，`--parallel N`，建议 ≤2 | 多 agent 改同一仓库会互踩；worktree 是干净解法 |
@@ -337,7 +337,6 @@
 ---
 
 ## D-019 · 多选批量：只能「跑一轮」和「取消」，⛔ 不做批量删除（**已拍板** 2026-10-21）
-
 - 日期：2026-10-21
 - 议题：用户 2026-10-20「多选可以」（导出日报暂不做）。
 - 结论：
@@ -349,5 +348,24 @@
 - 依据（实测 2026-10-21）：`tests/test_budget_deps.py::test_bulk`（空选择/非法动作被拒；无令牌 403；有令牌只动选中那张；取消留痕 actor=human）；
   壳自检真点两下勾选框：`{"sel":2,"bar":true,"hidden0":true,"n":"2"}`（同时验了「没选时不露操作栏」）。
 - 影响面：`ui.html`（`SEL`／`.pick`／`selbar`）、`server.api_bulk`、`orchestrator --cards`、`shell/BoardShell.cs`（自检）。
+- 状态：**已拍板**
+
+---
+
+## D-020 · 项目标识统一为 `aII-work-together`（**已拍板** 2026-10-21）
+
+- 日期：2026-10-21
+- 议题：仓库名 `aII-work-together` 与项目自称 `allworktogether` 不一致；用户 2026-10-21：「把标题/版本号这种对外可见的名字统一成 aII-work-together，老内容也全部改掉（彻底统一）」。
+- 结论（一次改净，共 30 处 / 16 个文件）：
+  - 工作目录：`E:\GithubClone\allworktogether` → `E:\GithubClone\aII-work-together`（旧目录已删，git 对象库与 board 数据库原封搬移，未复制重写）。
+  - 全局注册表目录：`~/.allworktogether` → `~/.aII-work-together`（本机已迁移 `registry.db`／`projects.json`／`overview.html`／`summary-cache.json`；旧目录已删）。
+  - 内部标识：服务器 `server_version`、壳/托盘的互斥体与唤醒事件名、回归库 `name` 字段、README 与 AGENTS 标题、全部文档正文。
+  - ⛔ 环境变量前缀 `ABOARD_*` 不改（不是对外可见名，改了会破坏已有机脚本）。
+- 依据（实测 2026-10-21）：
+  - 全仓残留扫描：硬编码旧名 **0 处**（只剩 `board/*.html`、`*.log`、`__pycache__` 这些运行期产物，可再生）。
+  - 迁移后 `board ls` 5 张卡在、`board stats` 项目名＝`aII-work-together`；注册表两条项目记录 `exists=True`。
+  - 壳与托盘重编译后 `--selftest` 均 PASS；15 道闸全绿。
+- 影响面：`tools/projects.py`（HOME_DIR）、`tools/render.py`、`tools/cli.py`、`tools/server.py`、`shell/BoardShell.cs`、`tray/BoardTray.cs`、`README.md`、`AGENTS.md`、`tests/regression/cases.json`、全部 `docs/`。
+- 未做 / 未证：**旧安装的用户不会自动迁移**（本项目此前仅作者本机使用，故未写迁移脚本）；今后若要给外部用户升级，需要一条「旧目录存在则接管」的兼容分支。
 - 状态：**已拍板**
 
