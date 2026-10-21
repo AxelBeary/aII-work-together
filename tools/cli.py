@@ -20,6 +20,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import board as B                        # noqa: E402
 
+
+def _board_cmd() -> str:
+    """提示里要人复制的 board 命令：装了 PATH 就用 `board`，否则给绝对路径。
+
+    ⚠️ 2026-10-21：本项目支持「当文件夹装进工作区」，那种装法下 `board` 不在 PATH，
+       照抄提示会报「命令不存在」。提示必须永远可复制即用。
+    """
+    import shutil
+    if shutil.which("board") or shutil.which("board.cmd"):
+        return "board"
+    return f'python "{Path(__file__).resolve().parent / "board.py"}"'
+
+
+def _orch_cmd() -> str:
+    """同上：orchestrator.py 的提示命令。"""
+    p = (Path(__file__).resolve().parent / "orchestrator.py")
+    try:
+        return f"python {p.relative_to(Path.cwd())}"
+    except ValueError:
+        return f'python "{p}"'
+
 # ---------- 命令 ----------
 
 def cmd_init(a):
@@ -170,7 +191,7 @@ def cmd_ls(a):
     print(f"{'ID':<12} {'状态':<7} {'持有':<9} {'引擎':<10} {'模型':<22} {'思考':<6} {'标题'}")
     print("-" * 108)
     for r in rows:
-        hold = r["holder"] or "-"
+        hold = B.holder_of(r["id"], r) or "-"
         mdl = (r.get("model") or "any")
         mdl = "-" if mdl == "any" else mdl
         print(f"{r['id']:<12} {r['state']:<7} {hold:<9} "
@@ -184,7 +205,7 @@ def cmd_show(a):
     card = B.get_card(a.id)
     print(f"\n【{st['id']}】{st['title']}")
     print(f"  状态    {st['state']}")
-    print(f"  持有    {st['holder'] or '-'}")
+    print(f"  持有    {B.holder_of(a.id, st) or '-'}")
     print(f"  引擎    {st['engine']}")
     print(f"  模型    {st['model']}")
     print(f"  思考    {st['effort']}")
@@ -462,10 +483,16 @@ def cmd_consult(a):
 
 
 def cmd_review(a):
-    guard_transition(a.id, "完成" if a.verdict == "pass" else "待返工", "review")
     st = B.replay(a.id)
-    if st["state"] not in ("核验中", "待验收"):
-        B.die(f"当前状态「{st['state']}」，不可复核")
+    # ⚠️ 2026-10-21：旧代码允许从「待验收」直接复核，但状态机白名单里没有
+    #    待验收 → 完成/拍板中，于是报一句看不懂的「非法状态转移」。
+    #    真实流程是：submit → 待验收 → verify（机器闸）→ 核验中 → review。
+    if st["state"] == "待验收":
+        B.die("这张卡还在「待验收」：先跑 `board verify "
+              f"{a.id} --seat {a.seat}` 过机器闸，进「核验中」后再给复核结论。")
+    if st["state"] != "核验中":
+        B.die(f"当前状态「{st['state']}」，只有「核验中」的卡能复核")
+    guard_transition(a.id, "完成" if a.verdict == "pass" else "待返工", "review")
     # 红线①（加固）：机器闸未过就不许给 PASS
     last_verify = None
     for ev in B.load_journal(a.id):
@@ -854,11 +881,11 @@ def cmd_bare(a):
     print(f"📋 {B.ROOT.name}")
     print(f"   {B.ROOT}\n")
 
-    if not B.card_ids() or not any(d.is_dir() for d in B.card_refs()):
+    if not B.card_ids():
         print("   还没有任何卡。\n")
         print("   下一步：")
-        print("     board add --title \"要做什么\" --goal \"具体目标\"")
-        print("     board project default --engine opencode "
+        print(f"     {_board_cmd()} add --title \"要做什么\" --goal \"具体目标\"")
+        print(f"     {_board_cmd()} project default --engine opencode "
               "--model opencode-go/deepseek-v4.1-flash")
         return
 
@@ -880,12 +907,13 @@ def cmd_bare(a):
 
     # 最该做的事
     if counts.get("拍板中"):
-        print(f"\n   ⚠ {counts['拍板中']} 张等你拍板：board human <卡号> --decision approve")
+        print(f"\n   ⚠ {counts['拍板中']} 张等你拍板："
+              f"{_board_cmd()} human <卡号> --decision approve")
     if counts.get("待认领") or counts.get("待返工"):
-        print("\n   下一步：board open --show 看板  或  "
-              "python tools/orchestrator.py run --max 5 让它自己跑")
+        print(f"\n   下一步：{_board_cmd()} open --show 看板  或  "
+              f"{_orch_cmd()} run --max 5 让它自己跑")
     elif counts.get("完成") == total:
-        print("\n   全部完成 🎉   下一步：board add 建新卡")
+        print(f"\n   全部完成 🎉   下一步：{_board_cmd()} add 建新卡")
     print()
 
 
@@ -1021,7 +1049,7 @@ def cmd_inbox(a):
                 pending.append(d.name)
         if pending:
             print(f"  但有 {len(pending)} 张在跑或待跑：{' '.join(pending[:6])}")
-            print("  让它自己跑：python tools/orchestrator.py run --max 5")
+            print("  让它自己跑：" + _orch_cmd() + " run --max 5")
         return
 
     limit = a.limit
@@ -1072,8 +1100,8 @@ def cmd_inbox(a):
         # 建议
         rec, why = _inbox_recommend(st, gate, rev)
         print(f"\n  建议    {rec} —— {why}")
-        print(f"  批准    board human {cid} --decision approve --who owner")
-        print(f"  驳回    board human {cid} --decision reject --who owner "
+        print(f"  批准    {_board_cmd()} human {cid} --decision approve --who owner")
+        print(f"  驳回    {_board_cmd()} human {cid} --decision reject --who owner "
               f"--note \"要改什么\"")
 
     rest = len(waiting) - limit
@@ -1291,7 +1319,7 @@ def cmd_all(a):
     print(f"{'合计':<22} {tot['cards']:>4}  " + " ".join(f"{tot.get(s,0):>3}" for s in order))
     print(f"\n共 {len(ps)} 个项目 ｜ 注册表：{P.REGISTRY_DB}")
     if tot.get("拍板中"):
-        print(f"⚠ {tot['拍板中']} 张等你拍板：board inbox --all")
+        print(f"⚠ {tot['拍板中']} 张等你拍板：{_board_cmd()} inbox --all")
 
 
 def cmd_inbox_all(a):
@@ -1319,8 +1347,8 @@ def cmd_inbox_all(a):
         print(f"{'─'*62}")
         print(f"[{i}] {pname} / {cid}  {st['title']}")
         print(f"    目标  {(card or {}).get('goal','')[:60]}")
-        print(f"    批准  board -p {pname} human {cid} --decision approve --who owner")
-        print(f"    驳回  board -p {pname} human {cid} --decision reject --who owner --note \"...\"")
+        print(f"    批准  {_board_cmd()} -p {pname} human {cid} --decision approve --who owner")
+        print(f"    驳回  {_board_cmd()} -p {pname} human {cid} --decision reject --who owner --note \"...\"")
     rest = len(rows) - a.limit
     if rest > 0:
         print(f"\n（还有 {rest} 张未列；--limit 调整）")

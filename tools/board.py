@@ -287,6 +287,19 @@ def verify_chain(cid: str):
     return _store().verify_chain(cid)
 
 
+def holder_of(cid: str, st: dict = None):
+    """当前**真实**持有者：事件流说有 ＋ 库里租约还在；否则 None。
+
+    ⚠️ 2026-10-21 修：`replay` 只看事件流，而 `release` 原先不写事件 ⇒
+       闸门失败/回收后 `board show` 与界面仍显示「持有：某人」，与 `leases` 表打架。
+       （现在 release 会写事件；这里再按库交叉验一次，兜住历史卡片。）
+    """
+    st = st if st is not None else replay(cid)
+    if not st.get("holder"):
+        return None
+    return st["holder"] if _store().get_lease(cid) else None
+
+
 def replay(cid: str, events=None):
     """从事件流重放出当前状态（事件流＝唯一真相）。
 
@@ -329,6 +342,10 @@ def replay(cid: str, events=None):
         elif k == "heartbeat":
             if ev.get("seat") == st["holder"]:
                 st["heartbeat_at"] = ev.get("at_ms")
+        elif k == "release":
+            # 释放即清持有者（seat 为空＝无条件释放）
+            if not ev.get("seat") or ev.get("seat") == st["holder"]:
+                st.update(holder=None, lease_dir=None, heartbeat_at=None)
         elif k == "submit":
             st.update(state="待验收", submit=ev)
         elif k == "verify":
@@ -437,8 +454,16 @@ def heartbeat(cid: str, seat: str):
 
 
 def release(cid: str, to: str = "released", seat: str = None):
-    """释放租约。带 `seat` 时只释放自己的（CAS），防止误删别人刚抢到的。"""
+    """释放租约。带 `seat` 时只释放自己的（CAS），防止误删别人刚抢到的。
+
+    ⚠️ 2026-10-21 修：释放后补一条 `release` 事件——否则 `replay` 只看 `claim`，
+       `board show`/界面会一直显示「持有：某人」（实测：闸门失败转阻塞后仍显示旧持有者，
+       而库里租约已经空了，两把尺打架）。
+    """
     cur = _store().release_lease(cid, kind=to, seat=seat)
+    if cur:
+        append_event(cid, {"type": "release", "actor": "agent",
+                           "seat": cur.get("seat"), "kind": to})
     return cur
 
 

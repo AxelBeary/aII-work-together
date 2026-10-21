@@ -144,7 +144,7 @@ def _card_view(cid: str, light: bool = False) -> dict | None:
         "title": st["title"],
         "state": st["state"],
         "log_bytes": _log_bytes(cid),
-        "holder": st["holder"],
+        "holder": B.holder_of(cid, st),
         "engine": st["engine"],
         "model": st["model"],
         "effort": st["effort"],
