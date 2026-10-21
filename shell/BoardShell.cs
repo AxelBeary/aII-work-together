@@ -219,6 +219,20 @@ namespace BoardShell
                 else if (a.StartsWith("--shot=")) { ShotPath = a.Substring(7); }
             }
             if (Url == null) Url = "http://127.0.0.1:" + Port + "/";
+            // 2026-10-21（安全扫描 F-21）：--url 只允许回环地址。
+            // 壳里带本地能力，被导航到任意页面等于把能力交出去。
+            else
+            {
+                Uri uu;
+                bool okUrl = Uri.TryCreate(Url, UriKind.Absolute, out uu)
+                             && (uu.Scheme == "http" || uu.Scheme == "https")
+                             && (uu.Host == "127.0.0.1" || uu.Host == "localhost" || uu.Host == "::1");
+                if (!okUrl)
+                {
+                    Console.Error.WriteLine("✗ --url 只允许 http(s)://127.0.0.1 或 localhost：" + Url);
+                    return 2;
+                }
+            }
             try { Directory.CreateDirectory(Path.GetDirectoryName(LogFile)); } catch { }
 
             if (mode == "selftest" || ShotPath != null || mode == "notifytest")
@@ -446,7 +460,18 @@ namespace BoardShell
                 core.NewWindowRequested += delegate(object s, CoreWebView2NewWindowRequestedEventArgs e)
                 {
                     e.Handled = true;
-                    try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); }
+                    // 2026-10-21（安全扫描 F-21）：只把 http/https/mailto 交给系统。
+                    // 旧写法对任意 scheme 调 UseShellExecute=true，卡片里一个
+                    // file:///…calc.exe 或 ms-settings: 就能起本机程序。
+                    try
+                    {
+                        Uri u2;
+                        if (Uri.TryCreate(e.Uri, UriKind.Absolute, out u2)
+                            && (u2.Scheme == "http" || u2.Scheme == "https" || u2.Scheme == "mailto"))
+                            Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true });
+                        else
+                            ShowErrorPanel("这个链接的类型不受支持，已拦下：" + e.Uri);
+                    }
                     catch { }
                 };
                 core.ProcessFailed += delegate(object s, CoreWebView2ProcessFailedEventArgs e)
@@ -865,14 +890,28 @@ namespace BoardShell
             Balloon("自检开始", "结果看看板里的终端");
         }
 
+        // 2026-10-21（安全扫描 F-21）：python 不再盲目走 PATH。
+        // 优先 BOARD_PYTHON，其次系统 Python Launcher（py.exe，固定的 System32 路径），最后才退回 PATH。
+        static string PythonExe(out string prefix)
+        {
+            prefix = "";
+            var env = Environment.GetEnvironmentVariable("BOARD_PYTHON");
+            if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+            var py = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "py.exe");
+            if (File.Exists(py)) { prefix = "-3 "; return py; }
+            return "python";
+        }
+
         static Process StartPython(string script, string args, bool quiet)
         {
             try
             {
+                string prefix;
+                var exe = PythonExe(out prefix);
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "python",
-                    Arguments = "\"" + Path.Combine(ProjectDir, script) + "\" " + args,
+                    FileName = exe,
+                    Arguments = prefix + "\"" + Path.Combine(ProjectDir, script) + "\" " + args,
                     WorkingDirectory = ProjectDir,
                     UseShellExecute = false,
                     CreateNoWindow = true
@@ -909,10 +948,12 @@ namespace BoardShell
             if (ServerAlive()) return true;
             try
             {
+                string prefix;
+                var exe = PythonExe(out prefix);
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "python",
-                    Arguments = "\"" + Path.Combine(ProjectDir, "tools", "server.py") + "\" --port " + Port,
+                    FileName = exe,
+                    Arguments = prefix + "\"" + Path.Combine(ProjectDir, "tools", "server.py") + "\" --port " + Port,
                     WorkingDirectory = ProjectDir,
                     UseShellExecute = false,
                     CreateNoWindow = true,

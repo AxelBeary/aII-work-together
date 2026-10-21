@@ -52,6 +52,14 @@ def set_root(root) -> None:
     BOARD.mkdir(parents=True, exist_ok=True)
     CARDS.mkdir(parents=True, exist_ok=True)
     WORKSPACE = ROOT
+    # ⚠️ 2026-10-21 修（安全扫描 F-11）：旧写法只 `_STORE = None`，SQLite 连接
+    #    留在 threading.local 里没人关；总览每 15 秒逐项目切一次 ⇒ 句柄只涨不落，
+    #    Windows 上还会让 board.db 被「看不见的读者」占着。切之前先关本线程连接。
+    if _STORE is not None:
+        try:
+            _STORE.close()
+        except Exception as e:
+            print(f"⚠ 切换项目时关闭旧库失败（{e}）——继续，但句柄可能残留", file=sys.stderr)
     _STORE = None            # 切项目必须丢弃旧连接
     migrate_if_needed()
 
@@ -173,9 +181,26 @@ def jread(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+CARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def check_card_id(cid):
+    """卡号白名单。
+
+    ⚠️ 2026-10-21 修（安全扫描 F-02）：卡号会直接进文件路径
+       （`board/evidence/<卡号>/run.log`、`board/cards/<卡号>`、`.worktrees/<卡号>`），
+       而 HTTP 建卡与 `--id` 都不校验。`..\\..\\x` 能在任意目录 mkdir，
+       配合 `rm` 的 rmtree 就是删任意目录。这里一次性钉死形状。
+    """
+    cid = (cid or "").strip()
+    if not CARD_ID_RE.match(cid):
+        die(f"卡号不合法：{cid!r}（只允许 A-Z a-z 0-9 _ - ，长度 1–64）")
+    return cid
+
+
 def card_dir(cid: str) -> Path:
     """卡片作用域的文件目录（证据等）。权威数据在库里，不在这些文件里。"""
-    d = _store().evidence_path(cid)
+    d = _store().evidence_path(check_card_id(cid))
     return d
 
 
@@ -231,13 +256,19 @@ def card_ref(cid):
 def create_card(card: dict):
     """建卡（统一入口，CLI 与测试都用它）。
 
-    ⚠️ 必须先查后写、且在同一个串行区内完成，否则并发建同号卡会互相覆盖
-    （存储层用的是 INSERT OR REPLACE，覆盖是静默的）。
+    ⚠️ 2026-10-21 修（安全扫描 F-13）：旧写法「先查后写」只在单进程内有效，
+       两个进程同时建同号卡会互相覆盖（存储层 INSERT OR REPLACE 是静默覆盖）。
+       现在靠主键冲突判重：纯 INSERT 撞键 → IntegrityError → 「卡片已存在」。
     """
-    cid = card.get("id")
-    if get_card(cid) is not None:
-        raise ValueError(f"卡片已存在：{cid}")
-    _store().save_card(card)
+    cid = check_card_id(card.get("id"))
+    card["id"] = cid
+    try:
+        _store().save_card(card, create_only=True)
+    except Exception as e:
+        msg = str(e).lower()
+        if "unique" in msg or "primary key" in msg or "constraint" in msg:
+            raise ValueError(f"卡片已存在：{cid}")
+        raise
     return card
 
 
@@ -386,7 +417,8 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
         die(why)
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
                        "engine": engine, "model": model, "effort": effort,
-                       "epoch": epoch, "lease_dir": LEASE_NAME})
+                       "epoch": epoch, "lease_dir": LEASE_NAME,
+                       "pid": os.getpid()})
     # B4：认领时给交付物拍快照（「before」），之后拍板的人不用自己跑 git diff
     append_event(cid, {"type": "baseline", "actor": "system", "seat": seat,
                        "files": _snapshot_deliverables(card)})
@@ -404,8 +436,9 @@ def heartbeat(cid: str, seat: str):
     ok(f"心跳已记（TTL {LEASE_TTL}s）")
 
 
-def release(cid: str, to: str = "released"):
-    cur = _store().release_lease(cid, kind=to)
+def release(cid: str, to: str = "released", seat: str = None):
+    """释放租约。带 `seat` 时只释放自己的（CAS），防止误删别人刚抢到的。"""
+    cur = _store().release_lease(cid, kind=to, seat=seat)
     return cur
 
 
@@ -417,6 +450,27 @@ def sha8(p: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()[:8]
+
+
+def deliverable_path(item) -> Path:
+    """把卡片上的交付物路径解析进工作区；绝对路径与 `..` 一律拒。
+
+    ⚠️ 2026-10-21 修（安全扫描 F-14）：旧写法允许绝对路径与 `..`，
+       于是 L1/L2/L3 会去 stat／读工作区外的任意文件（存在性/大小/哈希外泄），
+       并行收集会往任意路径写，`consult` 还会把文件内容贴进提示词外发给模型。
+    """
+    rel = item if isinstance(item, str) else (item or {}).get("path")
+    s = str(rel or "").strip()
+    if not s:
+        raise ValueError("交付物路径是空的")
+    if Path(s).is_absolute() or Path(s.replace("\\", "/")).is_absolute():
+        raise ValueError(f"交付物只允许相对路径：{s}")
+    full = (WORKSPACE / s).resolve()
+    try:
+        full.relative_to(Path(WORKSPACE).resolve())
+    except ValueError:
+        raise ValueError(f"交付物跑出工作区：{s}")
+    return full
 
 
 def gate_l1(cid: str, card: dict) -> tuple:
@@ -432,7 +486,12 @@ def gate_l1(cid: str, card: dict) -> tuple:
     problems, results = [], []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        try:
+            p = deliverable_path(item)
+        except ValueError as e:
+            problems.append(str(e))
+            results.append({"path": rel, "exists": False, "rejected": True})
+            continue
         if not p.exists():
             problems.append(f"缺件：{rel}")
             results.append({"path": rel, "exists": False})
@@ -457,7 +516,11 @@ def gate_l2(cid: str, card: dict) -> tuple:
     problems = []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        try:
+            p = deliverable_path(item)
+        except ValueError as e:
+            problems.append(str(e))
+            continue
         if not p.exists():
             continue
         raw = p.read_bytes()
@@ -487,7 +550,11 @@ def gate_l3(cid: str, card: dict) -> tuple:
     TEXTY = (".md", ".txt", ".py", ".json", ".yaml", ".yml", ".html", ".css", ".js", ".ts")
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        try:
+            p = deliverable_path(item)
+        except ValueError as e:
+            problems.append(str(e))
+            continue
         if p.exists() and p.suffix.lower() in TEXTY:
             try:
                 text_cache[rel] = p.read_text(encoding="utf-8")
@@ -531,13 +598,14 @@ def budget_status(cid: str, card: dict = None, events: list = None) -> dict:
 
     口径（写死，别再各算各的）：
       · 花费 = 所有 usage 事件里引擎**真报了**的 cost 之和（没报的不当 0，标 unknown）
-      · 时长 = 所有 usage 事件的 duration_ms 之和（引擎实际跑的时间，
-              不含卡在「拍板中」等人的天数）
-    超限判定：任一项 > 上限即超。上限为空＝不限。
+      · 时长 = 所有 usage 事件的 duration_ms 之和（含复核/评审各阶段；
+              另给 `minutes_exec` 只算「执行」阶段，看读数用）
+    超限判定：任一项 **≥** 上限即超（2026-10-21 改：原来是 `>`，
+    于是「已花 0.0500 / 上限 0.05」不算超，下一轮还能整轮跑完才停）。
     """
     card = card if card is not None else get_card(cid)
     events = events if events is not None else load_journal(cid)
-    cost, ms, unknown = 0.0, 0, 0
+    cost, ms, ms_exec, unknown = 0.0, 0, 0, 0
     for ev in events:
         if ev.get("type") != "usage":
             continue
@@ -546,15 +614,19 @@ def budget_status(cid: str, card: dict = None, events: list = None) -> dict:
             cost += float(u.get("cost") or 0)
         else:
             unknown += 1
-        ms += int(ev.get("duration_ms") or 0)
+        d = int(ev.get("duration_ms") or 0)
+        ms += d
+        if str(ev.get("phase") or "").startswith("执行"):
+            ms_exec += d
     max_cost = card.get("max_cost_usd")
     max_min = card.get("max_minutes")
     over = []
-    if max_cost is not None and cost > float(max_cost):
+    if max_cost is not None and cost >= float(max_cost):
         over.append(f"花费 ${cost:.4f} 超过上限 ${float(max_cost):.2f}")
-    if max_min is not None and ms / 60000.0 > float(max_min):
-        over.append(f"引擎时长 {ms / 60000.0:.1f} 分钟超过上限 {int(max_min)} 分钟")
+    if max_min is not None and ms / 60000.0 >= float(max_min):
+        over.append(f"引擎时长 {ms / 60000.0:.1f} 分钟已达上限 {int(max_min)} 分钟")
     return {"cost": round(cost, 4), "minutes": round(ms / 60000.0, 1),
+            "minutes_exec": round(ms_exec / 60000.0, 1),
             "max_cost": max_cost, "max_minutes": max_min,
             "unknown_runs": unknown, "over": bool(over), "reasons": over}
 
@@ -594,7 +666,12 @@ def diff_vs_baseline(cid: str, card: dict = None) -> list:
     out = []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        try:
+            p = deliverable_path(item)
+        except ValueError:
+            out.append({"path": rel, "status": "越界", "before": None,
+                        "after": {"exists": False, "bytes": 0, "sha8": None}})
+            continue
         after = {"exists": p.exists(), "bytes": 0, "sha8": None}
         if p.exists():
             after = {"exists": True, "bytes": p.stat().st_size, "sha8": sha8(p)}
@@ -622,7 +699,12 @@ def _snapshot_deliverables(card: dict) -> list:
     files = []
     for item in card.get("deliverables", []):
         rel = item if isinstance(item, str) else item.get("path")
-        p = (WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
+        try:
+            p = deliverable_path(item)
+        except ValueError:
+            files.append({"path": rel, "exists": False, "bytes": 0, "sha8": None,
+                          "rejected": True})
+            continue
         if p.exists():
             files.append({"path": rel, "exists": True, "bytes": p.stat().st_size,
                           "sha8": sha8(p), "mtime_ms": int(p.stat().st_mtime * 1000)})

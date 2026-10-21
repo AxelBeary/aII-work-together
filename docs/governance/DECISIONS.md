@@ -388,4 +388,46 @@
 - 影响面：`README.md`、`AGENTS.md`、`tools/check.py`（注释）、`tools/cli.py`（`cmd_audit`）、本文件 D-004 第 3 行加「已被 D-011 推翻」标注。
 - 状态：**已拍板**
 
+---
+
+## D-022 · 安全扫描 23 条全部落地（**已拍板** 2026-10-21）
+
+- 日期：2026-10-21
+- 来源：子代理只读扫描（`docs/research/20261021-security-scan/`，P0×1／P1×6／P2×11／P3×5）；用户指令「全部修完」。
+- 结论（按编号，逐条落地）：
+
+| 编号 | 问题 | 修法 | 反向测试 |
+|---|---|---|---|
+| F-01 | 本地 HTTP 无鉴权/不校验来源，任意网页可 CSRF 驱动命令 | POST 一律要页面注入的 `X-Board-Token`；所有请求校验 `Host` 必须是回环；HTML 加 CSP/X-Frame-Options | 无令牌 POST→403；`Host: evil`→403；正常 GET→200 |
+| F-02 | 卡号直通文件路径（mkdir/rmtree 任意目录） | `check_card_id`（`[A-Za-z0-9_-]{1,64}`）在 create/card_dir/rm/parallel/HTTP 五处统一校验 | `..\..\pwn` 建卡/删卡/日志接口全拒 |
+| F-03 | 终端黑名单只挡两个词 | 改白名单：`board` 只放行 14 个只读子命令；`py` 只放行 `tools/check.py` 与 `tests/test_*.py` | `py cli.py rm`／`board publish`／`doctor --fix` 全拒 |
+| F-04 | `cmd /c` + 参数列表，`&` 即拼接 | `.cmd/.bat` 路径下参数含 `& \| < > ^ "` 直接拒执行 | `--model x&calc` 被拒 |
+| F-05 | 卡号未转义进 innerHTML | `esc(c.id)`（属性与文本位）；`esc` 补单引号 | 壳自检仍全过 |
+| F-06 | `INSERT OR REPLACE` + CASCADE = 静默清历史 | 改 `ON CONFLICT(id) DO UPDATE`（只更新列） | 改卡后事件流条数不变 |
+| F-07 | 预算刹车 `--seat human` 一句话绕过 | 放宽/去依赖要 `--seat human` **＋** 人令牌 | 隔离 HOME 下 `--seat human` 被拒；有令牌通过 |
+| F-08 | 续跑 REVIEW/CONCLUDE 恒 `claim-failed` | 新增 `orchestrator.review_only()`（复核流程独立入口） | 续跑闸全过 |
+| F-09 | 回收后无条件 release 会删别人的租约 | `release_lease(seat=…)` CAS；`resume` 去掉多余 release | 租约竞态闸全过 |
+| F-10 | `_start_run` 异常不复位 → 永久「已有一轮在跑」 | 参数先校验（`max` 非整数直接 400）；异常分支复位 running | 接口契约闸全过 |
+| F-11 | 切项目丢 Store 不 close（句柄泄漏） | `set_root` 先 `close()` 旧连接（失败可见） | 多项目/总览闸全过 |
+| F-12 | 无 body 上限/读超时，4 条慢连接占死 | 1MB→413；`Handler.timeout=10`；池满/队列满回 503 | 契约闸正常流量全过 |
+| F-13 | 建卡先查后写非原子 | 纯 `INSERT` + 主键冲突→「卡片已存在」 | 同号建卡被拒 |
+| F-14 | 交付物绝对路径/`..`（读任意文件、写任意路径、外发） | `deliverable_path()` 统一解析，必须落在工作区；parallel/consult 复用 | `C:\Windows\win.ini`、`..\..\etc\passwd` 被拒 |
+| F-15 | 一批 `except: pass` 静默吞错 | 日志/心跳/留痕/缓存/终端日志五处改为可见告警 | 体检/审计闸全过 |
+| F-16 | 人令牌首次无登记即放行；错误回包带家目录 | 首次必须 `board token --init`；登记移到家目录（老登记自动迁移）；回包把家目录换成 `~` | `BOARD_HUMAN_HOME` 隔离下无令牌被拒；`_safe_msg` 断言 |
+| F-17 | `board.html` 的 holder 未转义 | `_esc(holder)`；`_esc` 补引号 | 静态页闸全过 |
+| F-18 | 身份/归属是自由文本 | `--seat human` 建卡要过人令牌；事件记 `pid`；UI 建卡记 `via:"ui"` | —（本机身份边界仍见 AGENTS §4.1） |
+| F-19 | 预算边界 `>`／保底 30 秒／时长口径混 | 改 `≥`；剩余 ≤0 直接 `timeout=0` 由 `run_engine_guarded` 判预算停；输出同时给 `minutes` 与 `minutes_exec` | 预算闸全过 |
+| F-20 | 租约 TTL 用墙钟，对时会误杀 | 新增 `leases.at_mono`（单调时钟，整机跨进程可比），老行回落墙钟 | 租约竞态闸全过 |
+| F-21 | 壳对任意 scheme 调 `Process.Start`；`--url` 任意；python 走 PATH | scheme 白名单（http/https/mailto）；`--url` 只允许回环；python 优先 `BOARD_PYTHON`→`py.exe`→PATH | 壳 `--selftest` PASS |
+| F-22 | 日志无轮转；日志接口整文件读；停止只杀子进程 | 5MB 轮转；`seek(since)` 读增量（首读只取尾部 20KB）；Windows `taskkill /T /F` | 接口契约（增量）全过 |
+| F-23 | 告警关键词漏报、错误当 200、复核凭据太松 | 关键词扩展＋`/api/alert` 出错回 500；凭据要求 ≥24 字符＋命令/文件＋数字＋无占位词 | 预算/提醒闸全过 |
+
+- 依据（实测 2026-10-21）：
+  - **新增第 16 道闸「安全反向」**（`tests/test_security.py`，8 组 21 条，每条配非零对照）。
+  - 全套 16 道闸：`✓ 全部通过`；壳与托盘重编译后 `--selftest` 均 PASS。
+  - 真实机器兼容性：旧登记文件（`board/.human-token.sha`）已自动迁到 `~/.board-human.sha`，实测 `_verify_human_token()` → True（用户无需重新登记）。
+- 影响面：`tools/server.py`、`cli.py`、`board.py`、`storage.py`、`engines.py`、`term.py`、`orchestrator.py`、`resume.py`、`parallel.py`、`consult.py`、`render.py`、`projects.py`、`ui.html`、`shell/BoardShell.cs`、`tests/*`、`tools/check.py`。
+- 未做 / 未证：**没有做渗透复测**（未起第三方扫描器）；`F-18` 的「agent 与人在同一台机器上」这条根本边界没变（人能读的令牌文件 agent 也能读，见 AGENTS §4.1）。
+- 状态：**已拍板**
+
 

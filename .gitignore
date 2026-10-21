@@ -18,6 +18,7 @@ __pycache__/
 board/cards/
 board/board.html
 board/.human-token.sha
+board/ui-server.tok
 board/board.db
 board/board.db-wal
 board/board.db-shm

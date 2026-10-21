@@ -316,7 +316,9 @@ def project_summary(use_cache: bool = True, ttl_s: int = 15) -> list:
         tmp.write_text(json.dumps({"at": time.time(), "projects": out},
                                   ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, cf)
-    except Exception:
+    except Exception as e:
+        # ⚠️ 2026-10-21 修（安全扫描 F-15）：缓存写失败要可见，否则每次请求都全量重扫。
+        print(f"⚠ 汇总缓存写不进（{cf}）：{e}", file=sys.stderr)
         if tmp is not None:
             try:
                 tmp.unlink(missing_ok=True)

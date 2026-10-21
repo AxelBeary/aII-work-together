@@ -216,10 +216,17 @@ def consult(card_id: str, question: str, reviewers: list, files: list = None,
     if not files:
         raise ValueError("没有可评审的文件：卡里没有 deliverables，也没给 --file")
     # 路径必须先验存在：否则评审席会对着「文件不存在」空评一轮，还给出一个看似正常的结论
-    resolved, missing = [], []
+    resolved, missing, rejected = [], [], []
     for f in files:
-        p = Path(f) if Path(f).is_absolute() else base / f
+        try:
+            p = B.deliverable_path(f)
+        except ValueError as e:
+            rejected.append(str(e))
+            continue
         (resolved if p.is_file() else missing).append(str(p))
+    if rejected:
+        raise ValueError("这些文件不允许外发给评审：\n  - " + "\n  - ".join(rejected)
+                         + "\n  （只允许工作区内的相对路径；绝对路径与 .. 一律拒）")
     if missing:
         raise ValueError(f"这些文件不存在，拒绝空评：{', '.join(missing)}")
     files = resolved

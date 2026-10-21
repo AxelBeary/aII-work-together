@@ -24,6 +24,7 @@ server.py — 本地网页界面（零依赖，只用标准库）
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -52,6 +53,36 @@ _CODE_MTIME = int(Path(__file__).stat().st_mtime)
 _run_lock = threading.Lock()
 _run_state = {"running": False, "project": None, "started": None}
 _run_log_path = ROOT / "board" / "ui-run.log"
+
+# ---------- 安全边界（2026-10-21 安全扫描 F-01／F-12）----------
+# 「只监听 127.0.0.1」挡不住三件事：本机任意进程、用户浏览器里的任意网页
+# （localhost 是网页可写的目标）、DNS rebinding（Host 头不校验）。
+# 因此：
+#   · 每个请求的 Host 必须是回环地址（挡 rebinding）；
+#   · 所有写接口（POST）必须带页面注入的会话令牌（挡跨站「简单请求」CSRF）；
+#   · 请求体上限 1MB、读超时 10s、池满回 503（挡慢连接把界面占死）。
+_TOKEN = secrets.token_urlsafe(24)
+_TOKEN_FILE = ROOT / "board" / "ui-server.tok"
+_MAX_BODY = 1 << 20
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+def _safe_msg(e) -> str:
+    """回给客户端的错误文案：去掉家目录绝对路径（安全扫描 F-16）。"""
+    s = str(e)
+    home = str(Path.home())
+    if home and home in s:
+        s = s.replace(home, "~")
+    return s[:300]
+
+
+def _host_ok(host_header: str) -> bool:
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):                 # [::1]:8777
+        h = h.split("]")[0] + "]"
+    else:
+        h = h.split(":")[0]
+    return h in _LOCAL_HOSTS
 
 # ⚠️ 所有看板访问必须在这个锁里做。
 # 原因：board.py 的项目根是模块级全局（B.set_root），而这里是一请求一线程。
@@ -205,7 +236,11 @@ def api_alert(q):
             needs.append(cid)
         elif st["state"] == "阻塞":
             r = st.get("blocked_reason") or ""
-            if any(k in r for k in ("失败", "超预算", "返工")):
+            # ⚠️ 2026-10-21 修（安全扫描 F-23）：旧关键词只有三个中文词，
+            #    「engine returned no text / 依赖不存在 / 租约丢失」全都静默不报。
+            low = r.lower()
+            if any(k in r for k in ("失败", "超预算", "返工", "异常", "超时", "租约")) \
+                    or any(k in low for k in ("error", "fail", "timeout", "engine")):
                 failed.append(cid)
     return "needs=" + ",".join(needs) + "|failed=" + ",".join(failed)
 
@@ -321,6 +356,10 @@ def api_create(body):
         raise ValueError("标题不能为空")
     defaults = P.project_defaults(root) or {}
     cid = body.get("id") or f"C{time.strftime('%m%d')}-{os.urandom(2).hex()}"
+    # ⚠️ 2026-10-21 修（安全扫描 F-02）：卡号会进文件路径（evidence/<卡号>、.worktrees/<卡号>），
+    #    这里和 CLI 用同一把尺；⛔ 不合法就拒，别等 mkdir 出花样。
+    if not B.CARD_ID_RE.match(str(cid)):
+        raise ValueError(f"卡号不合法：{cid!r}（只允许 A-Z a-z 0-9 _ - ，长度 1–64）")
     if B.get_card(cid):
         raise ValueError(f"卡片已存在：{cid}")
     card = {
@@ -348,7 +387,8 @@ def api_create(body):
                          "seat": card["created_by"], "title": title,
                          "engine": card["engine"], "model": card["model"],
                          "effort": card["effort"],
-                         "human_gate": card["human_gate"]})
+                         "human_gate": card["human_gate"],
+                         "via": "ui"})
     P.invalidate_summary_cache()      # 让下拉框里的项目张数立刻更新
     return {"ok": True, "id": cid}
 
@@ -362,8 +402,10 @@ def api_human(body):
     who = (body.get("who") or "owner").strip()
     ok_tok, why = _verify_token(who)
     if not ok_tok:
-        raise PermissionError(why)
-    _register_token(who)
+        # ⚠️ 2026-10-21 修（安全扫描 F-16）：不再「首次自动登记」（等于谁放个文件谁就是人），
+        #    也不把家目录路径回显给 HTTP 调用方（只写本机后端日志）。
+        print(f"⚠ 人令牌校验失败（who={who}）：{why}", file=sys.stderr)
+        raise PermissionError("人令牌校验未通过：先在本机终端跑 board token --init")
     cur = B.replay(cid)["state"]
     if cur != "拍板中":
         raise ValueError(f"当前状态「{cur}」，只有「拍板中」的卡需要拍板")
@@ -380,17 +422,6 @@ def _verify_token(who):
     return C._verify_human_token(who)
 
 
-def _register_token(who):
-    import hashlib
-    import cli as C
-    reg = C.human_token_sha(who)
-    if reg.exists():
-        return
-    content = C.human_token(who).read_text(encoding="utf-8").strip()
-    reg.write_text(hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                   encoding="utf-8")
-
-
 def api_run(body):
     root = _switch(body.get("project"))
     return _start_run(root, body)
@@ -403,11 +434,19 @@ def _start_run(root, body, cards=None):
     try:
         if _run_state["running"]:
             raise RuntimeError("已经有一轮在跑了")
+        # ⚠️ 2026-10-21 修（安全扫描 F-10）：参数必须在置 running 之前校验完。
+        #    旧实现先置 running=True 再 int(body["max"])，一个 "abc" 就让 except
+        #    只放锁不复位 ⇒ 之后每次「跑一轮」都撞「已经有一轮在跑了」，直到重启后端。
+        try:
+            n = int(body.get("max") or 3)
+        except (TypeError, ValueError):
+            raise ValueError("max 必须是整数")
+        n = max(1, min(n, 200))
+        cards = [str(c) for c in (cards or []) if str(c).strip()]
         _run_state.update(running=True, project=str(root),
                           started=time.strftime("%H:%M:%S"))
         _run_log_path.parent.mkdir(parents=True, exist_ok=True)
         _run_log_path.write_text("", encoding="utf-8")
-        n = int(body.get("max") or 3)
         if cards:
             n = max(n, len(cards))
         engine = body.get("engine") or "opencode"
@@ -433,6 +472,7 @@ def _start_run(root, body, cards=None):
         threading.Thread(target=_worker, daemon=True).start()
         return {"ok": True, "started": _run_state["started"]}
     except Exception:
+        _run_state.update(running=False, project=None, started=None)
         _run_lock.release()
         raise
 
@@ -457,7 +497,6 @@ def api_bulk(body):
         ok_tok, why = _verify_token(who)
         if not ok_tok:
             raise PermissionError(why)
-        _register_token(who)
         done, skipped = [], []
         for cid in ids:
             if not B.get_card(cid):
@@ -485,6 +524,8 @@ def api_card_log(q):
     cid = q.get("id", [None])[0]
     if not cid:
         raise ValueError("缺 id")
+    if not B.CARD_ID_RE.match(str(cid)):
+        raise ValueError(f"卡号不合法：{cid!r}")
     try:
         since = int(q.get("since", ["0"])[0] or 0)
     except ValueError:
@@ -492,12 +533,18 @@ def api_card_log(q):
     p = B.card_dir(cid) / "run.log"
     if not p.exists():
         return {"size": 0, "log": "", "running": False}
-    data = p.read_bytes()
-    if since > len(data):
-        since = 0
-    chunk = data[since:].decode("utf-8", "replace")
+    # ⚠️ 2026-10-21 改（安全扫描 F-22）：不再整文件 read_bytes 再切 20KB，
+    #    改为 seek(since) 只读增量；首次（since=0）也只取尾部 20KB。
+    size = p.stat().st_size
+    start = since if 0 <= since <= size else 0
+    if start == 0 and size > 20000:
+        start = size - 20000
+    with p.open("rb") as f:
+        f.seek(start)
+        data = f.read()
+    chunk = data.decode("utf-8", "replace")
     st = B.replay(cid)
-    return {"size": len(data), "log": chunk[-20000:],
+    return {"size": size, "log": chunk[-20000:],
             "running": st["state"] in ("进行中", "核验中")}
 
 
@@ -593,14 +640,35 @@ class PoolHTTPServer(ThreadingHTTPServer):
     """
 
     pool_size = 4
+    max_backlog = 32          # 排队上限：满了直接 503，别让页面无限等（安全扫描 F-12）
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._pool = ThreadPoolExecutor(max_workers=self.pool_size,
                                         thread_name_prefix="board-ui")
+        self._slots = threading.BoundedSemaphore(self.pool_size + self.max_backlog)
 
     def process_request(self, request, client_address):
-        self._pool.submit(self.process_request_thread, request, client_address)
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\n"
+                                b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            except Exception:
+                pass
+            finally:
+                try:
+                    request.close()
+                except Exception:
+                    pass
+            return
+
+        def _run():
+            try:
+                self.process_request_thread(request, client_address)
+            finally:
+                self._slots.release()
+
+        self._pool.submit(_run)
 
     def server_close(self):
         try:
@@ -612,6 +680,7 @@ class PoolHTTPServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "aII-work-together-ui/1.0"
+    timeout = 10          # 读超时：慢连接不许把线程池占死（安全扫描 F-12）
 
     def log_message(self, fmt, *args):
         pass          # 安静：不往控制台刷访问日志
@@ -622,19 +691,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if "text/html" in ctype:
+            # CSP：页面自带内联脚本（单文件），所以 script 仍放开 inline；
+            # 但禁掉外部源、禁 frame、禁 object —— 至少堵住「外链脚本」与「被嵌框」。
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                             "connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(data)
 
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False))
 
+    def _host_allowed(self) -> bool:
+        if _host_ok(self.headers.get("Host")):
+            return True
+        self._json({"error": "非本地 Host（已拒绝，防 DNS rebinding）"}, 403)
+        return False
+
     def do_GET(self):
+        if not self._host_allowed():
+            return
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path in ("/", "/index.html"):
             if not UI.exists():
                 return self._send(500, "ui.html 缺失", "text/plain; charset=utf-8")
-            return self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
+            html = UI.read_text(encoding="utf-8")
+            # 会话令牌注入页面（同源页面才读得到；跨站页面读不到 → 拿不到写权限）
+            html = html.replace('<meta name="board-token" content="">',
+                                f'<meta name="board-token" content="{_TOKEN}">')
+            return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         if u.path in ("/favicon.ico", "/assets/board.png"):
             f = ROOT / "assets" / ("board.ico" if u.path == "/favicon.ico" else "board.png")
             if f.exists():
@@ -647,7 +737,10 @@ class Handler(BaseHTTPRequestHandler):
                 with _BOARD_LOCK:
                     body = api_alert(q)
             except Exception as e:
-                body = f"error={str(e)[:80]}"
+                # ⚠️ 2026-10-21 修（安全扫描 F-23）：出错不再回 HTTP 200 的 "error=…"，
+                #    否则壳按 needs=/failed= 切字符串会把它当「无事发生」（E-35 的近亲）。
+                print(f"⚠ /api/alert 失败：{e}", file=sys.stderr)
+                return self._send(500, b"error=1", "text/plain; charset=utf-8")
             return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8")
         routes = {
             "/api/state": api_state,
@@ -668,12 +761,23 @@ class Handler(BaseHTTPRequestHandler):
         except SystemExit:
             self._json({"error": "内部操作失败（详见控制台）"}, 500)
         except Exception as e:
-            self._json({"error": str(e)}, 400)
+            self._json({"error": _safe_msg(e)}, 400)
 
     def do_POST(self):
+        if not self._host_allowed():
+            return
+        # 写接口必须带页面注入的会话令牌：跨站页面拿不到它（CORS 简单请求不触发预检，
+        # 但自定义头不在简单请求允许的头里 ⇒ 想带就要预检 ⇒ 我们没有 ACAO ⇒ 被浏览器拦）。
+        if (self.headers.get("X-Board-Token") or "") != _TOKEN:
+            return self._json({"error": "缺少/错误的会话令牌（跨站写入已拒绝）"}, 403)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._json({"error": "Content-Length 不合法"}, 400)
+        if n > _MAX_BODY:
+            return self._json({"error": f"请求体太大（{n} > {_MAX_BODY}）"}, 413)
         u = urlparse(self.path)
-        n = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(n).decode("utf-8") if n else "{}"
+        raw = self.rfile.read(n).decode("utf-8", "replace") if n else "{}"
         try:
             body = json.loads(raw)
         except Exception:
@@ -691,12 +795,12 @@ class Handler(BaseHTTPRequestHandler):
             with _BOARD_LOCK:
                 self._json(fn(body))
         except PermissionError as e:
-            self._json({"error": str(e)}, 403)
+            self._json({"error": _safe_msg(e)}, 403)
         except SystemExit:
             self._json({"error": "操作被拒绝（详见控制台）"}, 400)
         except Exception as e:
             traceback.print_exc()
-            self._json({"error": str(e)}, 400)
+            self._json({"error": _safe_msg(e)}, 400)
 
 
 def main():
@@ -710,6 +814,13 @@ def main():
     if not UI.exists():
         print(f"✗ 缺界面文件：{UI}")
         return 1
+
+    # 把会话令牌写到本地文件：壳/托盘要读它（它们不是页面，拿不到注入的 meta）。
+    try:
+        _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _TOKEN_FILE.write_text(_TOKEN, encoding="utf-8")
+    except Exception as e:
+        print(f"⚠ 令牌文件写不了（壳可能连不上）：{e}")
 
     if a.workers <= 0:
         srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)

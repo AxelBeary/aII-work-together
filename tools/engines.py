@@ -174,6 +174,15 @@ def _exec(cmd, cwd, timeout, stdin_text=None):
     real = _which(exe)
     argv = ([real] + list(cmd[1:])) if real else cmd
     if real and real.lower().endswith((".cmd", ".bat")):
+        # ⚠️ 2026-10-21 修（安全扫描 F-04）：`cmd /c` + 参数列表时，Python 的
+        #    list2cmdline 只给含空格的参数加引号，`&`／`|` 不会被转义 ——
+        #    `--model 'x&calc'` 在 cmd.exe 眼里就是两条命令。
+        #    引擎名/模型名/提示词都可能来自卡片字段，所以这里 fail-closed：
+        #    参数里出现 Windows shell 元字符就拒绝执行。
+        bad = [a for a in argv if any(ch in str(a) for ch in '&|<>^"')]
+        if bad:
+            return None, "", ("参数里含 Windows shell 元字符（& | < > ^ \"），"
+                              "拒绝经 cmd /c 执行：" + str(bad[0])[:60])
         argv = ["cmd", "/c"] + argv
     # ⚠️ cwd 传 None 会触发 WinError 2（实测），必须落到具体目录
     cwd = cwd or os.getcwd()

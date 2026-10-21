@@ -71,8 +71,9 @@ def test_race():
                   "created_at": "2026-10-20", "created_by": "test", "created_kind": "human"})
     st.try_claim("R1", "dead", "opencode", ttl_s=600)
     with st.write() as c:                      # 心跳早停了 20 分钟
-        c.execute("UPDATE leases SET at_ms=? WHERE card_id=?",
-                  (storage._now_ms() - 20 * 60 * 1000, "R1"))
+        c.execute("UPDATE leases SET at_ms=?, at_mono=? WHERE card_id=?",
+                  (storage._now_ms() - 20 * 60 * 1000,
+                   storage._mono_ms() - 20 * 60 * 1000, "R1"))
 
     wins = []
 
@@ -137,7 +138,7 @@ def test_reclaim_cmd():
     cid = [l.split()[0] for l in out.splitlines() if "C" in l][0]
     board(proj, "claim", cid, "--seat", "slow")
     con = sqlite3.connect(str(proj / "board" / "board.db"))
-    con.execute("UPDATE leases SET at_ms=at_ms-7200000")     # 两小时前的心跳
+    con.execute("UPDATE leases SET at_ms=at_ms-7200000, at_mono=at_mono-7200000")  # 两小时前的心跳
     con.commit()
     con.close()
     rc, out = board(proj, "reclaim")

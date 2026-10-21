@@ -33,6 +33,8 @@ env = dict(os.environ)
 env["ABOARD_REGISTRY_DIR"] = str(REG)
 env["PYTHONIOENCODING"] = "utf-8"
 env.pop("ABOARD_SEAT", None)
+os.environ["BOARD_HUMAN_HOME"] = str(SANDBOX / "human")
+env["BOARD_HUMAN_HOME"] = os.environ["BOARD_HUMAN_HOME"]
 sys.path.insert(0, str(TOOLS))
 os.environ["ABOARD_REGISTRY_DIR"] = str(REG)
 
@@ -45,9 +47,12 @@ def ok(name, cond, detail=""):
         fails.append(name)
 
 
-def board(proj, *args):
+def board(proj, *args, env_extra=None):
+    e = dict(env)
+    if env_extra:
+        e.update(env_extra)
     p = subprocess.run([sys.executable, str(TOOLS / "board.py"), "-C", str(proj)] + list(args),
-                       cwd=str(ROOT), env=env, capture_output=True, text=True,
+                       cwd=str(ROOT), env=e, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
@@ -145,7 +150,8 @@ def test_deps():
     rc, out = board(proj, "verify", a, "--seat", "rev1")
     assert rc == 0, out
     rc, out = board(proj, "review", a, "--seat", "rev1", "--verdict", "pass",
-                    "--evidence", "跑了 L1-L3：3 项全过，交付物 61 字节")
+                    "--evidence",
+                    "python tools/board.py verify → L1/L2/L3 全过，交付物 61 字节")
     assert rc == 0, out
     rc, out = board(proj, "show", a)
     ok("上游卡真的到「完成」", "完成" in out, out.splitlines()[1].strip() if len(out.splitlines()) > 1 else "")
@@ -227,7 +233,14 @@ def test_budget_owner_rule():
     rc, out = board(proj, "budget", cid, "--max-cost", "5.0", "--seat", "w1")
     ok("执行席不能自己放宽预算", rc != 0 and "human" in out, f"rc={rc} {out.strip()[:60]}")
 
-    rc, out = board(proj, "budget", cid, "--max-cost", "5.0", "--seat", "human")
+    # 自称 human 但本机没有可用人令牌（隔离的 HOME 里没有令牌/登记）→ 仍然拒
+    rc, out = board(proj, "budget", cid, "--max-cost", "5.0", "--seat", "human",
+                    env_extra={"BOARD_HUMAN_HOME": str(SANDBOX / "nohome")})
+    ok("只写 --seat human 不再算数（要人令牌）",
+       rc != 0 and ("令牌" in out or "token" in out.lower()), f"rc={rc} {out.strip()[:60]}")
+
+    rc, out = board(proj, "budget", cid, "--max-cost", "5.0", "--seat", "human",
+                    "--who", "owner")
     ok("人可以把上限放宽", rc == 0, f"rc={rc} {out.strip()[:60]}")
     rc, out = board(proj, "show", cid)
     ok("放宽真的写进了卡里", "5.00" in out, out.strip()[:40])
@@ -342,7 +355,8 @@ def test_bulk():
     try:
         (SANDBOX / "home").mkdir(parents=True, exist_ok=True)
         tok = C.human_token("owner")
-        tok.write_text("t" * 24, encoding="utf-8")
+        # 必须写「已登记过的那个令牌」：现在换内容会被判「令牌已变更」（F-16 之后不再首次放行）
+        tok.write_text("test-token-0123456789abcdef", encoding="utf-8")
         r = S.api_bulk({"project": proj.name, "ids": [a], "action": "cancel",
                         "who": "owner"})
     finally:
@@ -359,8 +373,18 @@ def test_bulk():
            for ev in B.load_journal(a)), "")
 
 
+def init_human():
+    """人令牌：测试用隔离的 HOME 目录，并显式登记（安全扫描 F-16 之后不再自动登记）。"""
+    h = Path(os.environ["BOARD_HUMAN_HOME"])
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".board-human.tok").write_text("test-token-0123456789abcdef", encoding="utf-8")
+    rc, out = board(SANDBOX, "token", "--init", "--who", "owner")
+    assert rc == 0, out
+
+
 def main():
     SANDBOX.mkdir(parents=True, exist_ok=True)
+    init_human()
     try:
         for fn in (test_budget_stop, test_deps, test_error_class,
                    test_budget_owner_rule, test_diff, test_alert_line,

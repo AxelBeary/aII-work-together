@@ -27,6 +27,18 @@ def cmd_init(a):
     B.ok(f"看板已初始化：{B.BOARD / 'board.db'}")
 
 
+def _created_kind(a) -> str:
+    """谁是建卡人：`--seat human` 必须过人令牌才配叫「人建的」（安全扫描 F-18）。"""
+    seat = (getattr(a, "seat", None) or "").strip()
+    if not seat or seat == "human":
+        if seat == "human":
+            ok_tok, why = _verify_human_token(getattr(a, "who", None))
+            if not ok_tok:
+                B.die("`--seat human` 需要人令牌（否则任何人自称一句就是「人建的」）：\n" + why)
+        return "human"
+    return "agent"
+
+
 def cmd_new(a):
     # 继承项目默认值：没指定就自动填，省掉手打模型名
     import projects as P
@@ -56,7 +68,7 @@ def cmd_new(a):
         "effort": eft,
         "created_at": B.ts(),
         "created_by": a.seat or "human",
-        "created_kind": "agent" if a.seat and a.seat != "human" else "human",
+        "created_kind": _created_kind(a),
         "irreversible": bool(a.irreversible),
         "source_card": getattr(a, "from_card", None),
         # —— 预算与依赖（D-016 / B 批）——
@@ -294,9 +306,17 @@ def cmd_budget(a):
             print(f"  依赖    {'、'.join(card['blocked_by'])}")
         return
 
-    if loose and not is_human:
-        B.die("放宽预算/去掉依赖只能人来做（加 --seat human）：\n  - "
-              + "\n  - ".join(loose))
+    if loose:
+        # ⚠️ 2026-10-21 修（安全扫描 F-07）：旧判据只有 `--seat human` 这个字符串，
+        #    等于任何 agent 写一个词就能松刹车。现在两把都要：
+        #    ① 自报 human；② 过人令牌（与人拍板同一把）。
+        if not is_human:
+            B.die("放宽预算/去掉依赖只能人来做（要 --seat human ＋ 人令牌）：\n  - "
+                  + "\n  - ".join(loose))
+        ok_tok, why = _verify_human_token(getattr(a, "who", None))
+        if not ok_tok:
+            B.die("放宽预算/去掉依赖只能人来做（要人令牌，--seat human 不再算数）：\n  - "
+                  + "\n  - ".join(loose) + "\n" + why)
     merged = {k: v for k, v in card.items() if k != "meta"}
     for k, v in changes:
         merged[k] = v
@@ -385,6 +405,7 @@ def cmd_submit(a):
     verdict = "pass" if (ok1 and ok2 and ok3) else "fail"
     B.append_event(a.id, {
         "type": "submit", "actor": "agent", "seat": a.seat, "note": a.note or "",
+        "pid": os.getpid(),
         "gate": {"L1": ok1, "L2": ok2, "L3": ok3, "problems": problems, "files": r1},
         "exit_code_note": "退出码不参与判定（权重 0）",
     })
@@ -468,7 +489,8 @@ def cmd_review(a):
     if st["gate"] in ("both", "before_done") and a.verdict == "pass":
         B.append_event(a.id, {"type": "review", "actor": "review", "seat": a.seat,
                             "verdict": a.verdict, "note": a.note or "",
-                            "evidence": a.evidence, "evidence_ok": True})
+                            "evidence": a.evidence, "evidence_ok": True,
+                            "pid": os.getpid()})
         B.append_event(a.id, {"type": "request_human", "actor": "review", "seat": a.seat})
         B.release(a.id)
         B.ok("复核通过 → 已转「拍板中」，等人拍板")
@@ -485,14 +507,31 @@ def cmd_review(a):
 
 
 def _check_evidence(ev: str) -> tuple:
-    """复核凭据的最低可判标准：必须含命令、含数字读数。"""
-    if len(ev.strip()) < 12:
-        return False, "凭据太短（<12 字符），看不出你跑了什么"
-    if not re.search(r"[A-Za-z_][\w\.\-]*", ev):
-        return False, "凭据里没有可识别的命令/字段名"
-    if not re.search(r"\d", ev):
-        return False, "凭据里没有任何数字读数 —— 反空跑要求有非零计数"
+    """复核凭据的最低可判标准（2026-10-21 收紧，安全扫描 F-23）。
+
+    旧判据「≥12 字符 + 一个标识符 + 一个数字」，`a1 3` 就能过。现在要求：
+      ① 至少 24 字符；② 有像命令的片段（带参数或路径）；
+      ③ 有数字；④ 三样里至少两样是「命令 + 数字」，且不含填空式占位词。
+    """
+    s = (ev or "").strip()
+    if len(s) < 24:
+        return False, "凭据太短（<24 字符），写清「跑了什么命令 + 看到什么数字」"
+    low = s.lower()
+    for bad in ("todo", "tbd", "同上", "见上", "xxx", "待补"):
+        if bad in low:
+            return False, f"凭据里有占位词「{bad}」——要可复跑的真实读数"
+    has_cmd = bool(re.search(r"[A-Za-z_][\w\.\-]*(\.py|\.cmd|\.exe)?[\s]+[-\w/]", s)) \
+        or bool(re.search(r"[A-Za-z0-9_\-/\\]+\.(py|md|json|log|txt)\b", s))
+    has_num = bool(re.search(r"\d", s))
+    if not (has_cmd and has_num):
+        return False, "凭据要有「命令/文件」和「数字读数」两段（例：`python tools/check.py` → 15 道全绿）"
     return True, ""
+
+
+def _human_home() -> Path:
+    """人令牌/登记文件的存放根：默认家目录，可用 BOARD_HUMAN_HOME 隔离（测试用）。"""
+    h = os.environ.get("BOARD_HUMAN_HOME")
+    return Path(h) if h else Path.home()
 
 
 def human_token(who: str = None) -> Path:
@@ -503,17 +542,21 @@ def human_token(who: str = None) -> Path:
     who = (who or os.environ.get("BOARD_USER") or "").strip()
     if who and who not in ("owner", "human"):
         safe = re.sub(r"[^\w\-.]", "_", who)[:40]
-        return Path.home() / f".board-human-{safe}.tok"
-    return Path.home() / ".board-human.tok"
+        return _human_home() / f".board-human-{safe}.tok"
+    return _human_home() / ".board-human.tok"
 
 
 def human_token_sha(who: str = None) -> Path:
-    """令牌哈希登记（只存哈希，推不出原令牌）。按人分开。"""
+    """令牌哈希登记（只存哈希，推不出原令牌）。按人分开，**按用户**而非按项目。
+
+    ⚠️ 2026-10-21 改（安全扫描 F-16）：登记文件原先放在 `board/` 里 ⇒ 每建一个新项目
+       都要重新登记一次，等于鼓励「随手再登记一份」。现在统一放家目录。
+    """
     who = (who or os.environ.get("BOARD_USER") or "").strip()
     if who and who not in ("owner", "human"):
         safe = re.sub(r"[^\w\-.]", "_", who)[:40]
-        return B.BOARD / f".human-token-{safe}.sha"
-    return B.BOARD / ".human-token.sha"
+        return _human_home() / f".board-human-{safe}.sha"
+    return _human_home() / ".board-human.sha"
 
 
 def _verify_human_token(who: str = None) -> tuple:
@@ -541,7 +584,23 @@ def _verify_human_token(who: str = None) -> tuple:
     sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
     reg = human_token_sha(who)
     if not reg.exists():
-        return True, ""
+        # 老布局（登记文件在 board/ 里）→ 一次性迁到家目录，避免「换个项目就失效」。
+        who_s = (who or os.environ.get("BOARD_USER") or "").strip()
+        suffix = ("-" + re.sub(r"[^\w\-.]", "_", who_s)[:40]) \
+            if who_s and who_s not in ("owner", "human") else ""
+        legacy = B.BOARD / f".human-token{suffix}.sha"
+        if legacy.exists():
+            try:
+                reg.write_text(legacy.read_text(encoding="utf-8").strip(),
+                               encoding="utf-8")
+            except Exception as e:
+                print(f"⚠ 旧令牌登记迁移失败：{e}", file=sys.stderr)
+    if not reg.exists():
+        # ⚠️ 2026-10-21 修（安全扫描 F-16）：旧实现「首次无登记即放行」——
+        #    等于任何人放一个 ≥16 字符的文件就能当人。现在必须先显式登记：
+        #    `board token --init --who <who>`（只存哈希）。
+        return False, ("令牌未登记（首次使用）：请在你自己的终端跑一次 "
+                       f"`board token --init --who {who or 'owner'}`")
     try:
         expected = reg.read_text(encoding="utf-8").strip()
     except Exception:
@@ -558,17 +617,32 @@ def cmd_human(a):
     ok_tok, why = _verify_human_token(a.who)
     if not ok_tok:
         B.die(why)
-    # 首次登记令牌哈希（只存哈希，推不出原值）
-    if not human_token_sha(a.who).exists():
-        content = human_token(a.who).read_text(encoding="utf-8").strip()
-        human_token_sha(a.who).write_text(
-            hashlib.sha256(content.encode("utf-8")).hexdigest(), encoding="utf-8")
     st = B.replay(a.id)
     if st["state"] != "拍板中":
         B.die(f"当前状态「{st['state']}」，只有「拍板中」的卡需要人拍")
     B.append_event(a.id, {"type": "human", "actor": "human", "who": a.who or "owner",
                         "decision": a.decision, "note": a.note or ""})
     B.ok(f"人已{a.decision}：{a.id}")
+
+def cmd_token(a):
+    """人令牌登记：把当前令牌的 sha256 写进登记文件（只存哈希）。"""
+    if not a.init:
+        B.die("用法：board token --init [--who <who>]（把当前令牌登记为基准哈希）")
+    tok = human_token(a.who)
+    if not tok.exists():
+        B.die(f"缺令牌文件：{tok}\n"
+              f'  先自己建：Set-Content -Path "{tok}" -Value "<你自己定的长串>" -NoNewline')
+    try:
+        content = tok.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        B.die(f"令牌读不了：{e}")
+    if len(content) < 16:
+        B.die(f"令牌太短（{len(content)} < 16 字符）—— 换一个长一点的")
+    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    reg = human_token_sha(a.who)
+    reg.write_text(sha, encoding="utf-8")
+    B.ok(f"已登记人令牌（who={a.who or 'owner'}，只存哈希）")
+
 
 def cmd_reclaim(a):
     """回收超时租约（走库，不走早已不存在的 lease/active 目录）。
@@ -1172,6 +1246,7 @@ def cmd_doctor(a):
 
 def cmd_rm(a):
     """删卡（人类操作，需 --yes）。⛔ 只删本项目的卡，不碰交付物文件。"""
+    a.id = B.check_card_id(a.id)     # ⚠️ 卡号进路径（rmtree），先钉死形状（安全扫描 F-02）
     card = B.get_card(a.id)
     if not card:
         B.die(f"卡片不存在：{a.id}")
@@ -1532,8 +1607,9 @@ def main():
     s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None,
                    help="引擎时长上限（分钟）；none＝取消上限（仅 human）")
     s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None)
-    s.add_argument("--unblock", action="store_true", help="清空依赖（仅 human）")
-    s.add_argument("--seat", default=None, help="放宽预算/去依赖必须写 human")
+    s.add_argument("--unblock", action="store_true", help="清空依赖（要人令牌）")
+    s.add_argument("--seat", default=None, help="席位名（⛔ 单写 human 不再等于「人」）")
+    s.add_argument("--who", default=None, help="人令牌对应的 who（放宽/去依赖时要）")
     s.set_defaults(f=cmd_budget)
 
     s = sub.add_parser("beat", help="心跳")
@@ -1589,6 +1665,11 @@ def main():
     s.add_argument("--who")
     s.add_argument("--note")
     s.set_defaults(f=cmd_human)
+
+    s = sub.add_parser("token", help="人令牌登记（首用必做；只存哈希）")
+    s.add_argument("--init", action="store_true", help="把当前令牌登记为基准哈希")
+    s.add_argument("--who", default=None)
+    s.set_defaults(f=cmd_token)
 
     s = sub.add_parser("reclaim", help="回收超时租约")
     s.set_defaults(f=cmd_reclaim)

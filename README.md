@@ -131,6 +131,15 @@ python tools/orchestrator.py run --parallel 2 --max 4
 每张卡在独立 git worktree 里跑，互不踩文件；收工时只拷**该卡的交付物**，两卡交付物重叠就判阻塞。
 ⚠️ 建议 ≤2：本机引擎会抢资源，开太多反而慢。
 
+## 安全边界（本地服务也不是谁都能调）
+
+- **只监听 127.0.0.1，且每个请求校验 `Host`**：挡住 DNS rebinding（把任意域名解析到 127.0.0.1 再同源读回包）。
+- **写接口要会话令牌**：服务端启动时生成，注入页面 `<meta name="board-token">`；跨站页面拿不到它 ⇒ 任意网页的 `fetch('http://127.0.0.1:8777/api/term/run')` 会被 403。CLI 和桌面壳不受影响。
+- **内置终端是白名单**：`board` 只放行只读子命令（`ls/show/stats/ready/cost/audit/…`），`py` 只放行 `tools/check.py` 与 `tests/test_*.py`；不是 shell。
+- **卡号与路径**：卡号只允许 `[A-Za-z0-9_-]{1,64}`；交付物只能写工作区内的相对路径（绝对路径、`..` 一律拒）。
+- **人闸**：`~/.board-human.tok` ＋ 首次 `board token --init` 登记哈希；拍板、放宽预算、去掉依赖都要它。⛔ 令牌不要交给 agent。
+- **诚实边界**：同一台机器上，人读得到的文件 agent 也读得到——这是「本机单人协作」模型的边界，不是代码能补的（详见 `AGENTS.md` §4.1）。
+
 ## 自检（改完代码必跑一条）
 
 ```bash
@@ -169,7 +178,7 @@ python tools/board.py doctor --fix      # 自动清理可修项
 | `tools/term.py` | 窗口内置终端（白名单执行） |
 | `tools/server.py` + `tools/ui.html` | 本地界面（看板 + 终端 + 留言） |
 | `shell/BoardShell.cs` | 桌面壳（WebView2，单 exe） |
-| `tools/check.py` | 一条命令跑完全部自检（15 道闸） |
+| `tools/check.py` | 一条命令跑完全部自检（16 道闸） |
 
 零依赖，Python 3.9+。
 

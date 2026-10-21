@@ -62,7 +62,7 @@ def main():
     # 1b 子命令烟测：每条 --help 都要能起来（抓「导入漏了 / 参数写坏」）
     subs = ["init", "project", "open", "add", "new", "publish", "ready", "ls",
             "show", "claim", "budget", "beat", "block", "submit", "verify", "review",
-            "human", "reclaim", "audit", "doctor", "html", "overview",
+            "human", "token", "reclaim", "audit", "doctor", "html", "overview",
             "inbox", "all", "stats", "cost", "rm", "msg"]
     smoke_bad = []
     for s in subs:
@@ -150,6 +150,12 @@ def main():
     ok, _ = run("预算与依赖", [PY, "tests/test_budget_deps.py"])
     if not ok:
         fails.append("预算与依赖")
+
+    # 4i 安全加固反向（2026-10-21 安全扫描 F-01…F-23：CSRF/Host/卡号路径/终端白名单/
+    #    cmd 注入/交付物越界/REPLACE 清历史/审计互证/错误回包脱敏）
+    ok, _ = run("安全反向", [PY, "tests/test_security.py"])
+    if not ok:
+        fails.append("安全反向")
 
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])

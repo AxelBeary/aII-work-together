@@ -135,7 +135,9 @@ def resume(execute_fn, review_fn, conclude_fn=None, dry: bool = False,
             lease = B.active_lease(cid)
             if lease:
                 B._reclaim_lease(cid, lease, reason=p["reason"])
-            B.release(cid)
+            # ⚠️ 2026-10-21 修（安全扫描 F-09）：这里原先紧跟一句无条件 `B.release(cid)`，
+            #    它删的是「此刻表里那一行」——窗口期内别人刚抢到的租约会被一起删掉。
+            #    回收本身已经是 CAS 删除，不需要再 release。
             act = RUN
 
         if act == RUN:
@@ -168,7 +170,7 @@ def cmd_run(a):
         return O.run_one(cid, a.engine, a.seat, a.model, a.effort, False)
 
     def review_fn(card, cid):
-        return O.run_one(cid, a.engine, a.seat, a.model, a.effort, False)
+        return O.review_only(cid, a.engine, a.seat, a.model, a.effort)
 
     res = resume(execute_fn, review_fn, dry=a.dry_run)
     print()

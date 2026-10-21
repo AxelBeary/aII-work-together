@@ -34,10 +34,19 @@ PROJS = [SANDBOX / "alpha", SANDBOX / "beta"]
 PER_PROJECT = 25
 
 
+def _token():
+    p = ROOT / "board" / "ui-server.tok"
+    try:
+        return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
 def post(url, body):
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json", "X-Board-Token": _token()})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 

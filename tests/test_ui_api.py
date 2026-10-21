@@ -30,11 +30,22 @@ REG = SANDBOX / "reg"
 PROJ = SANDBOX / "demo"
 
 
-def call(path, body=None, expect=200):
+def _token():
+    """服务端把会话令牌写到 board/ui-server.tok（防 CSRF）；测试按真实页面一样带上它。"""
+    p = ROOT / "board" / "ui-server.tok"
+    try:
+        return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def call(path, body=None, expect=200, token=True):
     url = f"http://127.0.0.1:{PORT}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data,
-                                 headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if data is not None and token:
+        headers["X-Board-Token"] = _token()
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, json.loads(r.read().decode("utf-8"))

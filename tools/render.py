@@ -69,7 +69,7 @@ word-break:break-all;margin-bottom:10px}
 
 
 def _card_html(c):
-    hold = f"<span class=hold>{c['holder']}</span>" if c.get("holder") else ""
+    hold = f"<span class=hold>{_esc(c['holder'])}</span>" if c.get("holder") else ""
     gate = "<span class=gate>人闸</span>" if c.get("gate") in ("both", "before_done") else ""
     rw = f"<span class=rw>返工 {c['rework']}</span>" if c.get("rework") else ""
     goal = f"<div class=goal>{_esc(c.get('goal', ''))[:110]}</div>" if c.get("goal") else ""
@@ -94,7 +94,9 @@ def _card_html(c):
 
 
 def _esc(s):
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    # 2026-10-21（安全扫描 F-17）：补单双引号，供未来在属性位复用；⛔ 别只转 &<>。
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
 
 
 def _now():

@@ -65,8 +65,10 @@ def log(msg, kind="info"):
             f.parent.mkdir(parents=True, exist_ok=True)
             with f.open("a", encoding="utf-8") as fh:
                 fh.write(f"{datetime.now().strftime('%H:%M:%S')} {line}\n")
-        except Exception:
-            pass          # 日志写不进去不该把活干不成
+        except Exception as e:
+            # ⚠️ 2026-10-21 修（安全扫描 F-15）：卡日志写不进要可见（原先静默 pass），
+            #    否则界面上「实时输出」空白会被误读成「agent 没干活」。
+            print(f"⚠ 卡日志写不进（{cid}）：{e}", file=sys.stderr)
 
 
 def open_card_log(cid: str):
@@ -205,6 +207,10 @@ def run_engine_guarded(engine, prompt, cwd, model, effort, timeout,
        自动重试一个确定性失败只是烧钱，而且会把「配置错了」伪装成「上游不稳」。
     """
     attempt = 0
+    if timeout is not None and timeout <= 0:
+        r = E.Result(engine)
+        r.reason = "已到时长预算（剩余 ≤ 0 秒），不再起新调用"
+        return r, {"class": "budget"}
     while True:
         res = E.run(engine, prompt, cwd=cwd, model=model, effort=effort,
                     timeout=timeout)
@@ -249,12 +255,19 @@ def budget_stop(cid: str, card: dict, where: str) -> str:
 
 
 def remaining_timeout(cid: str, card: dict) -> int:
-    """这次引擎调用最多能跑多少秒：不超过 1800，也不超过剩余预算。"""
+    """这次引擎调用最多能跑多少秒：不超过 1800，也不超过剩余预算。
+
+    ⚠️ 2026-10-21 改（安全扫描 F-19）：剩余不足时不再「保底 30 秒」——
+       那等于允许超出上限最多 30 秒。现在剩余 ≤0 直接返回 0，
+       由 `run_engine_guarded` 判为「已到预算」而不起调用。
+    """
     b = B.budget_status(cid, card)
     if b["max_minutes"] is None:
         return 1800
     left = float(b["max_minutes"]) * 60 - b["minutes"] * 60
-    return int(max(30, min(1800, left)))
+    if left <= 0:
+        return 0
+    return int(min(1800, left))
 
 
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
@@ -310,8 +323,10 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
                 B.heartbeat(cid, seat)
             except SystemExit:
                 return          # 租约已丢，停止（提交时会被 guard_holder 拦下）
-            except Exception:
-                pass
+            except Exception as e:
+                # ⚠️ 2026-10-21 修（安全扫描 F-15）：心跳异常不许静默——
+                #    租约过期后长任务会被回收，只有到 submit 才暴露。
+                log(f"心跳失败：{type(e).__name__}: {e}", "warn")
 
     hb_thread = threading.Thread(target=_hb_loop, daemon=True)
     hb_thread.start()
@@ -564,6 +579,102 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"{cid} 返工 {attempts} 次 → 阻塞", "err")
         return "blocked-after-retries"
     log(f"{cid} 复核 FAIL（{reason[:60]}）→ 待返工（第 {attempts+1} 次）", "warn")
+    return "rework"
+
+
+def review_only(cid: str, engine: str, seat: str, model: str = None,
+                effort: str = None, panel: list = None) -> str:
+    """只跑「复核」这一段，不认领、不重做。
+
+    ⚠️ 2026-10-21 修（安全扫描 F-08）：`resume` 的 REVIEW/CONCLUDE 两条路
+       原先复用 `run_one`，而 `run_one` 第一步就是 `B.claim`——「待验收/核验中」
+       的卡根本不可认领，于是永远返回 `claim-failed`，看起来像卡有问题，
+       实际是这条路没实现。现在单独走复核流程。
+    """
+    card = B.get_card(cid)
+    if not card:
+        return "no-card"
+    st = B.replay(cid)
+    if st["state"] not in ("待验收", "核验中"):
+        return f"wrong-state:{st['state']}"
+    if not st["submit"]:
+        return "no-submit"
+    rseat = f"rev-{uuid.uuid4().hex[:4]}"
+    ev_dir = B.card_dir(cid)
+    work_dir = B.WORKSPACE
+    rprompt = review_prompt(card, cid, st["submit"] or {})
+
+    if panel:
+        import experts
+        votes = []
+        for ex in panel:
+            res_i, _ = run_engine_guarded(
+                engine, experts.build_prompt(ex, rprompt), work_dir, model, effort,
+                remaining_timeout(cid, card), cid=cid, seat=rseat, phase=f"复核-{ex}")
+            B.append_event(cid, {"type": "usage", "seat": rseat, "engine": engine,
+                                 "model": res_i.model_used or model,
+                                 "usage": res_i.usage, "phase": f"panel-{ex}",
+                                 "duration_ms": res_i.duration_ms})
+            v, evd, rsn = parse_review(res_i.text) if res_i.ok else ("fail", "", res_i.reason)
+            votes.append({"expert": ex, "ok": res_i.ok, "verdict": v,
+                          "evidence": evd, "reason": rsn})
+        verdict = "pass" if all(v["verdict"] == "pass" for v in votes) and votes else "fail"
+        evidence = " | ".join(f"{v['expert']}:{v['evidence'][:80]}" for v in votes)
+        reason = "；".join(f"{v['expert']}:{v['reason']}" for v in votes if v["reason"])
+        B.append_event(cid, {"type": "panel_review", "actor": "review",
+                             "seat": rseat, "votes": votes})
+    else:
+        rres, rcls = run_engine_guarded(
+            engine, rprompt, work_dir, model, effort, remaining_timeout(cid, card),
+            cid=cid, seat=rseat, phase="复核")
+        (ev_dir / f"review__{rseat}__{uuid.uuid4().hex[:6]}.json").write_text(
+            json.dumps(rres.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        B.append_event(cid, {"type": "usage", "seat": rseat, "engine": engine,
+                             "model": rres.model_used or model,
+                             "usage": rres.usage, "phase": "review",
+                             "duration_ms": rres.duration_ms})
+        if not rres.ok:
+            B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
+                                 "reason": (f"复核引擎失败[{rcls.get('class')}]："
+                                            f"{rres.reason}")[:300]})
+            B.release(cid)
+            return "review-engine-failed"
+        verdict, evidence, reason = parse_review(rres.text)
+
+    if not re.search(r"\d", evidence or ""):
+        g1, _p1, r1 = B.gate_l1(cid, card)
+        nums = "; ".join(f"{x['path']}={x.get('bytes','?')}B" for x in r1)
+        evidence = (evidence + " | 机器读数：" + nums).strip(" |")
+
+    g1, p1, r1 = B.gate_l1(cid, card)
+    g2, p2 = B.gate_l2(cid, card)
+    g3, p3, _ = B.gate_l3(cid, card)
+    B.append_event(cid, {"type": "verify", "actor": "review", "seat": rseat,
+                         "L1": g1, "L2": g2, "L3": g3,
+                         "problems": p1 + p2 + p3})
+    if not (g1 and g2 and g3):
+        B.append_event(cid, {"type": "review", "actor": "review", "seat": rseat,
+                             "verdict": "fail", "evidence": evidence,
+                             "note": "机器闸未过：" + "；".join((p1 + p2 + p3)[:3]),
+                             "evidence_ok": True})
+        B.release(cid)
+        return "gate-failed"
+
+    B.append_event(cid, {"type": "review", "actor": "review", "seat": rseat,
+                         "verdict": verdict, "note": reason,
+                         "evidence": evidence, "evidence_ok": True})
+    st = B.replay(cid)
+    B.release(cid)
+    if st["gate"] in ("both", "before_done") and verdict == "pass":
+        B.append_event(cid, {"type": "request_human", "actor": "review", "seat": rseat})
+        return "awaiting-human"
+    if verdict == "pass":
+        return "done"
+    attempts = count_attempts(cid)
+    if attempts >= 3:
+        B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
+                             "reason": f"返工 {attempts} 次仍不过，转阻塞等人"})
+        return "blocked-after-retries"
     return "rework"
 
 

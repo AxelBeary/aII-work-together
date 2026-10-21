@@ -40,6 +40,10 @@ _STATE = {
 # ---------- 白名单 ----------
 
 DENY_SUB = {"rm", "human"}          # 删卡要人明确点头；拍板走令牌接口
+# 内置终端只放行这些 board 子命令（安全扫描 F-03：白名单，不再是「除两个词全放行」）
+BOARD_ALLOW = {"ls", "show", "stats", "ready", "cost", "audit", "doctor",
+               "inbox", "all", "overview", "html", "msg", "budget", "project"}
+BOARD_DENY = DENY_SUB | {"publish", "--fix", "--yes"}
 SHELL_META = set("|&;><$`^()%\n\r\t")
 
 def _split(cmd):
@@ -82,15 +86,15 @@ def plan(cmd: str):
     head, rest = toks[0].lower(), toks[1:]
 
     if head == "board":
-        # ⚠️ 2026-10-20 修：旧写法只看 rest[0]，于是 `board -p x rm …` /
-        #    `board --root . human …` 直接绕过黑名单（Q1 复核复现）。
-        #    现在**任何位置**出现被禁的子命令词都拒（fail-closed）：
-        #    宁可误拒一个正好叫 rm 的项目名，也不放过一次删卡。
-        denied = [t for t in rest if t.lower() in DENY_SUB]
+        # ⚠️ 2026-10-21 改（安全扫描 F-03）：旧实现「board 全放行，只挡 rm/human」，
+        #    于是 `board budget --seat human`、`py tools/cli.py rm` 都能绕过。
+        #    现在改**白名单**：只放行下列只读/低危子命令。
+        denied = [t for t in rest if t.lower() in BOARD_DENY]
         if denied:
-            raise ValueError(
-                f"「board {denied[0]}」不在白名单里（放在全局旗标后面也一样）："
-                "删卡/人工拍板请用界面上的按钮（要令牌）或自己开终端")
+            raise ValueError(f"「board {denied[0]}」不在白名单里（破坏性动作请用界面按钮或自己开终端）")
+        sub = next((t for t in rest if t in BOARD_ALLOW), None)
+        if sub is None:
+            raise ValueError("内置终端只放行只读子命令：" + " / ".join(sorted(BOARD_ALLOW)))
         return [sys.executable, str(ROOT / "tools" / "board.py")] + rest, "看板命令"
 
     if head == "orch":
@@ -103,13 +107,21 @@ def plan(cmd: str):
         if not rest:
             raise ValueError("py 后面要跟脚本路径")
         target = (ROOT / rest[0]).resolve()
+        # ⚠️ 2026-10-21 改（安全扫描 F-03）：旧实现放行 tools/ 下**任何**脚本，
+        #    于是 `py tools/cli.py rm C1 --yes` 直接绕过白名单。现在只认真枚举的脚本：
+        #    tools/check.py，以及 tests/ 下的 test_*.py。
+        ok_script = False
         try:
             target.relative_to((ROOT / "tools").resolve())
+            ok_script = target.name == "check.py"
         except ValueError:
             try:
                 target.relative_to((ROOT / "tests").resolve())
+                ok_script = target.name.startswith("test_") and target.suffix == ".py"
             except ValueError:
-                raise ValueError("只允许跑 tools/ 和 tests/ 下的脚本")
+                ok_script = False
+        if not ok_script:
+            raise ValueError("py 只允许跑 tools/check.py 与 tests/test_*.py")
         if not target.exists():
             raise ValueError(f"脚本不存在：{target}")
         return [sys.executable, str(target)] + rest[1:], "脚本"
@@ -120,8 +132,8 @@ def plan(cmd: str):
             raise ValueError("git 只允许 status / log / diff / show / branch（只读）")
         return ["git"] + rest, "git（只读）"
 
-    raise ValueError(f"「{toks[0]}」不在白名单里。能跑：board / orch / check / "
-                     f"py tools/xxx.py / git status|log|diff")
+    raise ValueError(f"「{toks[0]}」不在白名单里。能跑：board（只读子命令）/ orch / "
+                     f"check / py tools/check.py / py tests/test_*.py / git status|log|diff")
 
 
 # ---------- 执行 ----------
@@ -136,10 +148,21 @@ def _emit(text, kind="out"):
 def _write_log(text):
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
+        # 简单轮转：>5MB 时留一份 .1（安全扫描 F-22：日志原先只增不减）
+        try:
+            if LOG.exists() and LOG.stat().st_size > 5 * 1024 * 1024:
+                bak = LOG.with_suffix(".log.1")
+                if bak.exists():
+                    bak.unlink()
+                LOG.replace(bak)
+        except Exception as e:
+            print(f"⚠ 终端日志轮转失败：{e}", file=sys.stderr)
         with open(LOG, "a", encoding="utf-8") as f:
             f.write(text + "\n")
-    except Exception:
-        pass          # 日志写不进去不该影响终端本身
+    except Exception as e:
+        # ⚠️ 2026-10-21 修（安全扫描 F-15）：写不进日志要可见（原先静默 pass），
+        #    否则事后复盘时会以为「这条路没人跑过」。
+        print(f"⚠ 终端日志写不进（{LOG}）：{e}", file=sys.stderr)
 
 
 def state():
@@ -229,9 +252,24 @@ def stop():
     if not p:
         return False
     try:
-        p.kill()
+        # ⚠️ 2026-10-21 修（安全扫描 F-22）：旧实现只 `p.kill()` 直接子进程，
+        #    它下面拉起的引擎（node/opencode）会变孤儿继续吃 CPU 与额度。
+        #    Windows 用 taskkill /T 杀整棵树；其它平台退化为 killpg（拿得到 pgid 时）。
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                           capture_output=True, timeout=10)
+        else:
+            try:
+                os.killpg(os.getpgid(p.pid), 9)
+            except Exception:
+                p.kill()
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            pass
         return True
-    except Exception:
+    except Exception as e:
+        _emit(f"⚠ 停止失败：{type(e).__name__}: {e}", kind="err")
         return False
 
 

@@ -2,6 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<meta name="board-token" content="">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>看板</title>
 <link rel="icon" href="/favicon.ico">
@@ -371,7 +372,15 @@ function toast(msg, isErr){
   t._h = setTimeout(()=>{ t.className = "toast"; }, 3600);
 }
 
+const BOARD_TOKEN = (document.querySelector('meta[name="board-token"]') || {}).content || "";
+
 async function api(path, opt){
+  opt = opt || {};
+  const method = (opt.method || "GET").toUpperCase();
+  if(method !== "GET"){
+    // 会话令牌：跨站页面读不到这个 meta，也就伪造不了写请求（服务端强制校验）
+    opt.headers = Object.assign({}, opt.headers, {"X-Board-Token": BOARD_TOKEN});
+  }
   const r = await fetch(path, opt);
   const j = await r.json().catch(()=>({error:"返回不是 JSON"}));
   if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
@@ -441,10 +450,10 @@ function cardHtml(c){
   if(cs.unfixed > 0) tags.push(`<span class="tag rw">未改 ${cs.unfixed}</span>`);
   else if(cs.unfixed === -1) tags.push(`<span class="tag rw">未改?</span>`);
   const blk = c.blocked_reason ? `<div class="g" style="color:#d9a441">${esc(c.blocked_reason).slice(0,60)}</div>` : "";
-  return `<div class="card ${SEL.has(c.id)?"sel":""}" data-id="${c.id}">
-    <input type="checkbox" class="pick" data-pick="${c.id}" ${SEL.has(c.id)?"checked":""}
+  return `<div class="card ${SEL.has(c.id)?"sel":""}" data-id="${esc(c.id)}">
+    <input type="checkbox" class="pick" data-pick="${esc(c.id)}" ${SEL.has(c.id)?"checked":""}
            title="选中这张（可以批量跑 / 批量取消）">
-    <div class="id">${c.id}${agoHtml(c)}</div>
+    <div class="id">${esc(c.id)}${agoHtml(c)}</div>
     <div class="t">${esc(c.title)}</div>
     ${c.goal?`<div class="g">${esc(c.goal)}</div>`:""}
     ${blk}
@@ -452,7 +461,7 @@ function cardHtml(c){
   </div>`;
 }
 
-function esc(s){ return String(s??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+function esc(s){ return String(s??"").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
 
 // 长字段（凭据/目标/阻塞原因）先折叠：一整段凭据会把实时输出挤到折叠线以下
 function kvHtml(k, v){

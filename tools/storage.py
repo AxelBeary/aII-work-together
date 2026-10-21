@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS leases (
   effort   TEXT,
   epoch    INTEGER DEFAULT 0,
   at_ms    INTEGER,
+  at_mono  INTEGER,
   ttl_s    INTEGER
 );
 
@@ -138,6 +139,25 @@ def _now_ms():
     return int(time.time() * 1000)
 
 
+def _mono_ms():
+    """单调时钟（毫秒）。租约 TTL 只看它，墙钟只给人看。
+
+    ⚠️ 2026-10-21 修（安全扫描 F-20）：TTL 原先用 `time.time()` 算年龄，
+       系统对时（NTP 校正/用户改时间）会一次性把活跃租约判成「超时」并被回收；
+       回拨则相反（永远不会超时）。Windows 上 `time.monotonic()` 走
+       QueryPerformanceCounter，是**整机一致、跨进程可比**的，适合作租约年龄。
+    """
+    return int(time.monotonic() * 1000)
+
+
+def _lease_age_s(row, now_mono: int, now_ms: int) -> float:
+    """租约年龄：优先单调时钟；老行（迁移前）退回墙钟。"""
+    d = dict(row)
+    if d.get("at_mono"):
+        return (now_mono - d["at_mono"]) / 1000.0
+    return (now_ms - (d.get("at_ms") or 0)) / 1000.0
+
+
 def _ts():
     return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z")
 
@@ -178,6 +198,9 @@ class Store:
             c.execute("ALTER TABLE cards ADD COLUMN max_minutes INTEGER")
         if "blocked_by" not in cols:
             c.execute("ALTER TABLE cards ADD COLUMN blocked_by TEXT DEFAULT '[]'")
+        lcols = {r[1] for r in c.execute("PRAGMA table_info(leases)")}
+        if "at_mono" not in lcols:
+            c.execute("ALTER TABLE leases ADD COLUMN at_mono INTEGER")
         c.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)",
                   (str(SCHEMA_VERSION),))
 
@@ -199,7 +222,18 @@ class Store:
 
     # ---------- 卡片 ----------
 
-    def save_card(self, card: dict):
+    def save_card(self, card: dict, create_only: bool = False):
+        """写卡片契约。
+
+        ⚠️ 2026-10-21 修（安全扫描 F-06／F-13）：
+           旧写法 `INSERT OR REPLACE` 在 SQLite 里是 **DELETE + INSERT**；
+           `events`／`leases`／`messages` 都带 `ON DELETE CASCADE`，
+           一旦有人在写连接上打开外键（那本来是「加固」动作），改一次预算
+           就会把整卡事件流与租约全部级联删掉，且哈希链会「自然重建」看不出。
+           现在改成 `ON CONFLICT(id) DO UPDATE`：只更新列，不删行。
+           `create_only=True` 走纯 INSERT，主键冲突抛 IntegrityError——
+           这是「建卡」的原子判重（不再靠先读后写）。
+        """
         cols = ("id", "title", "goal", "territory", "deliverables",
                 "accept_patterns", "human_gate", "engine", "model", "effort",
                 "irreversible", "allow_no_numbers", "source_card",
@@ -208,7 +242,13 @@ class Store:
         # 卡片上任何「不在固定列里」的字段都进 meta。
         # ⚠️ 以前这些字段是被**静默丢弃**的：卡上写了 consult_files，
         # 存完就没了，程序照常跑，只是评审席永远看不到源文。静默丢数据比报错坏得多。
-        meta = dict(card.get("meta") or {})
+        meta = card.get("meta") or {}
+        if isinstance(meta, str):          # get_card 回来的是 JSON 串，别直接 dict()
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        meta = dict(meta)
         for k, v in card.items():
             if k not in cols and k != "meta":
                 meta[k] = v
@@ -237,9 +277,14 @@ class Store:
             vals.append(v)
         placeholders = ",".join("?" * len(cols))
         with self.write() as c:
+            if create_only:
+                c.execute(
+                    f"INSERT INTO cards({','.join(cols)}) VALUES({placeholders})", vals)
+                return
+            updates = ",".join(f"{k}=excluded.{k}" for k in cols if k != "id")
             c.execute(
-                f"INSERT OR REPLACE INTO cards({','.join(cols)}) VALUES({placeholders})",
-                vals)
+                f"INSERT INTO cards({','.join(cols)}) VALUES({placeholders}) "
+                f"ON CONFLICT(id) DO UPDATE SET {updates}", vals)
 
     def get_card(self, cid: str):
         r = self._read_conn().execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
@@ -354,12 +399,13 @@ class Store:
            → 插入」，删不到就认输，不再递归重试。
         """
         now_ms = now_ms or _now_ms()
+        now_mono = _mono_ms()
         reclaimed = None
         try:
             with self.write() as c:
                 row = c.execute("SELECT * FROM leases WHERE card_id=?", (cid,)).fetchone()
                 if row is not None:
-                    age = (now_ms - (row["at_ms"] or 0)) / 1000
+                    age = _lease_age_s(row, now_mono, now_ms)
                     ttl = row["ttl_s"] or ttl_s
                     if age <= ttl:
                         return False, f"卡片已被占用（{row['seat']}，心跳 {int(age)}s 前）"
@@ -377,8 +423,8 @@ class Store:
                     reclaimed = dict(row)
                 c.execute(
                     "INSERT INTO leases(card_id,seat,engine,model,effort,epoch,"
-                    "at_ms,ttl_s) VALUES(?,?,?,?,?,?,?,?)",
-                    (cid, seat, engine, model, effort, epoch, now_ms, ttl_s))
+                    "at_ms,at_mono,ttl_s) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (cid, seat, engine, model, effort, epoch, now_ms, now_mono, ttl_s))
                 c.execute(
                     "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
                     "VALUES(?,?,?,?,?,?)",
@@ -388,30 +434,46 @@ class Store:
         if reclaimed is not None and on_reclaim is not None:
             try:
                 on_reclaim(reclaimed)
-            except Exception:
-                pass          # 事件是留痕，写不进去不该把认领判失败
+            except Exception as e:
+                # ⚠️ 2026-10-21 修（安全扫描 F-15）：留痕失败要可见——
+                #    否则租约表说「已回收」、事件流里没有 reclaim，两把尺打架。
+                print(f"⚠ 回收留痕写入失败（{cid}）：{e}", file=sys.stderr)
         return True, ""
 
     def touch_lease(self, cid: str, seat: str):
         with self.write() as c:
             cur = c.execute(
-                "UPDATE leases SET at_ms=? WHERE card_id=? AND seat=?",
-                (_now_ms(), cid, seat))
+                "UPDATE leases SET at_ms=?, at_mono=? WHERE card_id=? AND seat=?",
+                (_now_ms(), _mono_ms(), cid, seat))
             n = cur.rowcount          # ⚠️ 必须在连接关闭前取
             c.execute(
                 "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
                 "VALUES(?,?,?,?,?,?)", (cid, seat, "heartbeat", _ts(), _now_ms(), ""))
         return n > 0
 
-    def release_lease(self, cid: str, kind: str = "released"):
-        cur = self.get_lease(cid)
+    def release_lease(self, cid: str, kind: str = "released", seat: str = None):
+        """释放租约。带 `seat` 时是 CAS：不是你的租约就不删（返回 None）。
+
+        ⚠️ 2026-10-21 修（安全扫描 F-09）：旧实现无条件 `DELETE FROM leases
+           WHERE card_id=?`。`resume` 在「回收超时租约」之后紧跟一句无条件的
+           release，窗口里别人刚抢到的租约会被一起删掉。现在带 seat 版本号。
+        """
         with self.write() as c:
-            c.execute("DELETE FROM leases WHERE card_id=?", (cid,))
+            row = c.execute("SELECT * FROM leases WHERE card_id=?", (cid,)).fetchone()
+            if row is None:
+                return None
+            if seat is not None and row["seat"] != seat:
+                return None
+            cur = c.execute(
+                "DELETE FROM leases WHERE card_id=? AND at_ms=? AND seat=?",
+                (cid, row["at_ms"], row["seat"]))
+            if cur.rowcount != 1:
+                return None
             c.execute(
                 "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
                 "VALUES(?,?,?,?,?,?)",
-                (cid, (cur or {}).get("seat"), kind, _ts(), _now_ms(), ""))
-        return cur
+                (cid, row["seat"], kind, _ts(), _now_ms(), ""))
+            return dict(row)
 
     def reclaim(self, cid: str, reason: str = "心跳超时"):
         """回收一张卡的租约。返回被回收的租约 dict；没有或 CAS 失败返回 None。
@@ -435,10 +497,11 @@ class Store:
 
     def expired_leases(self, now_ms: int = None):
         now_ms = now_ms or _now_ms()
+        now_mono = _mono_ms()
         rows = self._read_conn().execute("SELECT * FROM leases").fetchall()
         out = []
         for r in rows:
-            age = (now_ms - (r["at_ms"] or 0)) / 1000
+            age = _lease_age_s(r, now_mono, now_ms)
             if age > (r["ttl_s"] or 600):
                 out.append({**dict(r), "age_s": int(age)})
         return out

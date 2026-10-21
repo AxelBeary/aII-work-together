@@ -45,12 +45,26 @@ def has_commits(path=None) -> bool:
     return rc == 0
 
 
+def _rel_path(rel) -> Path:
+    """交付物相对路径校验（安全扫描 F-14）：绝对路径与 `..` 一律拒。"""
+    s = str(rel or "").strip()
+    if not s:
+        raise ValueError("交付物路径是空的")
+    if Path(s).is_absolute() or Path(s.replace("\\", "/")).is_absolute():
+        raise ValueError(f"交付物只允许相对路径：{s}")
+    p = Path(s)
+    if ".." in p.parts:
+        raise ValueError(f"交付物不允许 ..：{s}")
+    return p
+
+
 def create(cid: str, deliverables: list = None) -> Path:
     """给一张卡建 worktree（基于项目工作区）。返回路径。
 
     同时记录**基线**：交付物在主工作区当前的 hash。
     收工时用它区分「我改了旧文件」与「别人动了同一个文件」。
     """
+    cid = B.check_card_id(cid)
     ws = B.WORKSPACE
     base = ws / WT_DIR
     base.mkdir(parents=True, exist_ok=True)
@@ -69,7 +83,11 @@ def create(cid: str, deliverables: list = None) -> Path:
     baseline = {}
     for d in (deliverables or []):
         rel = d if isinstance(d, str) else d.get("path")
-        p = ws / rel
+        try:
+            p = ws / _rel_path(rel)
+        except ValueError as e:
+            print(f"⚠ 基线跳过：{e}", file=sys.stderr)
+            continue
         if p.exists():
             try:
                 baseline[rel] = _hash(p)
@@ -100,6 +118,7 @@ def _load_baseline(cid: str) -> dict:
 
 def remove(cid: str):
     ws = B.WORKSPACE
+    cid = B.check_card_id(cid)
     wt = ws / WT_DIR / cid
     if wt.exists():
         if is_git_repo(ws) and has_commits(ws):
@@ -123,8 +142,13 @@ def collect(cid: str, deliverables: list) -> tuple:
     copied, conflicts = [], []
     for d in deliverables:
         rel = d if isinstance(d, str) else d.get("path")
-        src = wt / rel
-        dst = ws / rel
+        try:
+            relp = _rel_path(rel)
+        except ValueError as e:
+            conflicts.append(f"{rel}（{e}）")
+            continue
+        src = wt / relp
+        dst = ws / relp
         if not src.exists():
             continue
         if dst.exists():

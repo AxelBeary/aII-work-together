@@ -290,3 +290,31 @@
 | 文档口径对齐 3 处 | `README.md`／`AGENTS.md`／`tools/check.py` 注释 | 已改 | 「有数字」→机器测；`os.mkdir`→SQLite 主键＋CAS；五道闸→15 道 |
 
 > 对方说「audit 跳过只在库里的卡」不成立（`CardRef.is_dir()` 查的是库）；但「租约判据读不存在的目录」成立且已修。
+
+### I · 安全与缺陷只读扫描（2026-10-21，子代理派工）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 安全 + 缺陷扫描报告（23 条：P0×1／P1×6／P2×11／P3×5） | `docs/research/20261021-security-scan/安全与缺陷扫描__审计席__只读.md`（**本地，暂不入库**） | 已交，待修 | 报告 49 941 字节；基线 `f38fb7c`；主代理亲验 F-01～F-07（HTTP 无来源校验／卡号直通路径／终端黑名单可绕／`.cmd` 注入／id 未转义／FK 级联雷／`--seat human` 绕预算） |
+| 派工度量 | `docs/governance/DELEGATION-LEDGER.md` 末行 | 已记 | 内派 1 路，往返 1，返工 0 |
+
+> 报告不入公开库的理由：本项目多数用户会把它跑在本机，报告等于一张「本地攻击面地图」；修完再决定是否随版本发布。
+
+### J · 安全扫描 23 条全部落地（2026-10-21，D-022）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| HTTP 面加固（会话令牌 + Host 校验 + CSP + body 上限 + 读超时 + 池满 503） | `tools/server.py`、`tools/ui.html` | 已修 | 无令牌 POST→403；`Host: evil`→403；正常 GET→200 |
+| 卡号白名单（create／card_dir／rm／parallel／HTTP 五处） | `tools/board.py`、`cli.py`、`server.py`、`parallel.py` | 已修 | `..\..\pwn` 建卡/删卡/日志接口全拒 |
+| 终端改白名单（board 只读子命令 + 仅 check.py/test_*.py） | `tools/term.py` | 已修 | `py cli.py rm`／`board publish`／`doctor --fix` 全拒 |
+| `.cmd` 参数元字符 fail-closed | `tools/engines.py` | 已修 | `--model x&calc` 被拒 |
+| 卡片写入改 UPSERT（不再 REPLACE 清历史）＋建卡原子判重 | `tools/storage.py`、`board.py` | 已修 | 改卡后事件流条数不变；同号建卡被拒 |
+| 预算刹车要人令牌（`--seat human` 不再算数） | `tools/cli.py` | 已修 | 隔离 HOME 下被拒；有令牌通过 |
+| 人令牌登记移到家目录 + 首次必须 `token --init` | `tools/cli.py`、`server.py` | 已修 | 旧 `board/.human-token.sha` 自动迁移，实测 verify=True |
+| 交付物路径必须落在工作区内 | `tools/board.py`、`parallel.py`、`consult.py` | 已修 | 绝对路径／`..` 被拒 |
+| 租约 TTL 改单调时钟（`leases.at_mono`） | `tools/storage.py` | 已修 | 租约竞态闸 14 条全过 |
+| 续跑 REVIEW 独立复核入口 `review_only` | `tools/orchestrator.py`、`resume.py` | 已修 | 断点续跑闸全过 |
+| 壳：scheme 白名单 / `--url` 仅回环 / python 解析 | `shell/BoardShell.cs` | 已修 | `--selftest` PASS |
+| 第 16 道闸「安全反向」 | `tests/test_security.py`、`tools/check.py` | 已加 | 8 组 21 条，每条配非零对照 |
+
+> 16 道闸全绿；壳与托盘重编译后 `--selftest` 均 PASS。
