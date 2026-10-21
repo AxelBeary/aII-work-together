@@ -468,14 +468,20 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
     return True
 
 
-def heartbeat(cid: str, seat: str):
+def heartbeat(cid: str, seat: str, epoch: int = None):
     cur = _store().get_lease(cid)
     if not cur:
         die("没有活跃租约")
     if cur.get("seat") != seat:
         die(f"租约持有者是 {cur.get('seat')}，不是你")
-    _store().touch_lease(cid, seat)
-    append_event(cid, {"type": "heartbeat", "actor": "agent", "seat": seat})
+    # 栅栏：同席位被回收后重新认领会换 epoch（2026-10-21，编排调研指出 epoch 一直是死字段）
+    if epoch is not None and int(epoch) != int(cur.get("epoch") or 0):
+        die(f"租约已换代：当前 epoch={cur.get('epoch')}，你带的是 {epoch}"
+            f"（你那一代已被回收，⛔ 不要再写）")
+    if not _store().touch_lease(cid, seat, epoch):
+        die("续心跳失败：租约在你读完之后换代了（栅栏拦下）")
+    append_event(cid, {"type": "heartbeat", "actor": "agent", "seat": seat,
+                       "epoch": int(cur.get("epoch") or 0)})
     ok(f"心跳已记（TTL {LEASE_TTL}s）")
 
 

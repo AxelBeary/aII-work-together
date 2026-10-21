@@ -440,15 +440,27 @@ class Store:
                 print(f"⚠ 回收留痕写入失败（{cid}）：{e}", file=sys.stderr)
         return True, ""
 
-    def touch_lease(self, cid: str, seat: str):
+    def touch_lease(self, cid: str, seat: str, epoch: int = None):
+        """续心跳。带 `epoch` 时是 CAS：换代了就不续（栅栏，2026-10-21）。
+
+        ⚠️ 为什么必须原子：先 SELECT 再 UPDATE 的话，回收/重认领插在中间，
+           旧进程的心跳仍会写成功——那就不是栅栏，只是日志。
+        """
         with self.write() as c:
-            cur = c.execute(
-                "UPDATE leases SET at_ms=?, at_mono=? WHERE card_id=? AND seat=?",
-                (_now_ms(), _mono_ms(), cid, seat))
+            if epoch is None:
+                cur = c.execute(
+                    "UPDATE leases SET at_ms=?, at_mono=? WHERE card_id=? AND seat=?",
+                    (_now_ms(), _mono_ms(), cid, seat))
+            else:
+                cur = c.execute(
+                    "UPDATE leases SET at_ms=?, at_mono=? "
+                    "WHERE card_id=? AND seat=? AND epoch=?",
+                    (_now_ms(), _mono_ms(), cid, seat, int(epoch)))
             n = cur.rowcount          # ⚠️ 必须在连接关闭前取
-            c.execute(
-                "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
-                "VALUES(?,?,?,?,?,?)", (cid, seat, "heartbeat", _ts(), _now_ms(), ""))
+            if n > 0:
+                c.execute(
+                    "INSERT INTO lease_log(card_id,seat,kind,at,at_ms,detail) "
+                    "VALUES(?,?,?,?,?,?)", (cid, seat, "heartbeat", _ts(), _now_ms(), ""))
         return n > 0
 
     def release_lease(self, cid: str, kind: str = "released", seat: str = None):

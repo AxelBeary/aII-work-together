@@ -454,3 +454,23 @@
 - 状态：**已拍板**（工具与文档已落地；实验结论待跑）
 
 
+
+## D-024 · 租约 epoch 从「日志字段」升为「真栅栏」
+
+- 日期：2026-10-21
+- 结论：心跳与提交都支持带 `--epoch`，带了就做**原子 CAS 校验**；orchestrator 自动带上。
+- 由来：编排调研（`docs/research/20261021-orchestration-lit/`）对照 Kleppmann 的 fencing token 指出——
+  `leases.epoch` 一直在认领时 +1、也写进 claim 事件，但**没有任何写入路径读它**，所以它只是日志，不是栅栏。
+  同席位被回收后重新认领（seat 名没变）这一种情况，旧代码拦不住：旧进程照样能心跳、能 submit。
+- 落地：
+  - `storage.touch_lease(cid, seat, epoch=None)`：带 epoch 时 `UPDATE ... WHERE card_id=? AND seat=? AND epoch=?`，
+    rowcount=0 即拒绝（**先读后写不是栅栏**，必须由 SQL 原子判定）。
+  - `board.heartbeat(cid, seat, epoch=None)`：换代则 `die`，且心跳事件里记 epoch。
+  - `cli.guard_holder(cid, seat, epoch=None)`：epoch 不符直接拒；`submit` 事件记 epoch。
+  - `orchestrator`：认领后读取 epoch，心跳线程与提交都带它。
+  - `board audit` 增一条：某事件的 epoch 小于该卡已出现过的最大 claim epoch ⇒ 「换代后仍有旧代写入」。
+  - `board claim` 打印 epoch，让人/agent 知道该带什么。
+- 依据（实测）：`tests/test_lease_race.py::test_epoch_fence` 五条——第一次认领成功／同席位换代认领成功／
+  旧代心跳被拒／**对照：当代心跳照常通过**／旧代提交被拒；16 道闸全绿。
+- 兼容：`--epoch` 不传时行为与旧版一致（不破坏既有调用方）。
+- 未做：CLI 之外的写入路径（如直接调 `storage`）不强制 epoch；旧卡历史事件没有 epoch 字段（不回填）。

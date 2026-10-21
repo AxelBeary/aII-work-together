@@ -1,0 +1,76 @@
+{
+  "weak": "opencode-go/minimax-m3.1-flash-free",
+  "band": [
+    0.3,
+    0.7
+  ],
+  "ts": "2026-10-21T21:08:37",
+  "rows": [
+    {
+      "task": "N01",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 22.6,
+      "dur_total_s": 69.2,
+      "cost": 0.0,
+      "tag": "too_easy"
+    },
+    {
+      "task": "N02",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 84.3,
+      "dur_total_s": 406.1,
+      "cost": 0.0,
+      "tag": "too_easy"
+    },
+    {
+      "task": "N03",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 83.8,
+      "dur_total_s": 217.3,
+      "cost": 0.0,
+      "tag": "too_easy"
+    },
+    {
+      "task": "N04",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 0,
+      "pass_rate": 0.0,
+      "dur_median_s": 36.1,
+      "dur_total_s": 121.1,
+      "cost": 0.0,
+      "tag": "too_hard"
+    },
+    {
+      "task": "N05",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 89.7,
+      "dur_total_s": 273.3,
+      "cost": 0.0,
+      "tag": "too_easy"
+    },
+    {
+      "task": "N06",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 26.8,
+      "dur_total_s": 75.9,
+      "cost": 0.0,
+      "tag": "too_easy"
+    }
+  ]
+}

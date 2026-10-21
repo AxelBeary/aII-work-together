@@ -273,6 +273,8 @@ def cmd_claim(a):
     B.claim(a.id, a.seat, a.engine, a.model, a.effort)
     B.ok(f"认领成功：{a.id} → {a.seat}")
     print(f"  引擎={a.engine} 模型={a.model or 'any'} 思考={a.effort or 'any'}")
+    ep = _lease_epoch(B.active_lease(a.id))
+    print(f"  租约 epoch={ep}（beat/submit 带 --epoch {ep}：被回收后旧进程就写不进了）")
     print(f"  ⚠ 每 {B.HB_INTERVAL}s 内至少跑一次 beat，否则 {B.LEASE_TTL}s 后被回收")
 
 
@@ -385,11 +387,13 @@ def _legal_from(state: str) -> str:
     return "、".join(outs) if outs else "（无，是终态）"
 
 
-def guard_holder(cid: str, seat: str):
-    """确认你是当前租约持有者，且 epoch 未被回收重置。
+def guard_holder(cid: str, seat: str, epoch: int = None):
+    """确认你是当前租约持有者，且（可选）epoch 与租约一致。
 
     防的是：长任务执行中租约超时被别人回收接手，旧执行者回来提交，
     把别人的活覆盖掉（opus 评审指出）。
+    ⚠️ 2026-10-21：参数 epoch 是可选的**栅栏**；不带时行为与旧版一致（向后兼容），
+       但同席位换代那种情况只有带 epoch 才拦得住（编排调研指出 epoch 一直是死字段）。
     """
     lease = B.active_lease(cid)
     if not lease:
@@ -397,6 +401,13 @@ def guard_holder(cid: str, seat: str):
     owner = B._lease_owner(lease)
     if owner.get("seat") != seat:
         B.die(f"卡片已归 {owner.get('seat')}（你的租约已被回收）")
+    # 栅栏（2026-10-21，编排调研指出的洞）：同席位被回收后重新认领会换代。
+    # epoch 是唯一能区分「同一席位的前后两代」的东西——不比它，旧执行者照样能提交。
+    if epoch is not None:
+        cur = _lease_epoch(lease)
+        if int(epoch) != cur:
+            B.die(f"租约已换代：当前 epoch={cur}，你带的是 {epoch}"
+                  f"（你那一代已被回收，⛔ 不要再写）")
     st = B.replay(cid)
     return st.get("epoch", 0)
 
@@ -409,7 +420,7 @@ def _lease_epoch(lease) -> int:
 
 
 def cmd_beat(a):
-    B.heartbeat(a.id, a.seat)
+    B.heartbeat(a.id, a.seat, epoch=getattr(a, "epoch", None))
 
 
 def cmd_block(a):
@@ -424,7 +435,7 @@ def cmd_block(a):
 def cmd_submit(a):
     # ⚠️ 2026-10-20 修：以前只比 replay 里的 holder，而租约表可能已经被回收
     #    ⇒ 旧持有者照样能提交（Q1 复核复现：退出码 0、L1-L3 全过）。
-    guard_holder(a.id, a.seat)
+    guard_holder(a.id, a.seat, getattr(a, "epoch", None))
     card = B.get_card(a.id)
     # 提交即跑 L1-L3
     ok1, p1, r1 = B.gate_l1(a.id, card)
@@ -435,6 +446,7 @@ def cmd_submit(a):
     B.append_event(a.id, {
         "type": "submit", "actor": "agent", "seat": a.seat, "note": a.note or "",
         "pid": os.getpid(),
+        "epoch": _lease_epoch(B.active_lease(a.id)),
         "gate": {"L1": ok1, "L2": ok2, "L3": ok3, "problems": problems, "files": r1},
         "exit_code_note": "退出码不参与判定（权重 0）",
     })
@@ -748,6 +760,22 @@ def cmd_audit(a):
         if lease_row and st["state"] in ("待认领", "待返工", "完成", "已取消"):
             issues.append(f"{cid}: 有租约（{lease_row.get('seat')}）但状态={st['state']}"
                           f" ← 疑似手改状态")
+        # 4c) 换代后仍有旧代写入（2026-10-21，编排调研指出 epoch 一直是死字段）
+        #     判据：某事件的 epoch 小于该卡已出现过的最大 claim epoch ⇒ 旧代写过盘
+        try:
+            max_ep, stale = 0, []
+            for ev in B.load_journal(cid):
+                if ev.get("type") == "claim":
+                    max_ep = max(max_ep, int(ev.get("epoch") or 0))
+                elif ev.get("type") in ("heartbeat", "submit", "review"):
+                    ep = ev.get("epoch")
+                    if ep is not None and int(ep) < max_ep:
+                        stale.append(f"{ev.get('type')}@{ev.get('seat')} epoch={ep}")
+            if stale:
+                issues.append(f"{cid}: 换代后仍有旧代写入（{len(stale)} 条，"
+                              f"如 {stale[0]}）← 栅栏没生效或被绕过")
+        except Exception as e:
+            issues.append(f"{cid}: epoch 对账失败（{e}）")
         # 4b) 旧版租约目录：只在真的存在时兜底（库版不写目录）
         legacy = d / "lease" / "active"
         if legacy.exists():
@@ -1678,6 +1706,8 @@ def main():
     s = sub.add_parser("beat", help="心跳")
     s.add_argument("id")
     s.add_argument("--seat", required=True)
+    s.add_argument("--epoch", type=int, default=None,
+                   help="租约编号（认领时打印）；带了就做栅栏校验")
     s.set_defaults(f=cmd_beat)
 
     s = sub.add_parser("block", help="报阻塞")
@@ -1690,6 +1720,8 @@ def main():
     s.add_argument("id")
     s.add_argument("--seat", required=True)
     s.add_argument("--note")
+    s.add_argument("--epoch", type=int, default=None,
+                   help="租约编号（认领时打印）；带了就做栅栏校验，防止被回收后旧进程写回")
     s.set_defaults(f=cmd_submit)
 
     s = sub.add_parser("verify", help="复核席跑机器闸")

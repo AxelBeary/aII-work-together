@@ -214,18 +214,53 @@ def test_migrate():
        f"L-001 出现 {out2.count('L-001')} 次")
 
 
+# ---------- 7. 换代栅栏：同席位被回收后，旧代写不进 ----------
+def test_epoch_fence():
+    proj = fresh_proj("epoch")
+    (proj / "out").mkdir()
+    (proj / "out" / "a.txt").write_text(
+        "交付物正文，长度足够过 L1 的下限要求。这里再写长一点，避免被判太短。",
+        encoding="utf-8")
+    board(proj, "add", "--title", "换代栅栏", "--goal", "x", "--deliverable", "out/a.txt")
+    rc, out = board(proj, "ls")
+    cid = [l.split()[0] for l in out.splitlines() if l.strip().startswith("C")][0]
+
+    rc, out = board(proj, "claim", cid, "--seat", "s1")
+    ok("第一次认领成功", rc == 0, out.strip().splitlines()[-1][:60] if out else "")
+
+    # 模拟「心跳超时被回收」：调老时间戳 + 跑一次 `board reclaim`（真实回收路径）
+    con = sqlite3.connect(str(proj / "board" / "board.db"))
+    con.execute("UPDATE leases SET at_ms=at_ms-1200000, at_mono=at_mono-1200000 WHERE card_id=?",
+                (cid,))
+    con.commit()
+    con.close()
+    board(proj, "reclaim")
+
+    rc, out = board(proj, "claim", cid, "--seat", "s1")   # 同席位再认领 → 换代
+    ok("同席位重新认领成功（换代）", rc == 0, out.strip().splitlines()[-1][:60] if out else "")
+
+    rc1, out1 = board(proj, "beat", cid, "--seat", "s1", "--epoch", "1")
+    ok("旧代心跳被栅栏拒绝", rc1 != 0 and ("换代" in out1 or "栅栏" in out1), out1.strip()[:80])
+
+    rc2, out2 = board(proj, "beat", cid, "--seat", "s1", "--epoch", "2")
+    ok("对照：当代心跳照常通过", rc2 == 0, out2.strip()[:60])
+
+    rc3, out3 = board(proj, "submit", cid, "--seat", "s1", "--epoch", "1")
+    ok("旧代提交被栅栏拒绝", rc3 != 0 and ("换代" in out3 or "栅栏" in out3), out3.strip()[:80])
+
+
 def main():
     SANDBOX.mkdir(parents=True, exist_ok=True)
     try:
         for fn in (test_race, test_submit_needs_lease, test_reclaim_cmd,
-                   test_term_whitelist, test_l1_stale, test_migrate):
+                   test_term_whitelist, test_l1_stale, test_migrate, test_epoch_fence):
             print(f"\n--- {fn.__name__} ---")
             fn()
         print(f"\n{'=' * 50}")
         if fails:
             print(f"✗ 未通过：{'、'.join(fails)}")
             return 1
-        print("✓ 租约/提交/回收/白名单/L1/迁移 六组反向测试全过")
+        print("✓ 租约/提交/回收/白名单/L1/迁移/换代栅栏 七组反向测试全过")
         return 0
     finally:
         shutil.rmtree(SANDBOX, ignore_errors=True)

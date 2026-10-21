@@ -306,6 +306,13 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     else:
         log(f"[dry] 会认领 {cid}", "step")
 
+    # 换代栅栏（2026-10-21）：把认领时的 epoch 钉在本次执行里，
+    # 心跳与提交都带上它——被回收后旧进程就写不进了（同席位换代也拦得住）。
+    epoch = None
+    if not dry:
+        _lease = B.active_lease(cid)
+        epoch = int((_lease or {}).get("epoch") or 0) or None
+
     # ---- 外问升级（D-023）：返工到阈值就换更强模型，不靠模型自评 ----
     tries = count_attempts(cid)
     exec_model, escalated = pick_model(card, model, tries)
@@ -349,7 +356,7 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     def _hb_loop():
         while not hb_stop.wait(B.HB_INTERVAL):
             try:
-                B.heartbeat(cid, seat)
+                B.heartbeat(cid, seat, epoch=epoch)
             except SystemExit:
                 return          # 租约已丢，停止（提交时会被 guard_holder 拦下）
             except Exception as e:
@@ -427,7 +434,7 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         def _hb2():
             while not hb2_stop.wait(B.HB_INTERVAL):
                 try:
-                    B.heartbeat(cid, seat)
+                    B.heartbeat(cid, seat, epoch=epoch)
                 except SystemExit:
                     return
                 except Exception:
@@ -491,12 +498,13 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     # ---- 提交（自动过 L1-L3）----
     # 先确认租约还在自己手上且没被回收重置（长任务安全）
     try:
-        B.guard_holder(cid, seat)
+        B.guard_holder(cid, seat, epoch)
     except SystemExit:
         log("租约已丢（执行期间被回收），放弃提交以免覆盖别人的活", "err")
         return "lease-lost"
 
-    ns = argparse.Namespace(id=cid, seat=seat, note=f"{engine}/{model or 'default'}")
+    ns = argparse.Namespace(id=cid, seat=seat, note=f"{engine}/{model or 'default'}",
+                            epoch=epoch)
     B.cmd_submit(ns)
     st = B.replay(cid)
     if st["state"] != "待验收":

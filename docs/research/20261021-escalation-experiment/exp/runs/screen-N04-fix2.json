@@ -1,0 +1,21 @@
+{
+  "weak": "opencode-go/minimax-m3.1-flash-free",
+  "band": [
+    0.3,
+    0.7
+  ],
+  "ts": "2026-10-21T21:33:07",
+  "rows": [
+    {
+      "task": "N04",
+      "cat": "mechanical",
+      "repeat": 3,
+      "passes": 3,
+      "pass_rate": 1.0,
+      "dur_median_s": 38.6,
+      "dur_total_s": 176.3,
+      "cost": 0.0,
+      "tag": "too_easy"
+    }
+  ]
+}

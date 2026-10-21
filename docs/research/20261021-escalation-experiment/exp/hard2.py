@@ -111,9 +111,9 @@ N04_ROWS = [
 N04_WANT = {
     "count": 3,
     "items": [
-        {"id": 1, "name": "alpha", "created": "2024-01-02", "amount": "5.00"},
-        {"id": 3, "name": "beta", "created": "2024-01-02", "amount": "19.99"},
-        {"id": 4, "name": "delta", "created": "2023-12-31", "amount": "9.99"},
+        {"id": 4, "name": "delta", "created": "2023-12-31", "amount": "9.99", "status": "paid"},
+        {"id": 1, "name": "alpha", "created": "2024-01-02", "amount": "5.00", "status": "paid"},
+        {"id": 3, "name": "beta", "created": "2024-01-02", "amount": "19.99", "status": "paid"},
     ],
 }
 N04_SEED = {"data/orders.json": json.dumps(N04_ROWS, ensure_ascii=False, indent=2) + "\n"}
@@ -236,7 +236,8 @@ TASKS = [
      "prompt": ("读 `data/orders.json`（数组），生成 `result.json`：\n"
                 "① 丢掉 `status == \"void\"` 的记录；② `amount_cents` 改成 `amount`（元，**字符串**，两位小数，如 `\"5.00\"`）；"
                 "③ `created`（epoch 秒）改成 UTC 日期字符串 `YYYY-MM-DD`；④ 按 `created` 升序、同日期按 `id` 升序；"
-                "⑤ 输出对象 `{\"count\": <条数>, \"items\": [...]}`；⑥ 其它字段名保持不变；⑦ 输出 2 空格缩进 JSON。"),
+                "⑤ 输出对象 `{\"count\": <条数>, \"items\": [...]}`；⑥ **其余字段原样保留**（`status` 等都要留）；"
+                "⑦ 输出 2 空格缩进 JSON。"),
      "seed": N04_SEED, "ok": N04_OK, "bad": N04_BAD, "check": _check_n04},
     {"id": "N05", "cat": "mechanical",
      "prompt": ("写 `parse_log.py`，实现 `parse_line(line)` → dict，键为 `ip`(str)、`method`(str)、`path`(str)、"
