@@ -70,6 +70,39 @@ board -p other-project ls                   # 切到别的项目
 
 **零配置**：在任意目录直接跑 `board add ...`，它会自动把当前目录当项目、自动建看板、自动登记。
 
+## 当文件夹装进工作区（不安装也能用）
+
+把整个仓库当一个文件夹放进工作区（或任意位置）就行：**没有安装步骤、没有依赖**。
+
+```powershell
+git clone https://github.com/AxelBeary/aII-work-together D:\work\tools\aII-work-together
+```
+
+三种用法（都实测过）：
+
+| 用法 | 命令 | 说明 |
+|---|---|---|
+| **管别的项目**（推荐） | `python D:\work\tools\aII-work-together\tools\board.py -C D:\work\mygame add --title "…"` | `-C` 指定项目根；数据写进**那个项目**的 `board/` |
+| **在项目里直接跑** | `cd D:\work\mygame`，再 `python ..\tools\aII-work-together\tools\board.py ls` | 从项目子目录里跑也行（向上找 `board/cards`） |
+| **当命令用** | 把工具目录加进 PATH，之后任意目录 `board ls` | `board.cmd` 用 `%~dp0` 定位自己，路径无关 |
+
+两条边界：
+
+- **注册表默认在家目录**（`~/.aII-work-together`）。要「完全只装在工作区」，设一个环境变量：
+
+  ```powershell
+  $env:ABOARD_REGISTRY_DIR = "D:\work\.aboard"
+  ```
+
+  各项目的数据仍在各自 `board/` 里，这里只登记「项目在哪」，删了不影响任何卡片。
+
+- **桌面壳要自己编译一次**：`boardshell.exe`／`boardtray.exe` 不入库（`.gitignore` 里），下载的包里没有。**CLI 和浏览器界面（`board open`）开箱可用**；想要那个单窗口桌面壳，跑一次 `shell\build.cmd`（用系统自带 .NET Framework 的 csc，不下载任何东西，约几秒）。
+
+两个容易踩的点：
+
+- 工具目录**本身不是项目**：在工具文件夹里跑 `board` 会得到一个空看板（不报错）。要管哪个项目，用 `-C` 指过去，或进那个项目目录再跑。
+- 工作区本身是 git 仓库时，把工具目录写进它的 `.gitignore`（或做成 submodule），别让工具的运行产物混进你的提交。
+
 ## 跨会话留言（agent 之间传话）
 
 ```bash
