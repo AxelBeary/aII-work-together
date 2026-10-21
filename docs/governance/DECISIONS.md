@@ -430,4 +430,27 @@
 - 未做 / 未证：**没有做渗透复测**（未起第三方扫描器）；`F-18` 的「agent 与人在同一台机器上」这条根本边界没变（人能读的令牌文件 agent 也能读，见 AGENTS §4.1）。
 - 状态：**已拍板**
 
+---
+
+## D-023 · 把「外问升级」的证据观落进产品：证据层级 ＋ 结构触发 ＋ 预注册实验（**已拍板** 2026-10-21）
+
+- 日期：2026-10-21
+- 来源：用户「试验设计，并用经验来优化我们的项目」＋外部研究综合（`桌面\研究存档\…外问升级管线…md`，版本 3.0）。
+- 采纳的三条（只采纳能落到代码/文档的）：
+  1. **证据层级**（外部结论：同族复核不产生认识论增益）
+     - `board.evidence_tier()`：`VERIFIED`（机器闸 L1-L3 全过＝有可复核工件）／`AUDITED-UNGROUNDED`（只有复核席表态）／`UNVERIFIED`。
+     - 落地：`board show` 增「证据」行；`/api/card` 增 `evidence_tier`；界面详情显示中文层级。
+     - ⛔ 对外不得再把「复核通过」写成「已验证」。
+  2. **升级靠结构信号，不靠自评**
+     - 卡新增 `escalate_model`／`escalate_after`（存 meta，无需改表）；CLI `--escalate-model`、`--escalate-after`（默认 2）。
+     - `orchestrator.pick_model()`：复核失败次数 ≥ 阈值才换模型；换模型时写 `escalate` 事件（from/to/reason）。
+     - 触发条件全部是**可数事实**（复核失败次数），不含「模型说自己没把握」。
+  3. **预注册实验**：`docs/research/20261021-escalation-experiment/实验设计__外问升级触发__预注册.md`
+     - 四臂（弱单干／强单干／自评触发／结构触发）、60 题自建题库＋隐藏检查器、McNemar＋bootstrap、预算上限 $10、四条弃用条件。
+     - **尚未跑**：H1/H2/H3 全部未证。
+- 依据（实测 2026-10-21）：`tests/test_security.py` 新增 6 条反向断言——新卡 UNVERIFIED／仅复核 AUDITED-UNGROUNDED／机器闸全过 VERIFIED／未到阈值不升级／到阈值升级／没配零变化；16 道闸全绿。
+- 影响面：`tools/board.py`、`tools/orchestrator.py`、`tools/cli.py`、`tools/server.py`、`tools/ui.html`、`tests/test_security.py`、新增实验设计文档。
+- 未做 / 未证：**实验没跑**（60 题题库与隐藏检查器尚未建）；`escalate_after=2` 是**设计默认值**，不是实验结论；H2「级联比强模型单干便宜」没有任何本地实测支撑。
+- 状态：**已拍板**（工具与文档已落地；实验结论待跑）
+
 

@@ -138,6 +138,7 @@ python tools/orchestrator.py run --parallel 2 --max 4
 - **内置终端是白名单**：`board` 只放行只读子命令（`ls/show/stats/ready/cost/audit/…`），`py` 只放行 `tools/check.py` 与 `tests/test_*.py`；不是 shell。
 - **卡号与路径**：卡号只允许 `[A-Za-z0-9_-]{1,64}`；交付物只能写工作区内的相对路径（绝对路径、`..` 一律拒）。
 - **人闸**：`~/.board-human.tok` ＋ 首次 `board token --init` 登记哈希；拍板、放宽预算、去掉依赖都要它。⛔ 令牌不要交给 agent。
+- **证据层级**：机器闸全过才是 `VERIFIED`（有字节/哈希/断言/退出码这类可复核工件）；只有复核席表态的，标 `AUDITED-UNGROUNDED`——同族复核是第二枚章，不是验证。界面与 `board show` 都会显示这个层级。
 - **诚实边界**：同一台机器上，人读得到的文件 agent 也读得到——这是「本机单人协作」模型的边界，不是代码能补的（详见 `AGENTS.md` §4.1）。
 
 ## 自检（改完代码必跑一条）

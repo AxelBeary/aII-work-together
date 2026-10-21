@@ -96,6 +96,9 @@ def cmd_new(a):
         "max_cost_usd": None if mc == "none" else mc,
         "max_minutes": None if mm == "none" else mm,
         "blocked_by": getattr(a, "blocked_by", None) or [],
+        # 外问升级（D-023）：返工到阈值后换更强模型；⛔ 触发靠次数，不靠自评
+        "escalate_model": getattr(a, "escalate_model", None),
+        "escalate_after": getattr(a, "escalate_after", 2),
     }
     B.create_card(card)
     B.append_event(cid, {"type": "created", "actor": card["created_kind"],
@@ -205,6 +208,11 @@ def cmd_show(a):
     card = B.get_card(a.id)
     print(f"\n【{st['id']}】{st['title']}")
     print(f"  状态    {st['state']}")
+    tier = B.evidence_tier(a.id, st)
+    tier_note = {"VERIFIED": "机器闸 L1-L3 全过（可复核工件）",
+                 "AUDITED-UNGROUNDED": "仅复核席表态（同家族复核，不算验证）",
+                 "UNVERIFIED": "尚无机器验证"}[tier]
+    print(f"  证据    {tier} —— {tier_note}")
     print(f"  持有    {B.holder_of(a.id, st) or '-'}")
     print(f"  引擎    {st['engine']}")
     print(f"  模型    {st['model']}")
@@ -1561,6 +1569,10 @@ def main():
                    help="单卡引擎时长上限（分钟）；超了停下转阻塞")
     s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None,
                    help="卡间依赖：这些卡没完成之前不许接")
+    s.add_argument("--escalate-model", dest="escalate_model", default=None,
+                   help="返工到阈值后换这个更强模型（外问升级；⛔ 不是让它自己判断）")
+    s.add_argument("--escalate-after", dest="escalate_after", type=int, default=2,
+                   help="第几次复核失败后升级模型（默认 2）")
     s.add_argument("--id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_new)
@@ -1581,6 +1593,8 @@ def main():
     s.add_argument("--max-cost", dest="max_cost", type=str, default=None)
     s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None)
     s.add_argument("--blocked-by", dest="blocked_by", nargs="*", default=None)
+    s.add_argument("--escalate-model", dest="escalate_model", default=None)
+    s.add_argument("--escalate-after", dest="escalate_after", type=int, default=2)
     s.add_argument("--id")
     s.add_argument("--seat")
     s.set_defaults(f=cmd_new)

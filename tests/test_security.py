@@ -179,6 +179,38 @@ def t_audit_lease_mismatch():
        f"rc={rc} {out.strip()[:70]}")
 
 
+def t_evidence_tier_and_escalation():
+    print("\n--- 9. 证据层级 / 外问升级（结构触发，不靠自评）---")
+    import board as B
+    import orchestrator as O
+    B.set_root(str(PROJ))
+
+    def mk(cid):
+        B.create_card({"id": cid, "title": cid, "engine": "any", "model": "any",
+                       "effort": "any", "human_gate": "none", "deliverables": []})
+
+    mk("TIER1")
+    ok("新卡 → UNVERIFIED", B.evidence_tier("TIER1") == "UNVERIFIED",
+       B.evidence_tier("TIER1"))
+    B.append_event("TIER1", {"type": "review", "actor": "review", "seat": "r1",
+                             "verdict": "pass", "evidence": "python x.py → 3 行"})
+    ok("只有复核表态 → AUDITED-UNGROUNDED",
+       B.evidence_tier("TIER1") == "AUDITED-UNGROUNDED", B.evidence_tier("TIER1"))
+    B.append_event("TIER1", {"type": "verify", "actor": "review", "seat": "r1",
+                             "L1": True, "L2": True, "L3": True, "problems": []})
+    ok("机器闸全过 → VERIFIED", B.evidence_tier("TIER1") == "VERIFIED",
+       B.evidence_tier("TIER1"))
+
+    card = {"escalate_model": "strong", "escalate_after": 2}
+    ok("未到阈值不升级", O.pick_model(card, "weak", 1) == ("weak", False),
+       str(O.pick_model(card, "weak", 1)))
+    ok("到阈值升级（按次数，不靠自评）",
+       O.pick_model(card, "weak", 2) == ("strong", True),
+       str(O.pick_model(card, "weak", 2)))
+    ok("没配升级就零变化", O.pick_model({}, "weak", 9) == ("weak", False),
+       str(O.pick_model({}, "weak", 9)))
+
+
 def t_leak_in_reports():
     print("\n--- 8. 错误回包不带家目录 ---")
     import server
@@ -213,6 +245,7 @@ def main():
         t_deliverable_escape()
         t_store_upsert_and_dup()
         t_audit_lease_mismatch()
+        t_evidence_tier_and_escalation()
         t_leak_in_reports()
     finally:
         srv.terminate()

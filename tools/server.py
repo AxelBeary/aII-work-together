@@ -307,6 +307,7 @@ def api_card(q):
     v = _card_view(cid)
     if not v:
         raise ValueError(f"卡片不存在：{cid}")
+    v["evidence_tier"] = B.evidence_tier(cid)
     events = []
     for ev in B.load_journal(cid):
         events.append({

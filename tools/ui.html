@@ -556,6 +556,10 @@ async function openCard(id){
     $("c-state").textContent = c.state;
     const kv = [];
     kv.push(["编号", c.id]);
+    if(c.evidence_tier){
+      const tier = {VERIFIED:"已验证", "AUDITED-UNGROUNDED":"仅复核（未接地）", UNVERIFIED:"未验证"}[c.evidence_tier] || c.evidence_tier;
+      kv.push(["证据层级", tier + "（" + c.evidence_tier + "）"]);
+    }
     if(c.goal) kv.push(["目标", c.goal]);
     if(c.holder) kv.push(["当前执行", c.holder]);
     if(c.deliverables && c.deliverables.length) kv.push(["产出", c.deliverables.join("、")]);

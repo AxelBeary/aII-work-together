@@ -318,3 +318,13 @@
 | 第 16 道闸「安全反向」 | `tests/test_security.py`、`tools/check.py` | 已加 | 8 组 21 条，每条配非零对照 |
 
 > 16 道闸全绿；壳与托盘重编译后 `--selftest` 均 PASS。
+
+### K · 外问升级：证据层级 ＋ 结构触发 ＋ 预注册实验（2026-10-21，D-023）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 证据层级（VERIFIED／AUDITED-UNGROUNDED／UNVERIFIED） | `tools/board.py::evidence_tier`、`cli.show`、`/api/card`、`ui.html` | 已做 | 6 条反向断言：仅复核表态≠已验证；机器闸全过才 VERIFIED |
+| 外问升级按结构触发（复核失败 2 次换模型） | `tools/orchestrator.py::pick_model`、CLI `--escalate-model/--escalate-after` | 已做 | 未到阈值不升级／到阈值升级／没配零变化 |
+| 预注册实验设计（四臂、60 题、隐藏检查器、McNemar） | `docs/research/20261021-escalation-experiment/实验设计__外问升级触发__预注册.md` | **未跑** | 文档含四条弃用条件与 $10 预算上限 |
+
+> 实验结论（H1/H2/H3）一条都还没有；⛔ 不得在对外材料里引用「级联更便宜」这类结论。

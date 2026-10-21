@@ -300,6 +300,32 @@ def holder_of(cid: str, st: dict = None):
     return st["holder"] if _store().get_lease(cid) else None
 
 
+def evidence_tier(cid: str, st: dict = None) -> str:
+    """这张卡当前能对外写到的**最高证据层级**（2026-10-21，外部研究落地）。
+
+    依据：同一表征家族内的「复核/自审」不产生认识论增益（盲集继承），
+    只有**非语言的检查产物**才算验证。所以：
+
+      VERIFIED            —— 机器闸 L1/L2/L3 全过（字节/哈希/断言命中/退出码是可复核的工件）
+      AUDITED-UNGROUNDED  —— 只有复核席的表态（同家族复核＝第二枚章，不是验证）
+      UNVERIFIED          —— 两者都没有
+
+    ⛔ 别把「复核通过」说成「已验证」——这是本项目最容易被自己糊弄的一句话。
+    """
+    st = st if st is not None else replay(cid)
+    last_verify = None
+    for ev in load_journal(cid):
+        if ev.get("type") == "verify":
+            last_verify = ev
+    gate_ok = bool(last_verify) and bool(
+        last_verify.get("L1") and last_verify.get("L2") and last_verify.get("L3"))
+    if gate_ok:
+        return "VERIFIED"
+    if st.get("review"):
+        return "AUDITED-UNGROUNDED"
+    return "UNVERIFIED"
+
+
 def replay(cid: str, events=None):
     """从事件流重放出当前状态（事件流＝唯一真相）。
 

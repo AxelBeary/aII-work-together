@@ -270,6 +270,25 @@ def remaining_timeout(cid: str, card: dict) -> int:
     return int(min(1800, left))
 
 
+def pick_model(card: dict, model: str, attempts: int) -> tuple:
+    """返工到阈值后换更强模型（外问升级）。返回 (实际用的模型, 是否升级)。
+
+    ⚠️ 触发条件是**可数的事实**（复核失败次数），不是「模型自己说没把握」——
+       外部研究（盲集继承＋谄媚式元认知）的结论是：自评置信不能当触发信号。
+    卡上没有 escalate_model 就原样返回，零行为变化。
+    """
+    esc = (card or {}).get("escalate_model")
+    if not esc:
+        return model, False
+    try:
+        need = int((card or {}).get("escalate_after") or 2)
+    except (TypeError, ValueError):
+        need = 2
+    if attempts >= need and str(esc) != str(model):
+        return str(esc), True
+    return model, False
+
+
 def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
             dry: bool = False, panel: list = None, use_worktree: bool = False,
             consult_spec: str = None) -> str:
@@ -286,6 +305,16 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
         log(f"认领 {cid} → {seat}", "ok")
     else:
         log(f"[dry] 会认领 {cid}", "step")
+
+    # ---- 外问升级（D-023）：返工到阈值就换更强模型，不靠模型自评 ----
+    tries = count_attempts(cid)
+    exec_model, escalated = pick_model(card, model, tries)
+    if escalated:
+        B.append_event(cid, {"type": "escalate", "actor": "system", "seat": seat,
+                             "from": model, "to": exec_model,
+                             "reason": f"复核失败 {tries} 次 ≥ escalate_after，按结构信号升级"})
+        log(f"升级模型：{model} → {exec_model}（第 {tries} 次返工，结构触发）", "warn")
+        model = exec_model
 
     # ---- 执行 ----
     prompt = build_prompt(card, cid)
