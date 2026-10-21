@@ -33,7 +33,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(HERE))
 
 import engines as E                        # noqa: E402
+import hard as HX                          # noqa: E402
 import tasks as T                          # noqa: E402
+
+ALL_TASKS = T.TASKS + HX.TASKS
+BY_ID = {t["id"]: t for t in ALL_TASKS}
 
 WEAK = "opencode-go/minimax-m3.1-flash-free"
 STRONG = "opencode-go/deepseek-v4.1-flash"
@@ -65,7 +69,7 @@ def build_workdir(task: dict, overlay: dict | None = None) -> Path:
 def check(task: dict, workdir: Path) -> tuple:
     """隐藏检查器，独立子进程跑。"""
     p = subprocess.run(
-        [sys.executable, str(HERE / "tasks.py"), "--check", task["id"], str(workdir)],
+        [sys.executable, str(HERE / "checker.py"), task["id"], str(workdir)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     out = (p.stdout or "").strip() or (p.stderr or "").strip()
     return p.returncode == 0, out[:200]
@@ -74,7 +78,7 @@ def check(task: dict, workdir: Path) -> tuple:
 def validate() -> int:
     """两把尺：已知正确解必须 PASS，已知错误解必须 FAIL。"""
     bad = 0
-    for t in T.TASKS:
+    for t in ALL_TASKS:
         d_ok = build_workdir(t, t["ok"])
         ok1, why1 = check(t, d_ok)
         d_bad = build_workdir(t, t["bad"])
@@ -86,7 +90,7 @@ def validate() -> int:
               f"{why1 if ok1 else '（正解被判错：' + why1 + '）'}")
         if not good:
             bad += 1
-    print(f"\n检查器自检：{len(T.TASKS) - bad} of {len(T.TASKS)} 通过")
+    print(f"\n检查器自检：{len(ALL_TASKS) - bad} of {len(ALL_TASKS)} 通过")
     return 0 if bad == 0 else 1
 
 
@@ -178,7 +182,7 @@ def main() -> int:
     if a.validate:
         return validate()
 
-    ids = [x.strip() for x in a.tasks.split(",") if x.strip()] or [t["id"] for t in T.TASKS]
+    ids = [x.strip() for x in a.tasks.split(",") if x.strip()] or [t["id"] for t in ALL_TASKS]
     if a.limit:
         ids = ids[:a.limit]
     arms = [x.strip().upper() for x in a.arms.split(",") if x.strip()]
@@ -188,7 +192,7 @@ def main() -> int:
     print(f"臂={arms} 题={ids} 弱={WEAK} 强={STRONG} 输出={out}")
     n = 0
     for tid in ids:
-        task = T.BY_ID[tid]
+        task = BY_ID[tid]
         for arm in arms:
             rec = run_task(task, arm, a.timeout)
             rec["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
