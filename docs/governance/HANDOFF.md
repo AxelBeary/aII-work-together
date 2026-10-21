@@ -41,7 +41,7 @@ orch run --max 1 --consult "b1:opencode:claudecodesale/claude-opus-5-5@native,b2
 | `tools/term.py` | **窗口内置终端**：白名单执行、一次一条、输出进环形缓冲 |
 | `shell/BoardShell.cs` | **桌面壳**：WebView2 单 exe（`shell\build.cmd` 编译）；`VENDOR.md` 记 vendored 依赖 |
 | `shell/boardshell.exe` | 编译产物（不进库）；`--selftest` / `--shot` 无界面自检 |
-| `tools/cli.py` | 27 子命令 |
+| `tools/cli.py` | 29 子命令 |
 | `tray/BoardTray.cs` | C# 托盘（编译约 14.8 KB，非 Electron） |
 | `tools/make_icon.py` | 代码画图标（纯标准库） |
 | `assets/board.ico` | 托盘与快捷方式共用图标 |

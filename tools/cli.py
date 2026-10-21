@@ -551,7 +551,7 @@ def _check_evidence(ev: str) -> tuple:
         or bool(re.search(r"[A-Za-z0-9_\-/\\]+\.(py|md|json|log|txt)\b", s))
     has_num = bool(re.search(r"\d", s))
     if not (has_cmd and has_num):
-        return False, "凭据要有「命令/文件」和「数字读数」两段（例：`python tools/check.py` → 15 道全绿）"
+        return False, "凭据要有「命令/文件」和「数字读数」两段（例：`python tools/check.py` → 16 道全绿）"
     return True, ""
 
 

@@ -174,7 +174,7 @@
 |---|---|---|---|
 | 留言内核（append-only + 唤醒语义） | `tools/messages.py` | 已实现 | 闸 16 条；HELD 退出码 2 实测；「已回复不重发」实测挡住第二次投递 |
 | 唤醒工作者 | `tools/msgwake.py` | 已实现 | 真跑：续 opencode 会话 → 回答写成 `#6`/`#7`（重复唤醒的教训见 E-29） |
-| 命令 `board msg` | `tools/cli.py`（27 子命令） | 已实现 | `send/ls/inbox/ack/thread/wake/states` 七动作全通 |
+| 命令 `board msg` | `tools/cli.py`（29 子命令） | 已实现 | `send/ls/inbox/ack/thread/wake/states` 七动作全通 |
 | 留言存储三表 | `tools/storage.py`（`messages`/`msg_reads`/`msg_wakes`） | 已实现 | **无 UPDATE/DELETE 接口**；已读另记一表（append-only） |
 | 开工收信 | `tools/orchestrator.py`（`cmd_run` 开头） | 已实现 | 沙箱实测：`📬 开工收信：1 条给 auto-worker（共 1 条，已标已读）` |
 | 留言闸 | `tests/test_messages.py`（16 条） | PASS | 已接入 `check.py`（现 **13 道闸**） |
@@ -232,7 +232,7 @@
 | 新闸 | `tests/test_budget_deps.py`（6 组 24 条） | PASS | 闸门 14 → **15**；子命令 27 → **28** |
 | 界面 | 新建对话框预算两栏、卡片预算/依赖标签、diff 列表、深链接 `?open=`／`?new=1` | 已做 | `board/shots/20261020-b2-list.png`、`-card.png`、`-new.png` |
 
-坑记 **E-35**。规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件。
+坑记 **E-35**。规模：闸门 **16 道**、`tools/`＋`tests/` 共 **31** 个 py 文件。
 
 ### C 批 · 界面列布局 ＋ Q1 剩余五条（2026-10-20 第四段，D-018）
 
@@ -257,7 +257,7 @@
 | 批量取消（要人令牌） | `server.api_bulk` action=cancel | 已做 | 无令牌 403；有令牌只动选中那张；留痕 actor=human |
 | 端到端实跑（人肉验收） | 临时项目 `%TEMP%\opencode\hello-run` | PASS | 认领→opencode 8s→L1-L3→异会话复核→完成；`out/hello.txt` 177B；$0.0058 |
 
-规模：闸门 **15 道**、`tools/`＋`tests/` 共 **30** 个 py 文件；预算与依赖闸 **37 条**；留言闸 **17 条**；子命令 **28 条**。
+规模：闸门 **16 道**、`tools/`＋`tests/` 共 **31** 个 py 文件；预算与依赖闸 **37 条**；留言闸 **17 条**；安全反向 **21 条**；子命令 **29 条**。
 
 ### F · 找卡与僵尸卡可见（2026-10-21，用户「优先功能 实用 性能」）
 
