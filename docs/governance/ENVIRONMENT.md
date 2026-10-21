@@ -571,3 +571,52 @@ static async void InitView()
 - 卡死的那个进程会**占着 `board/webview2` 用户数据目录**，之后每次启动都初始化失败；先 `Stop-Process -Name boardshell` 再试。
 - **壳被强杀后，它起的后端会变孤儿**（`Start-Process` 的子进程不随父进程死，实测：杀掉卡死的壳，`python server.py --port 8777` 还在）。
   已用 **Job Object + KILL_ON_JOB_CLOSE** 兜住：实测强杀壳后 `listener8777=False`、孤儿进程 0。
+
+## E-36 · 给本地 HTTP 面加令牌后，所有「不带令牌的脚本」全 403（2026-10-21，实测）
+
+**现象**：给写接口加 `X-Board-Token` 后，`tests/test_ui_api.py`、`tests/test_ui_concurrency.py` 里的 POST 立刻 403，
+闸门上出现「并发隔离」「接口契约」两条红——代码没错，是**测试还在用旧契约**。
+
+**根因**：安全改动只改了服务端，没同步改「把自己当客户端」的工具（测试、压测、托盘、壳）。
+
+**修法**：令牌在页面 `<meta name="board-token">` 里注入（同源页面读得到、跨站读不到）；
+非页面客户端读 `board/ui-server.tok`。测试用 `_token()` 读文件并带 `X-Board-Token`。
+**教训**：改鉴权＝同时改「服务端 + 所有客户端 + 测试」；只改一头，闸红是假象、绿才是事故。
+
+## E-37 · 租约 TTL 不能用墙钟（2026-10-21，代码复核）
+
+**现象（推演 + 代码事实）**：租约年龄用 `time.time()` 算；系统对时（NTP 校正/手改时间）向前跳，
+所有活跃租约瞬间「超时」→ 被 `try_claim`／`reclaim`／`resume` 回收，长任务被抢。
+
+**修法**：`leases.at_mono` 存 `time.monotonic()`（Windows 走 QPC，**整机一致、跨进程可比**），
+TTL 只看它；墙钟 `at_ms` 只给人读。老行没有 `at_mono` 时回落墙钟。
+
+**教训**：凡是「多久算过期」都用单调时钟；凡是「什么时候发生」才用墙钟。
+
+## E-38 · `cmd /c` + 参数列表**不转义** `&`（2026-10-21，代码复核）
+
+**现象**：npm 装的引擎是 `.cmd`，必须走 `cmd /c`（否则 WinError 2）。但 `subprocess.run(["cmd","/c", exe, "--model", "x&calc"])`
+里，Python 的 `list2cmdline` 只给含空格的参数加引号，**`&` 不加** ⇒ cmd.exe 把后半段当第二条命令。
+
+**修法**：走 `cmd /c` 之前，参数里出现 `& | < > ^ "` 一律拒执行（fail-closed），并回一句人话。
+
+**教训**：`shell=False` 不等于「没有 shell」——`cmd /c` 本身就是 shell。
+
+## E-39 · `INSERT OR REPLACE` ＋ `ON DELETE CASCADE`＝隐形地雷（2026-10-21，代码复核）
+
+**事实**：`PRAGMA foreign_keys=ON` 写在 `SCHEMA` 里，而它**只在初始化那条连接上生效**；
+读写连接是新开的，默认关。所以今天 `save_card` 的 REPLACE 不会级联。
+**危险**：谁哪天「顺手加固」给 `_WriteTx` 加上这行 PRAGMA，下一次 `board budget` 改预算
+（REPLACE＝DELETE+INSERT）就会级联删掉这卡的**全部 events 与 lease**，哈希链还会「自然重建」，审计看不出来。
+
+**修法**：`save_card` 改 `ON CONFLICT(id) DO UPDATE`（只更新列，不删行）。
+
+**教训**：外键语义与 REPLACE 是互斥的；靠「那个 PRAGMA 没生效」维持正确性，等于把命交给巧合。
+
+## E-40 · 提示里的命令不能假设 `board` 在 PATH（2026-10-21，实测）
+
+**现象**：支持「当文件夹装进工作区」后，`board`（无参）打印「下一步：board add …」，
+用户照抄 → `board: command not found`；同理「python tools/orchestrator.py run」在别的目录里也是错的。
+
+**修法**：`cli._board_cmd()`／`_orch_cmd()`——PATH 里有 `board` 就用它，否则打印**绝对路径**并加引号。
+实测在临时项目里跑无参 `board`，打印出来的两条命令可直接复制执行。
