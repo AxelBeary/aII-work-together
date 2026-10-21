@@ -1216,6 +1216,27 @@ def cmd_doctor(a):
                 if not p.exists():
                     findings.append(("!", f"{cid}: 已完成但交付物丢了 {rel}", False))
 
+        # 2.6 证据层级：完成卡若只有「复核席表态」，不算已验证（D-023）
+        if st["state"] == "完成":
+            try:
+                tier = B.evidence_tier(cid, st)
+            except Exception:
+                tier = "UNVERIFIED"
+            if tier == "AUDITED-UNGROUNDED":
+                findings.append(("!", f"{cid}: 完成但证据层级＝AUDITED-UNGROUNDED"
+                                      f"（只有复核表态、没有机器闸；⛔ 对外不得称「已验证」）", False))
+            elif tier == "UNVERIFIED":
+                findings.append(("!", f"{cid}: 完成但证据层级＝UNVERIFIED（无机器证据）", False))
+
+        # 2.7 租约与事件流对账：活跃租约的持有者必须是最后一次 claim 的席位
+        lease2 = B.active_lease(cid)
+        if lease2:
+            holder = (B._lease_owner(lease2) or {}).get("seat")
+            claims = [e.get("seat") for e in B.load_journal(cid) if e.get("type") == "claim"]
+            if claims and holder and claims[-1] != holder:
+                findings.append(("✗", f"{cid}: 租约持有者「{holder}」≠ 最后一次认领「{claims[-1]}」"
+                                      f"（库与事件流对不上）", False))
+
     # 3) 孤立 worktree
     wt_base = B.WORKSPACE / ".worktrees"
     if wt_base.exists():
