@@ -197,3 +197,86 @@ ce03beb  chore: ledger rows from the smoke runs
 - 卡内实时输出：编排器每张卡写 `board/evidence/<卡>/run.log`（线程局部上下文，并行不串卡），
   卡片详情 1.5 秒增量拉取（`/api/card/log?since=` 按字节），跑完自动停；不用再另开窗口看日志。
 - 列内排序：最近活动／花费／时长／卡号（记忆选择）；卡面同时露出花费与时长。
+
+---
+
+## 十一、会话交接（2026-10-21 压缩前 · 下一次从这里接）
+
+> 本块给**新主会话**读；派工单给子代理读，两者别混用。写完这一块，本会话不再改动任何文件。
+
+### 11.1 基线（压缩时的真实状态）
+
+| 项 | 值 |
+|---|---|
+| HEAD | `38158df`（工作树干净；仅 `docs/research/20261021-security-scan/` 故意不入库） |
+| 闸门 | **16 道全绿**（`python tools/check.py --quick`） |
+| 子命令 | 29 条（含新增 `token`） |
+| 看板 | 本项目 5 张卡，`audit` 全查无绕过 |
+| 模型口径（用户指定） | 引擎统一 `opencode`；弱＝`opencode-go/minimax-m3.1-flash-free`，强＝`opencode-go/deepseek-v4.1-flash` |
+| 桌面 | 壳与托盘 `--selftest` 均 PASS；⛔ 托盘菜单点击**只能人手验** |
+
+### 11.2 本会话已落地的四件事
+
+1. **安全 23 条全修**（D-022）：HTTP 令牌＋Host 校验、卡号白名单、终端白名单、UPSERT 替 REPLACE、租约单调时钟、交付物路径限制、`review_only`、壳 scheme 白名单；新增第 16 道闸 `tests/test_security.py`。
+2. **命名/目录统一**（D-020）：仓库＝文件夹＝`aII-work-together`，注册表 `~/.aII-work-together`。
+3. **证据层级＋外问升级**（D-023）：`VERIFIED` / `AUDITED-UNGROUNDED` / `UNVERIFIED`；`--escalate-model/--escalate-after` 按**复核失败次数**触发。
+4. **外问升级实验**：15 题题库＋隐藏检查器（两把尺 15/15）＋四臂 runner（W/G/M/S）；pilot 已跑；学界调研 30 篇。
+
+### 11.3 实验现状（一句话：流水线可用，假设未检验）
+
+- pilot：**弱模型 15/15 全对**（$0，662s）／强模型 15/15（$0.0263，262s）⇒ 题库对弱模型**已饱和**，升级 0 次触发。
+- 结论：该任务族上**升级买的是时延（2.5×），不是正确率**。
+- 文献（`docs/research/20261021-escalation-lit/`）：学界把题库区分度当**前置条件**，做法是**筛题**（只留历史通过率 30–70%），不是造更难的题；「误升级率」是空白；没人用墙钟当成本口径。
+- ⛔ 不得引用 pilot 数字支持「级联更优/更差」。
+
+### 11.4 压缩后的执行计划（按顺序，不要跳）
+
+**P0 · 零成本（只改代码/流程，不调模型）**
+
+> 进度（2026-10-21 晚，`fa42be2`）：第 1–4 条**已完成**，第 5 条**部分完成**（已加 6 道机械精确题，题库 21 题）。
+
+1. `exp/run_experiment.py` 加 **V 臂**（弱＋同族自检 2 次但不升级）。✅ 已加（自检 1 轮，可调）
+2. 聚合加三计数：`triggered` / `escalated_true` / `escalated_waste_unneeded` ⇒ **误升级率**。✅ 已加
+3. 成本双记：`cost_actual`（免费记 0 且标 `cost_source=free`）、`cost_equiv`（价目表未取，**留 None 不编**）、`wall_clock`。✅ 已加
+4. 新增 `exp/screen.py`：只跑 W，按 30–70% 带筛题。✅ 已加（`--repeat` 默认 3）
+5. 扩题到 **40 题池**（现有 15 题都落在 >70% 带，必须补）：优先长上下文（≥4 文件、≥300 行）与需要外部事实核对的任务。🟡 已到 21 题（N01–N06 机械精确类），长上下文类**未做**
+
+**P1 · 小额（$0.1 以内）**
+
+6. 对筛后题库跑 `W/G/M/S/V` 五臂；先 `--validate` 再全量。
+7. 出三张图/表：**等效成本 × 墙钟 × 通过率**帕累托；误升级率；同族复核放行率。
+8. 用数据回填 `--escalate-after` 默认值（当前 2 是设计默认，不是实验结论）。
+
+**P2 · 可选**
+
+9. 筛后仍无区分度 ⇒ 换难度轴（长上下文/跨模块一致性），不要继续加同类题。
+10. 结论只写进 `docs/research/20261021-escalation-experiment/`，对外材料禁用未证结论。
+
+### 11.5 验收口径（新会话必须自己跑，⛔ 不采信任何自报）
+
+```powershell
+python tools/check.py --quick                                                   # 期望 16 道全绿
+python "docs/research/20261021-escalation-experiment/exp/run_experiment.py" --validate   # 期望 15/15
+& "shell\boardshell.exe" --selftest                                             # 期望 SELFTEST PASS
+python tools\board.py audit                                                     # 期望 N 张卡全查、无绕过
+```
+
+### 11.6 领地与只读
+
+- 本会话已改、**默认只读**：`tools/*.py`、`tools/ui.html`、`shell/BoardShell.cs`、`tests/*`、`docs/governance/{DECISIONS,REGISTRY,HANDOFF,ENVIRONMENT}.md`、`docs/research/20261021-*`。
+- 改之前先读 `DECISIONS.md` 最新编号（当前到 **D-023**），新决定从 **D-024** 起。
+- `docs/research/20261021-security-scan/` **只留本地**（用户明确「不必发」）。
+
+### 11.7 交接时明确未拍板/未做
+
+| # | 项 | 状态 |
+|---|---|---|
+| 1 | 实验 H1/H2/H3 | **未检验**（题库饱和） |
+| 2 | `escalate_after=2` | 设计默认值，未用数据校准 |
+| 3 | 托盘菜单点击 | 只能人手验，未验 |
+| 4 | 渗透复测 | 未做（只有代码复核＋21 条反向测试） |
+| 5 | README 是否加「常见问题」 | 未做，用户未表态 |
+
+### 11.8 新会话开工顺序
+
+`git log --oneline -3` → 本块 → `DECISIONS.md` D-020～D-023 → `python tools/check.py --quick` → 实验目录 `Pilot结果__20261021.md` → 按 §11.4 的 P0 开工。
