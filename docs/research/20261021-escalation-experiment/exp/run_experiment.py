@@ -92,6 +92,21 @@ def validate() -> int:
               f"{why1 if ok1 else '（正解被判错：' + why1 + '）'}")
         if not good:
             bad += 1
+    # 第三把尺（2026-10-21 加）：可计算题的期望值必须由独立实现从种子算出，
+    # 否则「正解/错解」都是作者一个人写的，错得自洽，两把尺照样全绿（N04 实测连错两次）。
+    for tid, (fn, fname) in getattr(HX2, "ORACLES", {}).items():
+        t = BY_ID.get(tid)
+        if not t:
+            continue
+        want = fn(t["seed"]).strip()
+        got = (t["ok"].get(fname) or "").strip()
+        good = want == got
+        print(f"  [{'PASS' if good else 'FAIL'}] {tid:<4} 第三把尺：独立实现算出的期望 vs 手写期望")
+        if not good:
+            print(f"      算出：{want[:160]!r}")
+            print(f"      手写：{got[:160]!r}")
+            bad += 1
+
     print(f"\n检查器自检：{len(ALL_TASKS) - bad} of {len(ALL_TASKS)} 通过")
     return 0 if bad == 0 else 1
 

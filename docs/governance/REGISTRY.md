@@ -338,3 +338,16 @@
 | 五条可搬做法 | 同文件 §5 | 已交 | ①筛题（30–70% 通过率带）②成本双记 ③结构触发＋单报误升级率 ④加 V 臂（自检不升级）⑤天花板校准题 |
 
 > 影响：实验设计里「加难度」一条已改成「筛题」；V 臂列入下一轮（用于把「自检的成本」与「升级的收益」拆开）。
+
+### M · 编排调研 ＋ epoch 栅栏 ＋ 筛题（2026-10-21 晚，D-024）
+
+| 产出物 | 路径 | 状态 | 证据 |
+|---|---|---|---|
+| 编排现状调研（34 卡、8 节、69 链接） | `docs/research/20261021-orchestration-lit/编排现状__调研席__外部检索.md`（64 KB） | 已交 | 主代理核：34 张卡、8 节；卡片要求「API/字段名必须来自官方文档」，并点名 3 条未证 |
+| 租约 epoch 升为真栅栏 | `tools/storage.py`（`touch_lease` CAS）／`tools/board.py`（`heartbeat`）／`tools/cli.py`（`guard_holder`、`--epoch`）／`tools/orchestrator.py` | 已交 | `test_lease_race.py::test_epoch_fence` 五条（含「当代心跳照常通过」对照），16 闸全绿 |
+| audit 增「换代后仍有旧代写入」判据 | `tools/cli.py` | 已交 | 同一闸内跑；误报面为零（旧卡无 epoch 字段时跳过） |
+| 题库扩到 23 题（+8） | `exp/hard2.py`（6 机械精确）、`exp/hard3.py`（2 长上下文） | 已交 | 两把尺 23/23（正解绿、错解红） |
+| 筛题结果 | `docs/research/20261021-escalation-experiment/筛题结果__20261021.md` | 已交 | 弱模型 23/23 全对 ⇒ 该题族饱和；并记两次「我写错期望、模型是对的」 |
+| 五臂 runner／筛题器／聚合器／操作手册 | `exp/run_experiment.py`、`screen.py`、`analyze.py`、`实验操作手册.md` | 已交 | `--validate` 23/23；V/M/S 在 23 题上的运行记录见 `exp/runs/saturated-VMS.jsonl` |
+
+> ⚠️ 本批**没有**产生任何实验结论：23 题对弱模型全饱和，H1/H2/H3 仍未检验。

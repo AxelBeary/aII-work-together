@@ -275,3 +275,46 @@ TASKS = [
 ]
 
 BY_ID = {t["id"]: t for t in TASKS}
+
+
+# ---------- 第三把尺：期望值由独立实现从种子数据算出来 ----------
+# 由来（2026-10-21 筛题实测）：N04 连续两次判「模型错」，其实是我手写的期望错了；
+# 「两把尺」（正解绿/错解红）抓不到作者自洽的错误。凡**可计算**的题，期望值必须算，不许手写。
+
+def _oracle_n01(seed: dict) -> str:
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(seed["data/sales.csv"])))
+    seen, uniq = set(), []
+    for r in rows:
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        uniq.append(r)
+    units = sum(int(r["qty"]) for r in uniq)
+    rev = sum(int(r["qty"]) * float(r["price"]) for r in uniq)
+    top = max(uniq, key=lambda r: int(r["qty"]) * float(r["price"]))["sku"]
+    return f"rows={len(uniq)}\nunits={units}\nrevenue={rev:.2f}\ntop={top}\n"
+
+
+def _oracle_n04(seed: dict) -> str:
+    import datetime as _dt
+    rows = json.loads(seed["data/orders.json"])
+    items = []
+    for r in rows:
+        if r["status"] == "void":
+            continue
+        items.append({
+            "id": r["id"], "name": r["name"],
+            "created": _dt.datetime.fromtimestamp(r["created"], _dt.timezone.utc).strftime("%Y-%m-%d"),
+            "amount": f"{r['amount_cents'] / 100:.2f}",
+            "status": r["status"],
+        })
+    items.sort(key=lambda x: (x["created"], x["id"]))
+    return json.dumps({"count": len(items), "items": items}, ensure_ascii=False, indent=2) + "\n"
+
+
+ORACLES = {
+    "N01": (_oracle_n01, "report.md"),
+    "N04": (_oracle_n04, "result.json"),
+}
