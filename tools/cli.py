@@ -594,61 +594,73 @@ def cmd_reclaim(a):
 
 
 def cmd_audit(a):
-    """检测绕过 CLI 直接改文件的行为。"""
+    """检测绕过 CLI 直接改库/改日志的行为。
+
+    ⚠️ 2026-10-21 修（外部评审抓到的**假绿**，见 docs/research/20261021-peer-review-lead）：
+       租约类判据原先读 `board/cards/<id>/lease/active` 目录，而租约早已迁到
+       SQLite `leases` 表 ⇒ 新架构下这两个目录**永远不存在**，判据恒 0 命中。
+       现在：租约一律读库，并新增「状态与租约互相印证」两条；旧目录只在真的存在时兜底。
+    """
     issues = []
-    for d in B.card_refs():
-        if not d.is_dir():
-            continue
+    audited = 0
+    for cid in B.card_ids():
+        audited += 1
+        d = B.card_ref(cid)
         # 0) 哈希链校验（整份重写/插入/改内容都会断链）
-        chain_ok, chain_why = B.verify_chain(d.name)
+        chain_ok, chain_why = B.verify_chain(cid)
         if not chain_ok:
-            issues.append(f"{d.name}: 哈希链断裂 ← {chain_why}")
+            issues.append(f"{cid}: 哈希链断裂 ← {chain_why}")
         try:
-            st = B.replay(d.name)
+            st = B.replay(cid)
         except Exception as e:
-            issues.append(f"{d.name}: journal 无法重放（{e}）")
+            issues.append(f"{cid}: journal 无法重放（{e}）")
             continue
-        card = B.get_card(d.name)
+        card = B.get_card(cid) or {}
         # 1) 完成但没有复核记录
         if st["state"] == "完成" and not st["review"]:
-            issues.append(f"{d.name}: 状态=完成 但无复核记录")
+            issues.append(f"{cid}: 状态=完成 但无复核记录")
         # 2) 完成但复核席==执行席
         if st["review"] and st["submit"]:
             if st["review"].get("seat") == st["submit"].get("seat"):
-                issues.append(f"{d.name}: 复核席与执行席同一人")
+                issues.append(f"{cid}: 复核席与执行席同一人")
         # 2b) 复核无凭据（疑似手写 journal 绕过 CLI）—— 红线①的可判形制
         if st["review"] and not st["review"].get("evidence"):
-            issues.append(f"{d.name}: 复核记录缺 evidence 字段 ← 疑似绕过 CLI 手写 journal")
+            issues.append(f"{cid}: 复核记录缺 evidence 字段 ← 疑似绕过 CLI 手写 journal")
         # 2c) 提交记录缺闸门读数（同上）
         if st["submit"] and "gate" not in st["submit"]:
-            issues.append(f"{d.name}: 提交记录缺 gate 读数 ← 疑似绕过 CLI")
+            issues.append(f"{cid}: 提交记录缺 gate 读数 ← 疑似绕过 CLI")
         # 3) 人闸卡在完成但无人拍板
         if st["state"] == "完成" and st["gate"] in ("both", "before_done") and not st["human"]:
-            issues.append(f"{d.name}: 人闸卡已「完成」但无人工记录 ← 疑似绕过")
-        # 4) 活跃租约 >1
-        lease = d / "lease" / "active"
-        if lease.exists():
-            act = [x for x in lease.iterdir() if x.is_dir()]
+            issues.append(f"{cid}: 人闸卡已「完成」但无人工记录 ← 疑似绕过")
+        # 4) 租约以库为准：状态与租约必须互相印证（手改库/手写 journal 会露馅）
+        lease_row = B._store().get_lease(cid)
+        if st["state"] == "进行中" and not lease_row:
+            issues.append(f"{cid}: 状态=进行中 但库里没有租约 ← 疑似手改状态")
+        if lease_row and st["state"] in ("待认领", "待返工", "完成", "已取消"):
+            issues.append(f"{cid}: 有租约（{lease_row.get('seat')}）但状态={st['state']}"
+                          f" ← 疑似手改状态")
+        # 4b) 旧版租约目录：只在真的存在时兜底（库版不写目录）
+        legacy = d / "lease" / "active"
+        if legacy.exists():
+            act = [x for x in legacy.iterdir() if x.is_dir()]
             if len(act) > 1:
-                issues.append(f"{d.name}: 活跃租约 {len(act)} 个（应 ≤1）")
-        # 4b) 租约目录名必须是固定名（旧版带 uuid 的会破坏原子性）
-        if lease.exists():
-            for x in lease.iterdir():
-                if x.is_dir() and x.name != B.LEASE_NAME:
-                    issues.append(f"{d.name}: 租约目录名非固定名「{x.name}」← 旧版残留，原子性不成立")
+                issues.append(f"{cid}: 旧版租约目录 {len(act)} 个（应 ≤1）")
+            for x in act:
+                if x.name != B.LEASE_NAME:
+                    issues.append(f"{cid}: 旧版租约目录名非固定名「{x.name}」← 原子性不成立")
         # 5) 交付物缺失但已提交
         if st["state"] in ("待验收", "核验中", "完成"):
             for item in card.get("deliverables", []):
                 rel = item if isinstance(item, str) else item.get("path")
                 p = (B.WORKSPACE / rel) if not Path(rel).is_absolute() else Path(rel)
                 if not p.exists():
-                    issues.append(f"{d.name}: 交付物已丢 {rel}")
+                    issues.append(f"{cid}: 交付物已丢 {rel}")
     if issues:
         print(f"✗ 发现 {len(issues)} 个问题：")
         for i in issues:
             print(f"  · {i}")
         sys.exit(2)
-    B.ok("审计通过：无绕过痕迹")
+    B.ok(f"审计通过：{audited} 张卡全查（库内卡 + 租约表），无绕过痕迹")
 
 
 def cmd_html(a):
