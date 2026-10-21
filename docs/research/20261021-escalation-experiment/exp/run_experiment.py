@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""run_experiment.py — 外问升级实验的执行器（pilot）
+
+四臂：
+  W  弱模型单干
+  G  强模型单干
+  M  弱模型 →（自评 CONF<阈值）→ 强模型
+  S  弱模型 →（隐藏检查器判失败，即「机器闸红」）→ 强模型
+
+判真值：`tasks.py` 里的隐藏检查器，在**独立子进程**里跑（避免模块污染）。
+⛔ 不用 LLM 当裁判。
+
+用法：
+  python run_experiment.py --validate                 # 只验检查器（两把尺，不花钱）
+  python run_experiment.py --arms W,G,S,M --tasks F01,C01,H01 --limit 3
+  python run_experiment.py --arms W,G --out runs/pilot.jsonl
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[3]                     # 仓库根
+sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(HERE))
+
+import engines as E                        # noqa: E402
+import tasks as T                          # noqa: E402
+
+WEAK = "opencode-go/minimax-m3.1-flash-free"
+STRONG = "opencode-go/deepseek-v4.1-flash"
+ENGINE = "opencode"
+CONF_THRESHOLD = 70
+
+PROMPT_SUFFIX = (
+    "\n\n当前目录就是你的工作目录：只读写这里的文件，不要访问目录外的内容。"
+    "完成后用一两句话说明你写了什么。"
+)
+CONF_INSTRUCTION = (
+    "\n\n最后**单独一行**输出 `CONF: <0-100>`，表示你对自己答案正确的把握（不要写别的）。"
+)
+
+
+def build_workdir(task: dict, overlay: dict | None = None) -> Path:
+    d = Path(tempfile.mkdtemp(prefix=f"exp-{task['id']}-"))
+    for name, content in (task.get("seed") or {}).items():
+        p = d / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    for name, content in (overlay or {}).items():
+        p = d / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return d
+
+
+def check(task: dict, workdir: Path) -> tuple:
+    """隐藏检查器，独立子进程跑。"""
+    p = subprocess.run(
+        [sys.executable, str(HERE / "tasks.py"), "--check", task["id"], str(workdir)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    out = (p.stdout or "").strip() or (p.stderr or "").strip()
+    return p.returncode == 0, out[:200]
+
+
+def validate() -> int:
+    """两把尺：已知正确解必须 PASS，已知错误解必须 FAIL。"""
+    bad = 0
+    for t in T.TASKS:
+        d_ok = build_workdir(t, t["ok"])
+        ok1, why1 = check(t, d_ok)
+        d_bad = build_workdir(t, t["bad"])
+        ok2, why2 = check(t, d_bad)
+        shutil.rmtree(d_ok, ignore_errors=True)
+        shutil.rmtree(d_bad, ignore_errors=True)
+        good = ok1 and not ok2
+        print(f"  [{'PASS' if good else 'FAIL'}] {t['id']:<4} 正解→{ok1} 错解→{ok2}  "
+              f"{why1 if ok1 else '（正解被判错：' + why1 + '）'}")
+        if not good:
+            bad += 1
+    print(f"\n检查器自检：{len(T.TASKS) - bad} of {len(T.TASKS)} 通过")
+    return 0 if bad == 0 else 1
+
+
+def parse_conf(text: str):
+    import re
+    m = re.findall(r"CONF\s*[:：]\s*(\d{1,3})", text or "")
+    if not m:
+        return None
+    try:
+        return max(0, min(100, int(m[-1])))
+    except ValueError:
+        return None
+
+
+def run_once(task: dict, model: str, workdir: Path, timeout: int,
+             conf: bool = False) -> dict:
+    prompt = task["prompt"] + PROMPT_SUFFIX + (CONF_INSTRUCTION if conf else "")
+    t0 = time.time()
+    res = E.run(ENGINE, prompt, cwd=str(workdir), model=model, timeout=timeout)
+    dt = time.time() - t0
+    u = res.usage or {}
+    return {
+        "ok": res.ok, "reason": (res.reason or "")[:200],
+        "text": res.text or "", "duration_s": round(dt, 1),
+        "cost": float(u.get("cost") or 0) if u.get("available") else None,
+        "tokens": int(u.get("input") or 0) + int(u.get("output") or 0),
+        "model_used": res.model_used or model,
+    }
+
+
+def run_task(task: dict, arm: str, timeout: int) -> dict:
+    wd = build_workdir(task)
+    rec = {"task": task["id"], "cat": task["cat"], "arm": arm,
+           "escalated": False, "trigger": "none", "steps": []}
+    try:
+        first_model = STRONG if arm == "G" else WEAK
+        first = run_once(task, first_model, wd, timeout, conf=(arm == "M"))
+        rec["steps"].append({"model": first_model,
+                             **{k: v for k, v in first.items() if k != "text"}})
+        passed, why = check(task, wd)
+        rec.update(passed=passed, check=why)
+        cost = first["cost"] or 0.0
+        dur = first["duration_s"]
+
+        if arm in ("M", "S"):
+            escalate = False
+            if arm == "S":
+                if not passed:
+                    escalate = True
+                    rec["trigger"] = "structural:checker-fail"
+            else:
+                conf = parse_conf(first["text"])
+                rec["conf"] = conf
+                if conf is None:
+                    # 「信号缺失」不是「低置信」：记无效样本，⛔ 不拿它当升级理由
+                    # （pilot 实测：把缺失当低置信会 10/10 误升级，多花 $0.04）
+                    rec["conf_missing"] = True
+                    rec["invalid"] = True
+                elif conf < CONF_THRESHOLD:
+                    escalate = True
+                    rec["trigger"] = f"metacognitive:conf={conf}"
+            if escalate:
+                rec["escalated"] = True
+                second = run_once(task, STRONG, wd, timeout)
+                rec["steps"].append({"model": STRONG,
+                                     **{k: v for k, v in second.items() if k != "text"}})
+                passed2, why2 = check(task, wd)
+                rec.update(passed=passed2, check=why2)
+                cost += second["cost"] or 0.0
+                dur += second["duration_s"]
+
+        rec["cost"] = round(cost, 6)
+        rec["duration_s"] = round(dur, 1)
+        return rec
+    finally:
+        shutil.rmtree(wd, ignore_errors=True)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--validate", action="store_true", help="只验检查器，不调模型")
+    ap.add_argument("--arms", default="W,G,S,M")
+    ap.add_argument("--tasks", default="", help="逗号分隔的题号；空＝全部")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--out", default="")
+    a = ap.parse_args()
+
+    if a.validate:
+        return validate()
+
+    ids = [x.strip() for x in a.tasks.split(",") if x.strip()] or [t["id"] for t in T.TASKS]
+    if a.limit:
+        ids = ids[:a.limit]
+    arms = [x.strip().upper() for x in a.arms.split(",") if x.strip()]
+    out = Path(a.out) if a.out else HERE / "runs" / f"run-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"臂={arms} 题={ids} 弱={WEAK} 强={STRONG} 输出={out}")
+    n = 0
+    for tid in ids:
+        task = T.BY_ID[tid]
+        for arm in arms:
+            rec = run_task(task, arm, a.timeout)
+            rec["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            with out.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            n += 1
+            flag = "PASS" if rec["passed"] else "FAIL"
+            print(f"  [{n}] {tid:<4} {arm}  {flag}  escalated={rec['escalated']} "
+                  f"cost=${rec['cost']:.4f}  {rec['duration_s']}s  {rec['check'][:60]}")
+    print(f"\n完成 {n} 次运行 → {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
