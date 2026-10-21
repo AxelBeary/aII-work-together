@@ -34,9 +34,10 @@ sys.path.insert(0, str(HERE))
 
 import engines as E                        # noqa: E402
 import hard as HX                          # noqa: E402
+import hard2 as HX2                        # noqa: E402
 import tasks as T                          # noqa: E402
 
-ALL_TASKS = T.TASKS + HX.TASKS
+ALL_TASKS = T.TASKS + HX.TASKS + HX2.TASKS
 BY_ID = {t["id"]: t for t in ALL_TASKS}
 
 WEAK = "opencode-go/minimax-m3.1-flash-free"
@@ -121,19 +122,54 @@ def run_once(task: dict, model: str, workdir: Path, timeout: int,
     }
 
 
+SELFCHECK_PROMPT = (
+    "\n\n你刚才在这个目录里完成了上面的任务。现在**逐条复核**你的产物："
+    "对照每一条要求检查细节（边界值、命名、格式、是否漏改），发现错误就直接改正文件。"
+    "复核完用一两句话说明：发现了什么、改了什么（没发现也照实说）。"
+)
+
+
+def run_selfcheck(task: dict, workdir: Path, timeout: int, model: str) -> dict:
+    prompt = task["prompt"] + PROMPT_SUFFIX + SELFCHECK_PROMPT
+    t0 = time.time()
+    res = E.run(ENGINE, prompt, cwd=str(workdir), model=model, timeout=timeout)
+    dt = time.time() - t0
+    u = res.usage or {}
+    return {
+        "ok": res.ok, "reason": (res.reason or "")[:200],
+        "text": res.text or "", "duration_s": round(dt, 1),
+        "cost": float(u.get("cost") or 0) if u.get("available") else None,
+        "tokens": int(u.get("input") or 0) + int(u.get("output") or 0),
+        "model_used": res.model_used or model, "role": "selfcheck",
+    }
+
+
 def run_task(task: dict, arm: str, timeout: int) -> dict:
+    """五臂：W 弱单干 / G 强单干 / M 自评触发 / S 结构触发 / V 弱＋自检不升级。
+
+    V 臂的意义：把「验证的成本」与「升级的收益」拆开——它永远自检一次、永不升级。
+    """
     wd = build_workdir(task)
     rec = {"task": task["id"], "cat": task["cat"], "arm": arm,
            "escalated": False, "trigger": "none", "steps": []}
     try:
         first_model = STRONG if arm == "G" else WEAK
         first = run_once(task, first_model, wd, timeout, conf=(arm == "M"))
-        rec["steps"].append({"model": first_model,
+        rec["steps"].append({"role": "answer", "model": first_model,
                              **{k: v for k, v in first.items() if k != "text"}})
         passed, why = check(task, wd)
-        rec.update(passed=passed, check=why)
+        rec.update(passed=passed, first_passed=passed, check=why)
         cost = first["cost"] or 0.0
         dur = first["duration_s"]
+
+        if arm == "V":
+            rev = run_selfcheck(task, wd, timeout, WEAK)
+            rec["steps"].append({k: v for k, v in rev.items() if k != "text"})
+            passed, why = check(task, wd)
+            rec.update(passed=passed, check=why)
+            cost += rev["cost"] or 0.0
+            dur += rev["duration_s"]
+            rec["selfcheck_fixed"] = bool(passed and not rec["first_passed"])
 
         if arm in ("M", "S"):
             escalate = False
@@ -155,15 +191,35 @@ def run_task(task: dict, arm: str, timeout: int) -> dict:
             if escalate:
                 rec["escalated"] = True
                 second = run_once(task, STRONG, wd, timeout)
-                rec["steps"].append({"model": STRONG,
+                rec["steps"].append({"role": "escalated", "model": STRONG,
                                      **{k: v for k, v in second.items() if k != "text"}})
                 passed2, why2 = check(task, wd)
                 rec.update(passed=passed2, check=why2)
                 cost += second["cost"] or 0.0
                 dur += second["duration_s"]
 
-        rec["cost"] = round(cost, 6)
+        rec["cost"] = round(cost, 6)          # 兼容旧记录
         rec["duration_s"] = round(dur, 1)
+        # 成本双记（调研建议）：真实扣费 + 口径来源；墙钟单独记
+        rec["cost_actual"] = round(cost, 6)
+        rec["cost_source"] = "free" if cost == 0 else "paid"
+        rec["cost_equiv"] = None               # 价目表未取，⛔ 不编折算价
+        rec["wall_clock_s"] = round(dur, 1)
+        rec["triggered"] = bool(rec["escalated"])
+
+        # 升级归因三态：真收益 / 白升（本来就对）/ 升了也没用
+        if arm in ("M", "S"):
+            if rec["escalated"]:
+                if rec["passed"] and not rec["first_passed"]:
+                    rec["outcome"] = "escalated_true"
+                elif rec["passed"]:
+                    rec["outcome"] = "escalated_waste_unneeded"
+                else:
+                    rec["outcome"] = "escalated_ineffective"
+            else:
+                rec["outcome"] = "no_escalation_pass" if rec["passed"] else "no_escalation_fail"
+        else:
+            rec["outcome"] = "pass" if rec["passed"] else "fail"
         return rec
     finally:
         shutil.rmtree(wd, ignore_errors=True)
@@ -200,8 +256,8 @@ def main() -> int:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n += 1
             flag = "PASS" if rec["passed"] else "FAIL"
-            print(f"  [{n}] {tid:<4} {arm}  {flag}  escalated={rec['escalated']} "
-                  f"cost=${rec['cost']:.4f}  {rec['duration_s']}s  {rec['check'][:60]}")
+            print(f"  [{n}] {tid:<4} {arm}  {flag}  {rec['outcome']:<24} "
+                  f"cost=${rec['cost']:.4f}  {rec['duration_s']}s  {rec['check'][:50]}")
     print(f"\n完成 {n} 次运行 → {out}")
     return 0
 
