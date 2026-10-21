@@ -93,11 +93,19 @@ _BOARD_LOCK = threading.RLock()
 
 # ---------- 数据整形 ----------
 
+_LOG_WARNED = set()
+
+
 def _log_bytes(cid: str) -> int:
     try:
         p = B.card_dir(cid) / "run.log"
         return p.stat().st_size if p.exists() else 0
-    except Exception:
+    except Exception as e:
+        # ⚠️ 2026-10-21 修（安全扫描 F-15）：读不到日志不许静默变成 0——
+        #    否则界面显示「没有输出」，会被误读成 agent 没干活。同一张卡只报一次。
+        if cid not in _LOG_WARNED:
+            _LOG_WARNED.add(cid)
+            print(f"⚠ 卡日志大小读不到（{cid}）：{e}", file=sys.stderr)
         return 0
 
 

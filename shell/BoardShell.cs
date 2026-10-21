@@ -472,7 +472,7 @@ namespace BoardShell
                         else
                             ShowErrorPanel("这个链接的类型不受支持，已拦下：" + e.Uri);
                     }
-                    catch { }
+                    catch (Exception ex) { ShowErrorPanel("打开链接失败：" + ex.Message); }
                 };
                 core.ProcessFailed += delegate(object s, CoreWebView2ProcessFailedEventArgs e)
                 {
