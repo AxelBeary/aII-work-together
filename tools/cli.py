@@ -253,7 +253,18 @@ def cmd_show(a):
     if st["submit"]:
         print(f"  提交    {st['submit'].get('note','')}")
     if st["review"]:
-        print(f"  复核    {st['review'].get('verdict')} by {st['review'].get('seat')}")
+        print(f"  复核    {st['review'].get('verdict')} by {st['review'].get('seat')}"
+              f"（第 {st['review'].get('round') or 1} 轮）")
+        items = st["review"].get("items") or []
+        if items:
+            opens = [i for i in items if i.get("state") == "open"]
+            stuck = set(st["review"].get("stuck") or [])
+            print(f"  意见    {len(items)} 条，未关闭 {len(opens)} 条"
+                  + (f"，其中卡住 {len(stuck)} 条" if stuck else ""))
+            for i in items[:8]:
+                mark = "✗" if i.get("state") == "open" else "✓"
+                flag = " ← 两轮未解决" if i.get("id") in stuck else ""
+                print(f"     {mark} {i.get('id')}  {i.get('text','')[:60]}{flag}")
     diff = B.diff_vs_baseline(a.id, card)
     if diff:
         print("  改动（认领前 → 现在）：")
@@ -502,6 +513,46 @@ def cmd_consult(a):
     print("\n下一步：按意见改完后，正常走 submit → review 就行。")
 
 
+def _review_items(a) -> list:
+    """解析复核意见：`--item ID:open|fixed:说明`（可重复）或 `--items-file`。
+
+    为什么要结构化：自由文本没法对账——第三轮时复核席不知道「上一轮那 5 条改没改」，
+    执行席也不知道自己漏了哪条。ID 稳定、状态二值，才能算「还剩几条」「哪条卡住了」。
+    """
+    items = []
+    if getattr(a, "items_file", None):
+        try:
+            data = json.loads(Path(a.items_file).read_text(encoding="utf-8"))
+        except Exception as e:
+            B.die(f"--items-file 读不了：{e}")
+        if not isinstance(data, list):
+            B.die("--items-file 必须是 JSON 数组")
+        for it in data:
+            if not isinstance(it, dict) or "id" not in it:
+                B.die("--items-file 里每条都要有 id")
+            state = str(it.get("state") or "open").lower()
+            if state not in ("open", "fixed"):
+                B.die(f"意见 {it['id']} 的状态只能是 open/fixed，收到 {state}")
+            items.append({"id": str(it["id"]), "state": state,
+                          "text": str(it.get("text") or "")[:300]})
+    for raw in getattr(a, "item", []) or []:
+        parts = str(raw).split(":", 2)
+        if len(parts) < 2:
+            B.die(f"--item 要写成 ID:open|fixed:说明，收到 {raw!r}")
+        iid, state = parts[0].strip(), parts[1].strip().lower()
+        if not iid:
+            B.die("--item 的 ID 不能为空")
+        if state not in ("open", "fixed"):
+            B.die(f"意见 {iid} 的状态只能是 open/fixed，收到 {state}")
+        items.append({"id": iid, "state": state,
+                      "text": (parts[2].strip() if len(parts) > 2 else "")[:300]})
+    # 同一 ID 出现两次：后写的算数（允许先列旧的 fixed 再列新的 open）
+    dedup = {}
+    for it in items:
+        dedup[it["id"]] = it
+    return list(dedup.values())
+
+
 def cmd_review(a):
     st = B.replay(a.id)
     # ⚠️ 2026-10-21：旧代码允许从「待验收」直接复核，但状态机白名单里没有
@@ -533,10 +584,40 @@ def cmd_review(a):
     ev_ok, ev_why = _check_evidence(a.evidence)
     if not ev_ok:
         B.die(f"复核凭据不合格：{ev_why}")
+    # ---- 结构化意见（2026-10-23）：能算「还剩几条」「哪条连续两轮没解决」----
+    items = _review_items(a)
+    open_items = [i for i in items if i["state"] == "open"]
+    if items and a.verdict == "pass" and open_items:
+        B.die(f"还有 {len(open_items)} 条未关闭的意见，⛔ 不能给 PASS："
+              + "、".join(i["id"] for i in open_items[:8])
+              + "\n  （确实不用改了就把它们标成 fixed 再 PASS）")
+    if items and a.verdict == "fail" and not open_items:
+        B.die("意见全部标成 fixed 却给了 fail —— 该给 pass，或者把还没解决的标成 open")
+    prev_open, review_rounds = set(), 0
+    for ev in B.load_journal(a.id):
+        if ev.get("type") == "review":
+            review_rounds += 1
+            prev_open = {str(i.get("id")) for i in (ev.get("items") or [])
+                         if i.get("state") == "open"}
+    stuck = sorted({i["id"] for i in open_items} & prev_open)
+    if stuck:
+        print(f"  ⚠ 这几条上一轮就是 open：{'、'.join(stuck[:6])}"
+              f"（第 {review_rounds + 1} 轮仍未解决）")
+        print("     建议：换更强的模型再来一轮，或直接报阻塞等人决定 —— 别让同一句意见转第三圈。")
+        # 收口刹车（2026-10-23）：同一条意见连续 3 轮没解决，大概率不是「再改改」能解决的。
+        # 想继续转必须显式 --force，让「无限转」变成一个要人签字的选择。
+        if review_rounds + 1 >= 3 and not getattr(a, "force", False):
+            B.die(f"同一条意见已连续 {review_rounds + 1} 轮未解决，⛔ 不再自动转圈。\n"
+                  "  二选一：\n"
+                  f"    ① 报阻塞等人决定：{_board_cmd()} block {a.id} --seat {a.seat} "
+                  "--reason \"同一意见三轮未解决\"\n"
+                  f"    ② 确实还要再来一轮：加 --force（会在记录里留下痕迹）")
     if st["gate"] in ("both", "before_done") and a.verdict == "pass":
         B.append_event(a.id, {"type": "review", "actor": "review", "seat": a.seat,
                             "verdict": a.verdict, "note": a.note or "",
                             "evidence": a.evidence, "evidence_ok": True,
+                            "items": items, "stuck": stuck, "round": review_rounds + 1,
+                            "forced": bool(getattr(a, "force", False)),
                             "pid": os.getpid()})
         B.append_event(a.id, {"type": "request_human", "actor": "review", "seat": a.seat})
         B.release(a.id)
@@ -544,7 +625,9 @@ def cmd_review(a):
         return
     B.append_event(a.id, {"type": "review", "actor": "review", "seat": a.seat,
                         "verdict": a.verdict, "note": a.note or "",
-                        "evidence": a.evidence, "evidence_ok": True})
+                        "evidence": a.evidence, "evidence_ok": True,
+                        "items": items, "stuck": stuck, "round": review_rounds + 1,
+                        "forced": bool(getattr(a, "force", False))})
     if a.verdict == "pass":
         B.release(a.id)
         B.ok("复核 PASS → 完成")
@@ -1797,6 +1880,12 @@ def main():
     s.add_argument("--evidence", required=True,
                    help="你实际跑的命令与读数（必须有数字，反空跑）")
     s.add_argument("--note")
+    s.add_argument("--item", action="append", default=[], metavar="ID:open|fixed:说明",
+                   help="逐条意见（可重复）：ID 是稳定编号，下一轮复核要按同一 ID 回报状态")
+    s.add_argument("--items-file",
+                   help="意见 JSON 文件：[{\"id\":\"T1\",\"state\":\"open\",\"text\":\"…\"}]")
+    s.add_argument("--force", action="store_true",
+                   help="同一条意见连续 3 轮未解决时，显式允许再转一轮（会记进事件）")
     s.set_defaults(f=cmd_review)
 
     s = sub.add_parser("human", help="人拍板（需 token）")

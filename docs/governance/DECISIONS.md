@@ -487,3 +487,18 @@
 - 根治形态（未做，列入待办）：`cards` 表加 `events_anchor`（count + last_hash），`append_event` 同步更新，
   `audit` 比对「锚点数 > 实际事件数 ⇒ 事件流被截断」。代价：一次迁移 + 旧卡锚点缺失期（需明示不回填）。
 - 已写进 AGENTS §4.1 能力边界，避免对外宣称「audit 能挡住任何改库」。
+
+## D-026 · 复核意见结构化 + 「同一意见三轮」收口刹车（2026-10-23）
+
+- 结论：`board review` 支持 `--item ID:open|fixed:说明`（可重复）或 `--items-file`，
+  意见入事件流；三条机械规则防无限转圈。
+- 由来：用户问「能不能 1 做完给 2 判，2 判完给 3，3 做完回 2，2 看完再找 1」。
+  现状能转（待返工 → 再认领），但没有刹车：意见是自由文本，谁也不知道第三轮还差哪几条。
+- 三条规则（都有反向测试）：
+  1. 带 `open` 意见 ⇒ ⛔ 不许 `--verdict pass`；
+  2. 全部 `fixed` 却给 `fail` ⇒ ⛔ 拒绝（自相矛盾）；
+  3. 同一 ID 连续 3 轮未解决 ⇒ ⛔ 默认拒绝再转，要求 `block` 或显式 `--force`（--force 记进事件）。
+- 落地：`tools/cli.py`（`_review_items()`、`cmd_review`）、`board show` 显示「第 N 轮 / 未关闭 / 卡住」、
+  新增第 17 道闸 `tests/test_review_items.py`（8 条，含 2 条对照）。
+- 依据（实测）：`python tests/test_review_items.py` 8/8；16→17 道闸全绿。
+- 未做：UI 详情面板还没渲染 items（只走 CLI 与 show）；`--items-file` 尚无 schema 校验版本号。

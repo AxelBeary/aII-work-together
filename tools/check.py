@@ -157,6 +157,12 @@ def main():
     if not ok:
         fails.append("安全反向")
 
+    # 4j 结构化复核意见 + 收口刹车（2026-10-23）：带 open 意见不许 PASS、
+    #    全 fixed 不许 FAIL、同一意见第 3 轮默认拦下（--force 才放行）
+    ok, _ = run("意见对账", [PY, "tests/test_review_items.py"])
+    if not ok:
+        fails.append("意见对账")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:
