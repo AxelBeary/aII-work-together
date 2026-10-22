@@ -174,6 +174,70 @@ label:first-child{margin-top:0}
 body.term-on main{padding-bottom:340px}
 body.term-on .toast{bottom:340px}
 
+/* ---------- 视觉打磨 + 首屏引导（2026-10-23） ---------- */
+:root{
+  --r-sm:8px; --r-md:10px; --r-lg:14px;
+  --sh-1:0 1px 2px #0006;
+  --sh-2:0 6px 18px #0007;
+  --ring:0 0 0 3px #5aa9ff40;
+}
+*:focus-visible{outline:none;box-shadow:var(--ring);border-radius:var(--r-sm)}
+header{background:linear-gradient(180deg,#171b22,#15181e);backdrop-filter:blur(8px)}
+h1{letter-spacing:.2px}
+h1::before{content:"";display:inline-block;width:8px;height:8px;border-radius:99px;
+  background:var(--acc);margin-right:8px;vertical-align:2px;box-shadow:0 0 10px #5aa9ff90}
+.stat{border-left:2px solid #33405a;transition:.15s}
+.stat:hover{border-left-color:var(--acc);transform:translateY(-1px)}
+.stat b{font-variant-numeric:tabular-nums}
+.col{box-shadow:var(--sh-1)}
+.col h2 em{background:#232a34;border-radius:99px;padding:1px 8px;font-size:11px;
+  min-width:22px;text-align:center}
+.card{transition:transform .12s ease,border-color .12s,box-shadow .12s}
+.card:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
+.card:active{transform:none}
+.empty{color:#8b94a1}
+/* 首屏引导：没有卡时不甩一句「点右上角」，给三步 + 一个按钮 */
+.onboard{max-width:780px;margin:18px auto;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:26px 28px;box-shadow:var(--sh-1)}
+.onboard h2{font-size:18px;margin-bottom:6px}
+.onboard .lead{color:var(--mut);font-size:13px;margin-bottom:18px;line-height:1.7}
+.steps{display:grid;gap:14px;margin-bottom:20px}
+.step{display:flex;gap:12px;align-items:flex-start}
+.step .n{flex:0 0 24px;height:24px;border-radius:99px;background:#1d2634;color:#9fc4ff;
+  display:grid;place-items:center;font-size:12px;font-weight:600;margin-top:1px}
+.step b{display:block;font-size:13.5px;margin-bottom:2px}
+.step span{color:var(--mut);font-size:12.5px;line-height:1.65}
+.onboard .act{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.onboard code{background:#11141a;border:1px solid var(--line);border-radius:6px;padding:2px 6px;
+  font-size:12px;font-family:ui-monospace,Consolas,monospace;color:#cfe0ff}
+/* 列头状态色：一眼分清「在跑 / 等你 / 绿了 / 红了」 */
+.col{--accent:#2a303a;border-top:2px solid var(--accent)}
+.col[data-st="doing"]{--accent:#5aa9ff}
+.col[data-st="verify"],.col[data-st="check"]{--accent:#8b7cf6}
+.col[data-st="human"]{--accent:#d9a441}
+.col[data-st="done"]{--accent:#3fb950}
+.col[data-st="blocked"],.col[data-st="rework"]{--accent:#f85149}
+.col h2{color:#aab4c2}
+.col[data-st="human"] h2{color:#f0c98a}
+.col[data-st="done"] h2{color:#8ee6a0}
+.col[data-st="blocked"] h2,.col[data-st="rework"] h2{color:#ff9c9c}
+/* 卡少的时候别让右边空一大片：列可伸缩，但不超过 480px */
+.col{flex:1 1 280px;max-width:480px;min-width:268px}
+.board{align-items:stretch}
+/* 勾选框平时半隐形，hover 才显形，别在卡面上留个突兀的方块 */
+.card .pick{opacity:0;width:16px;height:16px;border-radius:5px}
+.card:hover .pick,.card.sel .pick{opacity:.55}
+.card .pick:hover{opacity:1}
+/* 头部：右侧工具条整体右对齐、不拆行 */
+header .hright{display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap;row-gap:8px}
+@media (max-width:1120px){#projinfo{display:none}}
+/* 窄窗口：右侧工具条改成一条可横滑的行，别让头部堆成四行 */
+@media (max-width:900px){
+  header .hright{width:100%;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
+  header .hright>*{flex:0 0 auto}
+  .stats{gap:8px}
+  .stat{padding:8px 12px;min-width:76px}
+}
 </style>
 </head>
 <body>
@@ -182,19 +246,20 @@ body.term-on .toast{bottom:340px}
   <h1>看板</h1>
   <select id="proj" title="切换项目"></select>
   <span class="sub" id="projinfo"></span>
-  <div class="spacer"></div>
-  <input id="search" class="search" placeholder="搜卡号 / 标题 / 目标" title="输入即过滤（Esc 清空）">
-  <select id="sort" class="search" style="width:118px" title="列内排序">
-    <option value="activity">按最近活动</option>
-    <option value="cost">按花费</option>
-    <option value="minutes">按时长</option>
-    <option value="id">按卡号</option>
-  </select>
-  <button class="btn" id="btn-msg">留言<span class="badge" id="msg-badge"></span></button>
-  <button class="btn" id="btn-term" title="Ctrl+` 开合">终端</button>
-  <button class="btn" id="btn-refresh">刷新</button>
-  <button class="btn" id="btn-run">跑一轮</button>
-  <button class="btn-primary" id="btn-new">+ 新建任务</button>
+  <div class="hright">
+    <input id="search" class="search" placeholder="搜卡号 / 标题 / 目标" title="输入即过滤（Esc 清空）">
+    <select id="sort" class="search" style="width:118px" title="列内排序">
+      <option value="activity">按最近活动</option>
+      <option value="cost">按花费</option>
+      <option value="minutes">按时长</option>
+      <option value="id">按卡号</option>
+    </select>
+    <button class="btn" id="btn-msg">留言<span class="badge" id="msg-badge"></span></button>
+    <button class="btn" id="btn-term" title="Ctrl+` 开合">终端</button>
+    <button class="btn" id="btn-refresh">刷新</button>
+    <button class="btn" id="btn-run">跑一轮</button>
+    <button class="btn-primary" id="btn-new">+ 新建任务</button>
+  </div>
 </header>
 
 <main>
@@ -318,6 +383,9 @@ body.term-on .toast{bottom:340px}
 <script>
 const $ = id => document.getElementById(id);
 const STATE_ORDER = ["待认领","进行中","待返工","阻塞","待验收","核验中","拍板中","完成"];
+// 列头状态色用的短键（中文状态名不进 class，避免 CSS 选择器写中文）
+const ST_KEY = {"待认领":"todo","进行中":"doing","待返工":"rework","阻塞":"blocked",
+                "待验收":"verify","核验中":"check","拍板中":"human","完成":"done","已取消":"cancel"};
 let CUR = {project:null, cards:[], state:null};
 let FILTER = null;            // 顶部状态筛选：null＝全部（只画有卡的列，见 render）
 let SEARCH = "";              // 搜卡关键词（卡号 / 标题 / 目标）
@@ -415,9 +483,10 @@ function statCards(cards){
     ["待拍板", c["拍板中"]||0],
     ["待验收", (c["待验收"]||0)+(c["核验中"]||0)],
     ["完成", c["完成"]||0],
-  ];
+  // 全是 0 的格子只留「全部」：四个 0 排一排，看着像坏了
+  ].filter(([k, v], i) => i === 0 || v > 0);
   $("stats").innerHTML = items.map(([k,v]) =>
-    `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+    `<div class="stat${v?" ":" zero"}"><b>${v}</b><span>${k}</span></div>`).join("");
   // 下拉里的张数用刚拿到的实时数，别用后端 15 秒缓存的那份
   const sel = $("proj");
   const opt = sel.options[sel.selectedIndex];
@@ -484,8 +553,9 @@ function render(cards){
   $("filters").innerHTML =
     [(kw ? `<span class="chip on" style="cursor:default">搜到 ${cards.length} 张</span>` : ""),
      `<button class="chip ${FILTER?"":"on"}" data-f="">全部 <em>${cards.length}</em></button>`]
-      .concat(STATE_ORDER.map(s =>
-        `<button class="chip ${FILTER===s?"on":""}" data-f="${s}">${s} <em>${(by[s]||[]).length}</em></button>`))
+      // 只摆有卡的状态：9 个「0」排一行谁也不想读
+      .concat(STATE_ORDER.filter(s => (by[s]||[]).length)
+        .map(s => `<button class="chip ${FILTER===s?"on":""}" data-f="${s}">${s} <em>${(by[s]||[]).length}</em></button>`))
       .join("");
   $("filters").querySelectorAll(".chip[data-f]").forEach(el => {
     el.onclick = () => { FILTER = el.dataset.f || null; render(CUR.cards || cards); };
@@ -495,7 +565,24 @@ function render(cards){
   //    以前靠横向滚动，「拍板中」默认在屏幕外——要人拖着找，等于藏起来了。
   const cols = FILTER ? [FILTER] : STATE_ORDER.filter(s => (by[s] || []).length);
   if(!cols.length){
-    $("board").innerHTML = '<div class="empty" style="padding:36px;font-size:13px">还没有卡 —— 点右上角「新建任务」</div>';
+    $("board").innerHTML = `<div class="onboard">
+      <h2>三步就能用起来</h2>
+      <p class="lead">不用先配置：建一张卡、点「跑一轮」，剩下的它自己交接。机器闸没过会自己回到待返工，不会假装成功。</p>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><div class="tx"><b>建一张卡</b>
+          <span>一句话说清「做什么」和「什么样算做完」。产出文件路径可以先空着。</span></div></div>
+        <div class="step"><div class="n">2</div><div class="tx"><b>点「跑一轮」</b>
+          <span>它认领、干活、跑机器闸；卡住了会报「阻塞」并写清原因。</span></div></div>
+        <div class="step"><div class="n">3</div><div class="tx"><b>看「拍板中」</b>
+          <span>只有你能推进的那一列。定稿前它会摆出 diff 和凭据。</span></div></div>
+      </div>
+      <div class="act">
+        <button class="btn-primary" id="ob-new">+ 新建第一张卡</button>
+        <span class="sub">命令行也行：<code>board add</code> 建卡 · <code>board run</code> 跑一轮</span>
+      </div>
+    </div>`;
+    const ob = $("ob-new");
+    if(ob) ob.onclick = () => $("btn-new").click();
     return;
   }
   $("board").innerHTML = cols.map(s => {
@@ -507,7 +594,7 @@ function render(cards){
       if(list.length > CAP)
         inner += `<div class="empty">还有 ${list.length - CAP} 张 —— 选具体项目看全部</div>`;
     }
-    return `<div class="col"><h2>${s}<em>${list.length}</em></h2><div class="list">${inner}</div></div>`;
+    return `<div class="col" data-st="${ST_KEY[s]||''}"><h2>${s}<em>${list.length}</em></h2><div class="list">${inner}</div></div>`;
   }).join("");
   document.querySelectorAll(".card").forEach(el =>
     el.addEventListener("click", ()=>openCard(el.dataset.id)));
@@ -675,7 +762,11 @@ async function human(id, decision, note){
 /* ---------- 新建 ---------- */
 const dlgNew = $("dlg-new"), dlgCard = $("dlg-card"), dlgRun = $("dlg-run");
 
-$("btn-new").onclick = () => dlgNew.showModal();
+$("btn-new").onclick = () => {
+  dlgNew.showModal();
+  const t = $("f-title");            // 打开就把光标放到「标题」，少点一次
+  if (t) setTimeout(() => { t.focus(); t.select?.(); }, 30);
+};
 $("btn-refresh").onclick = () => { refresh(); toast("已刷新"); };
 $("btn-run").onclick = () => { dlgRun.showModal(); pollRun(); };
 $("proj").onchange = e => { CUR.project = e.target.value; startPoll(); refresh(); };
