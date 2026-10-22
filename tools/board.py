@@ -817,6 +817,15 @@ def withholding(cid: str, card: dict = None) -> list:
             out.append(f"依赖 {dep} 还没完成（{dst}）")
     b = budget_status(cid, card)
     out.extend(b["reasons"])
+    # 返工额度（2026-10-23，评审席裁定）：额度用尽就**不许再认领**。
+    # 旧行为：额度用完只由编排器写一条 block 事件，但 `claim` 允许认领「阻塞」、
+    # `pick()` 也把阻塞算可接 ⇒ 下一轮照样烧一整轮引擎，再阻塞一次，等于没闸。
+    try:
+        if retry_left(cid, card) <= 0:
+            out.append(f"返工额度已用尽（已返工 {attempts(cid)} 次）；"
+                       f"要再试：board retry --force")
+    except Exception:
+        pass
     return out
 
 

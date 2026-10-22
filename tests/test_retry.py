@@ -107,6 +107,21 @@ try:
     grants = [e for e in events(cid) if e.get("type") == "retry_grant"]
     ok("③ 加额度留痕（retry_grant 事件在盘上）", len(grants) == 1,
        json.dumps(grants[0], ensure_ascii=False)[:80])
+
+    # ⑤ 额度用尽时**不许再认领**（评审席指出的真缺口：旧代码拦不住，会再烧一轮）
+    import board as BB
+    BB.set_root(WORK)
+    for _ in range(3):
+        BB.append_event(cid, {"type": "review", "actor": "review", "seat": "r9",
+                              "verdict": "fail", "note": "x",
+                              "evidence": "pytest => 1 failed", "evidence_ok": True})
+    why = BB.withholding(cid, BB.get_card(cid))
+    ok("⑤ 额度用尽 ⇒ 挡住认领（不再是「阻塞了还能被抢」）",
+       any("额度" in w for w in why), "；".join(why)[:80])
+    BB.append_event(cid, {"type": "retry_grant", "actor": "human", "seat": "retry",
+                          "delta": 3, "note": "再加一轮"})
+    why2 = BB.withholding(cid, BB.get_card(cid))
+    ok("⑤ 对照：加额度后重新可开工", not any("额度" in w for w in why2), "；".join(why2)[:60])
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
     shutil.rmtree(REG, ignore_errors=True)
@@ -115,4 +130,4 @@ print("\n" + "=" * 50)
 if fails:
     print(f"✗ 未通过：{'、'.join(fails)}")
     sys.exit(1)
-print("✓ 重试编排：5 条全过（额度/不静默/留痕/dry-run 对照）")
+print("✓ 重试编排：7 条全过（额度/不静默/留痕/dry-run 对照/额度挡住认领）")
