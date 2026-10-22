@@ -34,12 +34,12 @@ def _board_cmd() -> str:
 
 
 def _orch_cmd() -> str:
-    """同上：orchestrator.py 的提示命令。"""
+    """同上：orchestrator.py 的提示命令（始终绝对路径——别的项目里也复制即用）。"""
+    import shutil
+    if shutil.which("orch"):
+        return "orch"
     p = (Path(__file__).resolve().parent / "orchestrator.py")
-    try:
-        return f"python {p.relative_to(Path.cwd())}"
-    except ValueError:
-        return f'python "{p}"'
+    return f'python "{p}"'
 
 # ---------- 命令 ----------
 
@@ -913,7 +913,11 @@ def cmd_project(a):
 
 
 def cmd_bare(a):
-    """不带子命令时：给一个能直接用的面板，而不是报错。"""
+    """不带子命令时：给一个能直接用的面板，而不是报错。
+
+    2026-10-23 改：从「状态计数表」换成「三行人话 + 一条最该做的命令」——
+    非程序员看不出「待验收 2」是什么意思，但看得懂「2 张等你拍板」。
+    """
     print(f"📋 {B.ROOT.name}")
     print(f"   {B.ROOT}\n")
 
@@ -925,31 +929,72 @@ def cmd_bare(a):
               "--model opencode-go/deepseek-v4.1-flash")
         return
 
+    rows = {"human": [], "doing": [], "blocked": [], "doing_bad": [], "todo": []}
     counts = {}
     total = 0
     for d in B.card_refs():
         if not d.is_dir():
             continue
+        cid = d.name
         try:
-            st = B.replay(d.name)
+            st = B.replay(cid)
+            card = B.get_card(cid) or {}
         except Exception:
             continue
         total += 1
-        counts[st["state"]] = counts.get(st["state"], 0) + 1
+        counts[st.get("state")] = counts.get(st.get("state"), 0) + 1
+        title = (card.get("title") or "").strip()[:22] or "(无标题)"
+        state = st.get("state")
+        if state == "拍板中":
+            rows["human"].append(f"{cid} {title}")
+        elif state == "进行中":
+            who = st.get("holder") or "?"
+            mins = int((B.budget_status(cid, card).get("minutes") or 0))
+            rows["doing"].append(f"{cid} {title}（{who} · {mins} 分钟）")
+        elif state == "阻塞":
+            why = (st.get("blocked_reason") or "").strip()[:26]
+            rows["blocked"].append(f"{cid} {title}（{why or '未写原因'}）")
+        elif state == "待返工":
+            rows["doing_bad"].append(f"{cid} {title}")
+        elif state == "待认领":
+            rows["todo"].append(f"{cid} {title}")
 
     order = ["待认领", "进行中", "待返工", "阻塞", "待验收", "核验中", "拍板中", "完成"]
     bits = [f"{s} {counts[s]}" for s in order if counts.get(s)]
-    print(f"   {total} 张卡：  " + " ｜ ".join(bits))
+    print(f"   {total} 张：  " + " ｜ ".join(bits) + "\n")
 
-    # 最该做的事
-    if counts.get("拍板中"):
-        print(f"\n   ⚠ {counts['拍板中']} 张等你拍板："
-              f"{_board_cmd()} human <卡号> --decision approve")
-    if counts.get("待认领") or counts.get("待返工"):
-        print(f"\n   下一步：{_board_cmd()} open --show 看板  或  "
-              f"{_orch_cmd()} run --max 5 让它自己跑")
-    elif counts.get("完成") == total:
-        print(f"\n   全部完成 🎉   下一步：{_board_cmd()} add 建新卡")
+    def _w(s: str) -> int:
+        """显示宽度：中日韩字符算 2 列（否则标签永远对不齐）。"""
+        return sum(2 if ord(ch) > 127 else 1 for ch in s)
+
+    def line(label, items, limit=2):
+        if not items:
+            return
+        head = "、".join(items[:limit])
+        more = f" 等 {len(items)} 张" if len(items) > limit else ""
+        print("   " + label + " " * max(0, 10 - _w(label)) + f"{head}{more}")
+
+    line("等你拍板", rows["human"])
+    line("正在做  ", rows["doing"])
+    line("卡住了  ", rows["blocked"])
+    line("要返工  ", rows["doing_bad"])
+    line("还没人接", rows["todo"])
+
+    # 只给一条「最该做的」；其余放一行短提示，不铺命令墙
+    if rows["human"]:
+        first = rows["human"][0].split()[0]
+        print(f"\n   → 最该做的：{_board_cmd()} human {first} --decision approve")
+        print(f"     先看样子：{_board_cmd()} show {first}")
+    elif rows["blocked"]:
+        first = rows["blocked"][0].split()[0]
+        print(f"\n   → 先解开卡住的那张：{_board_cmd()} show {first}")
+    elif rows["doing_bad"] or rows["todo"]:
+        print(f"\n   → 让它自己跑：{_orch_cmd()} run --max 5")
+    elif total and not (rows["doing"] or rows["blocked"]):
+        print("\n   → 全部完成 🎉 下一步："
+              f"{_board_cmd()} add --title \"要做什么\" --goal \"什么样算做完\"")
+    print(f"\n   看板：{_board_cmd()} open --show ｜ 留言：{_board_cmd()} inbox"
+          f" ｜ 说明：{_board_cmd()} help")
     print()
 
 
