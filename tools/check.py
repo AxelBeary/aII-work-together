@@ -169,6 +169,11 @@ def main():
     if not ok:
         fails.append("外部门禁")
 
+    # 4l 批量建卡（2026-10-23）：幂等 / dry-run / check_cmd 准入 / 部分失败不静默
+    ok, _ = run("批量建卡", [PY, "tests/test_batch.py"])
+    if not ok:
+        fails.append("批量建卡")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

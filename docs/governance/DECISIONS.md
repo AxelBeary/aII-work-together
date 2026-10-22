@@ -513,3 +513,16 @@
 - 安全：**agent 建的卡带 check_cmd 一律拒跑**（否则建一张卡就能执行任意命令）；超时 600s；起不来判不过。
 - 实测：`verify.py` 对 `D:\青芽季遇\...\ru_RU\...\A第一章.rpy` 报 44 槽（已译 1 / 空译 43）、RESULT: FAIL、**退出码 1** ⇒ 可直接当闸门。
 - 未做：`verify_gate.py`（会删 .rpyc 与 game/cache 并试启动引擎）**不接自动流程**，仍由人单独跑。
+
+## D-028 · 批量建卡 + Ren'Py tl 计划（AI 友好，2026-10-23）
+
+- 结论：`board add-batch`（JSON 批建）＋ `board tl-plan`（扫 tl 目录出计划），两条命令接成流水线。
+- 对 AI 的硬承诺（都有反向测试，第 19 道闸）：
+  ① `--dry-run` 不写盘且给出计划；② 同 `key` 重跑**跳过不重复建**（幂等）；
+  ③ `check_cmd` 过准入：只允许「python 跑一个已存在的脚本」，且脚本须在工作区或技能目录内；
+  ④ 坏项报错、好项照建、退出码 1（部分失败不静默）；⑤ `--json` 形状固定 `{ok, created, skipped, errors}`。
+- 准入放宽的理由：原来 L4 只认人建的卡，AI 建的卡带闸门等于废纸。现在改成**按命令形态收口**
+  （禁 shell 元字符、禁非 python、脚本必须真实存在）——安全性来自「能力受限」，不是「不给你用」。
+- 实测：`tl-plan --path D:\青芽季遇\...\QingYaJiYu --lang ru_RU` → 4 张卡（common/第一章/options/screens），
+  每张带 `verify.py` 闸门；`add-batch --dry-run --json` 全过，真建 4 张，重跑全跳过。
+- 未做：跨项目批量（一条命令扫多个项目）；失败卡的重试编排。

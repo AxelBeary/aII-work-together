@@ -60,6 +60,124 @@ def _created_kind(a) -> str:
     return "agent"
 
 
+def cmd_add_batch(a):
+    """按 JSON 批量建卡（给 AI 用：无交互、幂等、可 dry-run、可 --json）。
+
+    输入形态：`[ {...}, {...} ]` 或 `{"cards": [...]}`，从 --file 或 stdin 读。
+    每项：title（必填）、goal、deliverable（字符串或数组）、engine、model、
+          human_gate、check_cmd、key（幂等键；同 key 已存在就跳过）。
+    """
+    import projects as P
+    raw = (Path(a.file).read_text(encoding="utf-8") if getattr(a, "file", None)
+           else sys.stdin.read())
+    try:
+        data = json.loads(raw or "[]")
+    except Exception as e:
+        B.die(f"输入不是合法 JSON：{e}")
+    items = data.get("cards") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        B.die('JSON 必须是数组，或 {"cards": [...]}')
+    defaults = P.project_defaults(B.ROOT) or {}
+
+    existing = {}
+    for c in B.all_cards():
+        k = str(c.get("batch_key") or "").strip()
+        if k:
+            existing[k] = c["id"]
+
+    created, skipped, errors = [], [], []
+    for i, it in enumerate(items):
+        try:
+            if not isinstance(it, dict):
+                raise ValueError("每一项必须是对象")
+            title = str(it.get("title") or "").strip()
+            if not title:
+                raise ValueError("缺 title")
+            key = str(it.get("key") or "").strip()
+            if key and key in existing:
+                skipped.append({"key": key, "id": existing[key], "reason": "已存在"})
+                continue
+            cid = str(it.get("id") or f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}")
+            dl = it.get("deliverable") or it.get("deliverables") or []
+            if isinstance(dl, str):
+                dl = [dl]
+            cmd = str(it.get("check_cmd") or "").strip()
+            if cmd:
+                good, why = B.validate_check_cmd(cmd)
+                if not good:
+                    raise ValueError(f"check_cmd 未过准入：{why}")
+            card = {
+                "id": cid, "title": title[:120], "goal": str(it.get("goal") or title),
+                "territory": it.get("territory") or [], "deliverables": dl,
+                "accept_patterns": it.get("accept") or [],
+                "human_gate": it.get("human_gate") or "none",
+                "engine": it.get("engine") or defaults.get("engine", "any"),
+                "model": it.get("model") or defaults.get("model", "any"),
+                "effort": it.get("effort") or defaults.get("effort", "any"),
+                "created_at": B.ts(), "created_by": "batch", "created_kind": "agent",
+                "irreversible": bool(it.get("irreversible")),
+                "check_cmd": cmd, "batch_key": key,
+            }
+            if a.dry_run:
+                created.append({"id": cid, "key": key, "title": title, "dry_run": True})
+                continue
+            B.create_card(card)
+            if key:
+                existing[key] = cid
+            created.append({"id": cid, "key": key, "title": title})
+        except Exception as e:
+            errors.append({"index": i, "error": f"{type(e).__name__}: {e}"})
+
+    if a.json:
+        print(json.dumps({"ok": not errors, "created": created, "skipped": skipped,
+                          "errors": errors}, ensure_ascii=False))
+    else:
+        for c in created:
+            print(f"  + {c['id']}  {c['title']}" + ("  [dry-run]" if c.get("dry_run") else ""))
+        for s in skipped:
+            print(f"  = {s['id']}  跳过（{s['reason']}）：{s['key']}")
+        for e in errors:
+            print(f"  ✗ 第 {e['index']} 项：{e['error']}")
+        print(f"\n  新建 {len(created)} ｜ 跳过 {len(skipped)} ｜ 出错 {len(errors)}"
+              + ("（dry-run，未写盘）" if a.dry_run else ""))
+    if errors:
+        sys.exit(1)
+
+
+def cmd_tl_plan(a):
+    """扫一个 Ren'Py 项目的 tl 文件，生成可直接喂给 `add-batch` 的 JSON。"""
+    root = Path(a.path).expanduser()
+    if not (root / "game").is_dir():
+        B.die(f"不是 Ren'Py 项目（缺 game/）：{root}")
+    tl = root / "game" / "tl" / a.lang
+    if not tl.is_dir():
+        B.die(f"没有这个语言目录：{tl}")
+    verify = Path(a.verify).expanduser() if a.verify else (
+        Path.home() / ".agents" / "skills" / "renpy-vn-translation" / "scripts" / "verify.py")
+    if not verify.exists():
+        B.die(f"找不到闸门脚本：{verify}（用 --verify 指定）")
+    files = sorted(tl.rglob("*.rpy"))
+    if a.glob:
+        files = [f for f in files if f.match(a.glob)]
+    cards = []
+    for f in files[: a.limit or None]:
+        rel = f.relative_to(root).as_posix()
+        cards.append({
+            "key": f"tl:{a.lang}:{rel}",
+            "title": f"[{a.lang}] {f.stem}",
+            "goal": f"把 {rel} 译完；占位符/标签不丢，术语一致",
+            "deliverable": [rel],
+            "check_cmd": f'python "{verify}" "{f}"',
+            "human_gate": "before_done",
+        })
+    out = json.dumps({"cards": cards}, ensure_ascii=False, indent=2)
+    if a.out:
+        Path(a.out).write_text(out, encoding="utf-8")
+        print(f"✓ 已写 {a.out}（{len(cards)} 张卡的计划）")
+    else:
+        print(out)
+
+
 def cmd_do(a):
     """一句话建卡并立刻跑一轮：把「add → run」合成一步。
 
@@ -1792,6 +1910,21 @@ def main():
                    help="提交时必跑的外部闸门命令（非零即不过）；只对人建的卡生效")
     s.add_argument("--no-run", action="store_true", help="只建卡，不立刻跑")
     s.set_defaults(f=cmd_do)
+
+    s = sub.add_parser("add-batch", help="按 JSON 批量建卡（给 AI 用：幂等/可 dry-run/可 --json）")
+    s.add_argument("--file", help="JSON 文件；不填就读 stdin")
+    s.add_argument("--dry-run", action="store_true", help="只校验并打印计划，不写盘")
+    s.add_argument("--json", action="store_true", help="机器可读输出")
+    s.set_defaults(f=cmd_add_batch)
+
+    s = sub.add_parser("tl-plan", help="扫 Ren'Py 项目的 tl 文件，产出可喂给 add-batch 的 JSON")
+    s.add_argument("--path", required=True, help="Ren'Py 项目根（含 game/）")
+    s.add_argument("--lang", required=True, help="语言目录名，如 ru_RU / en_US")
+    s.add_argument("--verify", help="闸门脚本路径（默认技能里的 verify.py）")
+    s.add_argument("--glob", help="只选匹配的文件，如 'scripts/chun/*.rpy'")
+    s.add_argument("--limit", type=int, default=0, help="最多生成几张")
+    s.add_argument("--out", help="写到文件（默认打印到 stdout）")
+    s.set_defaults(f=cmd_tl_plan)
 
     s = sub.add_parser("add", help="建卡（人建，等价于 new）")
     s.add_argument("--title", required=True)

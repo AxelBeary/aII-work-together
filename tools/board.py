@@ -650,21 +650,69 @@ def gate_l3(cid: str, card: dict) -> tuple:
 DONE_STATES = ("完成", "已取消")
 
 
+def validate_check_cmd(cmd: str) -> tuple:
+    """外部闸门命令的准入：只允许「用 python 跑一个已存在的脚本」，不允许任意 shell。
+
+    为什么收这么紧：`check_cmd` 会在提交时自动执行。放开 shell 就等于「谁能在卡上写一行，
+    谁就能在别人提交时执行任意命令」。限制成 python 脚本后，能力边界就清楚了：
+    闸门脚本必须是磁盘上真有、且在可信根（工作区 / 技能目录）里的文件。
+
+    返回 (ok, 原因)。
+    """
+    import shlex
+    s = (cmd or "").strip()
+    if not s:
+        return False, "空命令"
+    if re.search(r"[;&|><`$]", s):
+        return False, "命令里出现 shell 元字符（; & | > < ` $）"
+    try:
+        parts = [p.strip('"').strip("'") for p in shlex.split(s, posix=False)]
+    except ValueError as e:
+        return False, f"命令解析失败：{e}"
+    if not parts:
+        return False, "空命令"
+    exe = parts[0].lower()
+    if not (exe.endswith("python") or exe.endswith("python.exe") or exe.endswith("py")
+            or exe.endswith("py.exe")):
+        return False, "只允许用 python/py 跑脚本"
+    script = next((p for p in parts[1:] if p.lower().endswith(".py")), None)
+    if not script:
+        return False, "没找到 .py 脚本"
+    sp = Path(script)
+    if not sp.is_absolute():
+        sp = (WORKSPACE or ROOT) / sp
+    if not sp.exists():
+        return False, f"脚本不存在：{sp}"
+    try:
+        sp.resolve().relative_to((WORKSPACE or ROOT).resolve())
+    except ValueError:
+        # 工作区之外：只允许技能目录下的脚本
+        try:
+            sp.resolve().relative_to((Path.home() / ".agents" / "skills").resolve())
+        except ValueError:
+            return False, f"脚本不在工作区或技能目录内：{sp}"
+    return True, ""
+
+
 def gate_l4(cid: str, card: dict) -> tuple:
     """L4 外部门禁：卡上声明的 `check_cmd`（2026-10-23）。
 
     为什么要有：翻译、单测、lint 这些「专业闸门」不归看板管，但必须**在提交时跑**，
     否则复核席拿到的是没验过的件。卡带一条命令，提交时执行，非零即不过。
 
-    ⛔ 只跑**人建的卡**（created_kind == "human"）：否则 agent 建一张卡就能借它执行任意命令。
+    准入（见 `validate_check_cmd`）：只允许「python 跑一个已存在的脚本」。
+    人建的卡可以例外跑任意命令（人自己为后果负责）；agent 建的卡必须过准入。
     返回 (ok, problems, 输出尾部)。
     """
     import subprocess
     cmd = str(card.get("check_cmd") or "").strip()
     if not cmd:
         return True, [], ""
-    if card.get("created_kind") != "human":
-        return False, ["check_cmd 只对人建的卡生效（防 agent 借卡执行任意命令）"], ""
+    human = card.get("created_kind") == "human"
+    if not human:
+        good, why = validate_check_cmd(cmd)
+        if not good:
+            return False, [f"check_cmd 未过准入：{why}"], ""
     cwd = str(WORKSPACE if WORKSPACE else ROOT)
     try:
         p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,

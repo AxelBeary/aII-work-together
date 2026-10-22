@@ -41,6 +41,21 @@ board do "把第一章译成俄文" \
 只读、不改文件。它过了才进复核席（母语子代理），复核过了才进「拍板中」。
 引擎级重编译（会删缓存并试启动）不放进自动流程，留给人工单独跑 `verify_gate.py`。
 
+### 按章节批量建卡（给 AI 用）
+
+```powershell
+# 1) 扫 tl 目录 → 建卡计划（JSON，不动盘）
+board tl-plan --path "D:\你的游戏" --lang ru_RU > plan.json
+
+# 2) 先 dry-run 看计划，再真建
+board add-batch --file plan.json --dry-run --json
+board add-batch --file plan.json --json
+```
+
+`add-batch` 对 AI 的硬承诺：**同 `key` 重跑不重复建**（幂等）；`check_cmd` 只允许
+「python 跑一个已存在的脚本」（`rm -rf /` 这类直接拒）；坏项报错但好项照建；
+`--json` 固定输出 `{ok, created, skipped, errors}`；出错退出码 1。
+
 ## 三分钟上手（命令行）
 ```bash
 # 1. 在任意项目目录，设一次默认值（只做一次）

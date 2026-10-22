@@ -88,11 +88,18 @@ try:
     rc, out = submit(cid, "w3")
     ok("对照：没声明 check_cmd 照常放行", rc == 0 and "待验收" in out, out.strip()[-40:])
 
-    # ④ agent 建的卡不许带 check_cmd（防借卡执行命令）
+    # ④ agent 建的卡：任意 shell 命令拒跑（只允许 python 跑已存在的脚本）
     cid = make_card("L4 agent 卡", "echo SHOULD-NOT-RUN", as_agent=True)
     rc, out = submit(cid, "w4")
-    ok("agent 建卡带 check_cmd ⇒ 拒绝执行", "只对人建的卡生效" in out, out.strip()[-80:])
+    ok("agent 建卡带任意 shell 命令 ⇒ 拒绝", "未过准入" in out, out.strip()[-80:])
     ok("对照：确实没执行那条命令", "SHOULD-NOT-RUN" not in out, out.strip()[-60:])
+
+    # ⑤ 对照：agent 建卡 + 合规的 python 脚本闸门 ⇒ 放行（这是批量建卡的正常形态）
+    gate = WORK / "gate_ok.py"
+    gate.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+    cid = make_card("L4 agent 合规闸门", f'python "{gate}"', as_agent=True)
+    rc, out = submit(cid, "w5")
+    ok("对照：agent 卡用合规脚本闸门照常放行", "待验收" in out, out.strip()[-50:])
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
     shutil.rmtree(REG, ignore_errors=True)
