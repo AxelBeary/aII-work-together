@@ -60,6 +60,53 @@ def _created_kind(a) -> str:
     return "agent"
 
 
+def cmd_do(a):
+    """一句话建卡并立刻跑一轮：把「add → run」合成一步。
+
+    2026-10-23 加：新手最常卡在「建完卡不知道下一步跑什么」。
+    这条命令只说一句话，建卡、跑、报结果一条龙；`--no-run` 只建不跑。
+    """
+    import subprocess
+    text = (getattr(a, "text", "") or "").strip()
+    if not text:
+        B.die('要做什么？例如：board do "给 README 加一段常见问题"')
+    cid = f"C{datetime.now().strftime('%m%d')}-{uuid.uuid4().hex[:4]}"
+    ns = argparse.Namespace(
+        id=cid, title=text[:60], goal=(a.goal or text),
+        territory=None, deliverable=getattr(a, "deliverable", None), accept=None,
+        human_gate=getattr(a, "human_gate", "none"),
+        engine=getattr(a, "engine", "any"), model=getattr(a, "model", None),
+        effort="any", irreversible=False, seat=None,
+        max_cost=None, max_minutes=None, who=None,
+    )
+    cmd_new(ns)
+    if getattr(a, "no_run", False):
+        print(f"\n  下一步：{_orch_cmd()} run --cards {cid}")
+        return
+    print(f"\n  跑一轮（{cid}）…")
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "orchestrator.py"),
+           "-C", str(B.ROOT),
+           "run", "--cards", cid, "--seat", getattr(a, "seat", "auto-worker")]
+    if getattr(a, "engine", "any") not in (None, "", "any"):
+        cmd += ["--engine", a.engine]
+    if getattr(a, "model", None):
+        cmd += ["--model", a.model]
+    rc = subprocess.call(cmd, cwd=str(Path.cwd()))
+    st = B.replay(cid)
+    state = st.get("state")
+    print(f"\n  结果：{cid} → {state}")
+    if state == "拍板中":
+        print(f"  下一步：{_board_cmd()} human {cid} --decision approve")
+    elif state in ("待验收", "核验中"):
+        print(f"  下一步：{_board_cmd()} verify {cid} --seat <复核席>")
+    elif state == "待返工":
+        print(f"  打回了 —— 看原因：{_board_cmd()} show {cid}")
+    elif state == "阻塞":
+        print(f"  卡住了 —— 看原因：{_board_cmd()} show {cid}")
+    elif rc != 0:
+        print(f"  ⚠ 编排器退出码 {rc}，看上面输出或 {_board_cmd()} show {cid}")
+
+
 def cmd_new(a):
     # 继承项目默认值：没指定就自动填，省掉手打模型名
     import projects as P
@@ -1725,6 +1772,19 @@ def main():
     s = sub.add_parser("open", help="生成并打开看板页（最常用）")
     s.add_argument("--show", action="store_true", help="生成后自动用浏览器打开")
     s.set_defaults(f=cmd_open)
+
+    s = sub.add_parser("do", help="一句话建卡并立刻跑（add + run 合成一步）")
+    s.add_argument("text", help='要做的事，例如 "把第 3 章译成英文"')
+    s.add_argument("--goal", help="什么样算做完（默认就用上面那句话）")
+    s.add_argument("--deliverable", nargs="*", help="交付物路径")
+    s.add_argument("--human-gate", default="none",
+                   choices=["none", "before_done", "both"], help="人闸档位")
+    s.add_argument("--engine", default="any",
+                   help="指定 agent 框架：codex/opencode/qoderclicn/hermes/any")
+    s.add_argument("--model", default=None)
+    s.add_argument("--seat", default="auto-worker")
+    s.add_argument("--no-run", action="store_true", help="只建卡，不立刻跑")
+    s.set_defaults(f=cmd_do)
 
     s = sub.add_parser("add", help="建卡（人建，等价于 new）")
     s.add_argument("--title", required=True)

@@ -18,6 +18,15 @@ shell\boardshell.exe --selftest    :: 无界面自检：真起内核、真加载
 
 托盘仍在：`tray\tray.cmd` → 右下角「板」图标 → 双击打开看板。
 
+## 最快：一句话
+
+```bash
+python <本项目>/tools/board.py do "给 README 加一段常见问题" --deliverable out/faq.md
+```
+
+建卡、跑一轮、报结果，一条命令做完（`--no-run` 只建不跑）。
+跑完它会说「完成 / 待验收 / 打回了 / 卡住了」，并给出下一步该敲什么。
+
 ## 三分钟上手（命令行）
 ```bash
 # 1. 在任意项目目录，设一次默认值（只做一次）
