@@ -37,6 +37,7 @@ import hard as HX                          # noqa: E402
 import hard2 as HX2                        # noqa: E402
 import hard3 as HX3                        # noqa: E402
 import tasks as T                          # noqa: E402
+import variants as VA                      # noqa: E402
 
 ALL_TASKS = T.TASKS + HX.TASKS + HX2.TASKS + HX3.TASKS
 BY_ID = {t["id"]: t for t in ALL_TASKS}
@@ -107,8 +108,25 @@ def validate() -> int:
             print(f"      手写：{got[:160]!r}")
             bad += 1
 
-    print(f"\n检查器自检：{len(ALL_TASKS) - bad} of {len(ALL_TASKS)} 通过")
-    return 0 if bad == 0 else 1
+    # 单条件变异体（规矩 24/28）：每个变异体只破一条条件，检查器必须各自挂掉
+    var_bad = 0
+    for tid, vs in getattr(VA, "VARIANTS", {}).items():
+        t = BY_ID.get(tid)
+        if not t:
+            continue
+        for name, overlay in vs:
+            d = build_workdir(t, overlay)
+            okv, whyv = check(t, d)
+            shutil.rmtree(d, ignore_errors=True)
+            good = not okv
+            print(f"  [{'PASS' if good else 'FAIL'}] {tid:<4} 单条件变异：{name} → 检查器必须判错")
+            if not good:
+                print(f"      检查器放行了这条缺陷：{whyv}")
+                var_bad += 1
+
+    print(f"\n检查器自检：{len(ALL_TASKS) - bad} of {len(ALL_TASKS)} 通过；"
+          f"单条件变异体 {var_bad} 条未被抓住（应为 0）")
+    return 0 if (bad == 0 and var_bad == 0) else 1
 
 
 def parse_conf(text: str):
