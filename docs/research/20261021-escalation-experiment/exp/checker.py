@@ -15,9 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hard as H      # noqa: E402
 import hard2 as H2    # noqa: E402
 import hard3 as H3    # noqa: E402
+import hard4 as H4    # noqa: E402
 import tasks as T     # noqa: E402
 
-BY = {t["id"]: t for t in (T.TASKS + H.TASKS + H2.TASKS + H3.TASKS)}
+BY = {t["id"]: t for t in (T.TASKS + H.TASKS + H2.TASKS + H3.TASKS + H4.TASKS)}
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

@@ -20,6 +20,7 @@ import json
 
 import hard2 as H2
 import hard3 as H3
+import hard4 as H4
 
 # ---------- C01：只破「相邻区间合并」（a <= end vs a < end） ----------
 
@@ -127,9 +128,56 @@ def _l02_v1() -> dict:
     return {"notes.md": "\n".join(out) + "\n"}
 
 
+# ---------- B 批变异体 ----------
+
+
+def _b01_literal() -> dict:
+    """正解 + 把所有调用点改成写死 4（env 换成别的值时不跟着变）。"""
+    files = H4._b01_ok()
+    for i in range(1, H4.B01_HANDLERS + 1):
+        parts = ["from svc.core import fetch", "from svc.config import cfg"]
+        for j in range(1, H4.B01_CALLS_PER + 1):
+            parts.append(f"def h{i:02d}_{j:02d}():\n"
+                         f'    return fetch("https://example.com/{i}/{j}", retries=4)\n')
+        files[f"svc/handlers/h{i:02d}.py"] = "\n\n".join(parts) + "\n"
+    return files
+
+
+def _b02_constant() -> dict:
+    """环没了，但行为被改成一律返回 8。"""
+    files = H4._b02_ok()
+    files["pkg/chain.py"] = "N = 8\n\n\ndef f(i, x):\n    return 8\n"
+    return files
+
+
+def _b03_appendix() -> dict:
+    """正解 + 把附录里的 TODO 也改了。"""
+    text = H4._b03_ok()["spec.md"]
+    out, in_app = [], False
+    for ln in text.splitlines():
+        if ln.strip() == "## 附录":
+            in_app = True
+            out.append(ln)
+            continue
+        out.append(ln.replace("TODO:", "DONE:", 1) if in_app and ln.startswith("TODO:") else ln)
+    return {"spec.md": "\n".join(out) + "\n"}
+
+
+def _b03_code() -> dict:
+    """正解 + 把代码块里的 TODO 也改了。"""
+    text = H4._b03_ok()["spec.md"]
+    out, in_code = [], False
+    for ln in text.splitlines():
+        if ln.startswith("```"):
+            in_code = not in_code
+            out.append(ln)
+            continue
+        out.append(ln.replace("TODO", "DONE") if in_code else ln)
+    return {"spec.md": "\n".join(out) + "\n"}
+
+
 VARIANTS = {
-    "C01": [("相邻区间不合并", C01_V1)],
-    "C04": [("不认 \"\" 转义", C04_V1)],
+    "C01": [("相邻区间不合并", C01_V1)],    "C04": [("不认 \"\" 转义", C04_V1)],
     "N02": [("改用银行家舍入", N02_V1)],
     "N04": [("不丢 void 记录", _n04_v1())],
     "L01": [("旧类型 t39 被顺手改费率", _l01_v1())],
@@ -202,4 +250,9 @@ VARIANTS = {
             "def approx(a, b):\n"
             "    return a == b\n")}),
     ],
+    # ---- B 批（2026-10-22）：每题各破一条独立条件 ----
+    "B01": [("调用点写死常数 4（不读 cfg）", _b01_literal())],
+    "B02": [("无环了但行为被改（恒返回 8）", _b02_constant())],
+    "B03": [("附录里的 TODO 也改了", _b03_appendix()),
+            ("代码块里的 TODO 也改了", _b03_code())],
 }

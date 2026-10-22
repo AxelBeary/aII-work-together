@@ -36,10 +36,11 @@ import engines as E                        # noqa: E402
 import hard as HX                          # noqa: E402
 import hard2 as HX2                        # noqa: E402
 import hard3 as HX3                        # noqa: E402
+import hard4 as HX4                        # noqa: E402
 import tasks as T                          # noqa: E402
 import variants as VA                      # noqa: E402
 
-ALL_TASKS = T.TASKS + HX.TASKS + HX2.TASKS + HX3.TASKS
+ALL_TASKS = T.TASKS + HX.TASKS + HX2.TASKS + HX3.TASKS + HX4.TASKS
 BY_ID = {t["id"]: t for t in ALL_TASKS}
 
 WEAK = "opencode-go/minimax-m3.1-flash-free"
