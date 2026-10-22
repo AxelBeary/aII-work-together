@@ -134,4 +134,72 @@ VARIANTS = {
     "N04": [("不丢 void 记录", _n04_v1())],
     "L01": [("旧类型 t39 被顺手改费率", _l01_v1())],
     "L02": [("代码块里的行也被改", _l02_v1())],
+    # ---- 第二批（2026-10-22）：把「格式/边界」类判据也各破一条 ----
+    "N01": [("只把 top 写错", {"report.md": "rows=4\nunits=7\nrevenue=52.99\ntop=B\n"})],
+    "C02": [("连续分隔符不合并", {"slug.py": (
+        "import re\n\n\n"
+        "def slugify(text):\n"
+        "    s = re.sub(r'[^a-z0-9]', '-', str(text).lower())\n"
+        "    return s.strip('-')\n")})],
+    "C05": [("零单位不省略（60s 写成 1m 0s）", {"fmt.py": (
+        "def fmt_duration(seconds):\n"
+        "    n = int(seconds)\n"
+        "    if n < 0:\n"
+        "        raise ValueError(seconds)\n"
+        "    h, rem = divmod(n, 3600)\n"
+        "    m, s = divmod(rem, 60)\n"
+        "    parts = []\n"
+        "    if h:\n"
+        "        parts.append(f'{h}h')\n"
+        "    if m:\n"
+        "        parts.append(f'{m}m')\n"
+        "    if h or m or True:\n"
+        "        parts.append(f'{s}s')\n"
+        "    return ' '.join(parts) if parts else '0s'\n")})],
+    "N05": [("'-' 不转成 None（原样返回字符串）", {"parse_log.py": (
+        "import re\n\n"
+        "PAT = re.compile(r'^(\\S+) \\S+ \\S+ \\[[^\\]]*\\] \"(\\S+) (\\S+) [^\"]*\" (\\d{3}) (\\S+)')\n\n\n"
+        "def parse_line(line):\n"
+        "    m = PAT.match(str(line).strip())\n"
+        "    if not m:\n"
+        "        raise ValueError(line)\n"
+        "    ip, method, path, status, nbytes = m.groups()\n"
+        "    return {'ip': ip, 'method': method, 'path': path, 'status': int(status),\n"
+        "            'bytes': nbytes if nbytes == '-' else int(nbytes)}\n")})],
+    "H06": [("改名字段没做（仍叫 code）", {"merged.json": (
+        '[{"id": 3, "ts": 150, "code": "a", "price": 9},\n'
+        ' {"id": 1, "ts": 300, "code": "b2", "price": 7}]\n')})],
+    # H05 是三处独立 bug：按规矩 24，每一处各登记一个变异点（「ok 减去这一条」，
+    # ⛔ 不是「seed 加上这一条」——后者会被前面的断言先拦下，后面的条件其实没被验证过）
+    "H05": [
+        ("只有可变默认参数没修", {"stats.py": (
+            "def add(items, x, acc=[]):\n"
+            "    acc.append(x)\n"
+            "    return acc\n\n\n"
+            "def mean(xs):\n"
+            "    xs = list(xs)\n"
+            "    return (sum(xs) / len(xs)) if xs else None\n\n\n"
+            "def approx(a, b):\n"
+            "    return abs(a - b) <= 1e-9\n")}),
+        ("只有 mean 空列表没修（返回 0）", {"stats.py": (
+            "def add(items, x, acc=None):\n"
+            "    acc = [] if acc is None else acc\n"
+            "    acc.append(x)\n"
+            "    return acc\n\n\n"
+            "def mean(xs):\n"
+            "    xs = list(xs)\n"
+            "    return (sum(xs) / len(xs)) if xs else 0\n\n\n"
+            "def approx(a, b):\n"
+            "    return abs(a - b) <= 1e-9\n")}),
+        ("只有浮点比较没修", {"stats.py": (
+            "def add(items, x, acc=None):\n"
+            "    acc = [] if acc is None else acc\n"
+            "    acc.append(x)\n"
+            "    return acc\n\n\n"
+            "def mean(xs):\n"
+            "    xs = list(xs)\n"
+            "    return (sum(xs) / len(xs)) if xs else None\n\n\n"
+            "def approx(a, b):\n"
+            "    return a == b\n")}),
+    ],
 }

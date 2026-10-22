@@ -222,18 +222,23 @@ def _check_bugs(d: Path):
         spec.loader.exec_module(m)
     except Exception as e:
         return False, f"导入失败：{type(e).__name__}: {e}"
-    r1 = m.add([], 1)
-    r2 = m.add([], 2)
-    if r1 != [1] or r2 != [2]:
-        return False, f"可变默认参数没修：add([],1)={r1} add([],2)={r2}"
-    if m.mean([]) is not None:
-        return False, "mean([]) 应返回 None"
-    if abs(m.mean([1, 2, 3]) - 2.0) > 1e-9:
-        return False, "mean([1,2,3]) 应为 2.0"
-    if not m.approx(0.1 + 0.2, 0.3):
-        return False, "approx(0.1+0.2, 0.3) 应为 True"
-    if m.approx(1.0, 1.1):
-        return False, "approx(1.0, 1.1) 应为 False"
+    try:
+        r1 = m.add([], 1)
+        r2 = m.add([], 2)
+        if r1 != [1] or r2 != [2]:
+            return False, f"可变默认参数没修：add([],1)={r1} add([],2)={r2}"
+        empty = m.mean([])
+        if empty is not None:
+            return False, f"mean([]) 应返回 None，实际 {empty!r}"
+        if abs(m.mean([1, 2, 3]) - 2.0) > 1e-9:
+            return False, "mean([1,2,3]) 应为 2.0"
+        if not m.approx(0.1 + 0.2, 0.3):
+            return False, "approx(0.1+0.2, 0.3) 应为 True"
+        if m.approx(1.0, 1.1):
+            return False, "approx(1.0, 1.1) 应为 False"
+    except Exception as e:
+        # 崩溃也算失败，但要说清是哪一类（否则和「答案错」混在一起）
+        return False, f"调用抛 {type(e).__name__}: {e}"
     return True, "三处 bug 全修，边界用例通过"
 
 
