@@ -78,6 +78,7 @@ def cmd_do(a):
         engine=getattr(a, "engine", "any"), model=getattr(a, "model", None),
         effort="any", irreversible=False, seat=None,
         max_cost=None, max_minutes=None, who=None,
+        check_cmd=getattr(a, "check_cmd", None),
     )
     cmd_new(ns)
     if getattr(a, "no_run", False):
@@ -138,6 +139,7 @@ def cmd_new(a):
         "created_by": a.seat or "human",
         "created_kind": _created_kind(a),
         "irreversible": bool(a.irreversible),
+        "check_cmd": (getattr(a, "check_cmd", None) or "").strip(),
         "source_card": getattr(a, "from_card", None),
         # —— 预算与依赖（D-016 / B 批）——
         "max_cost_usd": None if mc == "none" else mc,
@@ -499,13 +501,16 @@ def cmd_submit(a):
     ok1, p1, r1 = B.gate_l1(a.id, card)
     ok2, p2 = B.gate_l2(a.id, card)
     ok3, p3, c3 = B.gate_l3(a.id, card)
-    problems = p1 + p2 + p3
-    verdict = "pass" if (ok1 and ok2 and ok3) else "fail"
+    ok4, p4, out4 = B.gate_l4(a.id, card)
+    problems = p1 + p2 + p3 + p4
+    verdict = "pass" if (ok1 and ok2 and ok3 and ok4) else "fail"
     B.append_event(a.id, {
         "type": "submit", "actor": "agent", "seat": a.seat, "note": a.note or "",
         "pid": os.getpid(),
         "epoch": _lease_epoch(B.active_lease(a.id)),
-        "gate": {"L1": ok1, "L2": ok2, "L3": ok3, "problems": problems, "files": r1},
+        "gate": {"L1": ok1, "L2": ok2, "L3": ok3, "L4": ok4,
+                 "problems": problems, "files": r1,
+                 "check_tail": (out4 or "")[-800:]},
         "exit_code_note": "退出码不参与判定（权重 0）",
     })
     if verdict == "pass":
@@ -1783,6 +1788,8 @@ def main():
                    help="指定 agent 框架：codex/opencode/qoderclicn/hermes/any")
     s.add_argument("--model", default=None)
     s.add_argument("--seat", default="auto-worker")
+    s.add_argument("--check-cmd",
+                   help="提交时必跑的外部闸门命令（非零即不过）；只对人建的卡生效")
     s.add_argument("--no-run", action="store_true", help="只建卡，不立刻跑")
     s.set_defaults(f=cmd_do)
 
@@ -1800,6 +1807,8 @@ def main():
     s.add_argument("--model", default="any", help="指定模型（如 deepseek-v4.1-flash）")
     s.add_argument("--effort", default="any",
                    help="思考强度：low/medium/high/max/any")
+    s.add_argument("--check-cmd",
+                   help="提交时必跑的外部闸门命令（非零即不过）；只对人建的卡生效")
     s.add_argument("--max-cost", dest="max_cost", type=str, default=None,
                    help="单卡花费上限（美元，如 2.0）；超了编排器停下转阻塞")
     s.add_argument("--max-minutes", dest="max_minutes", type=str, default=None,

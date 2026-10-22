@@ -650,6 +650,36 @@ def gate_l3(cid: str, card: dict) -> tuple:
 DONE_STATES = ("完成", "已取消")
 
 
+def gate_l4(cid: str, card: dict) -> tuple:
+    """L4 外部门禁：卡上声明的 `check_cmd`（2026-10-23）。
+
+    为什么要有：翻译、单测、lint 这些「专业闸门」不归看板管，但必须**在提交时跑**，
+    否则复核席拿到的是没验过的件。卡带一条命令，提交时执行，非零即不过。
+
+    ⛔ 只跑**人建的卡**（created_kind == "human"）：否则 agent 建一张卡就能借它执行任意命令。
+    返回 (ok, problems, 输出尾部)。
+    """
+    import subprocess
+    cmd = str(card.get("check_cmd") or "").strip()
+    if not cmd:
+        return True, [], ""
+    if card.get("created_kind") != "human":
+        return False, ["check_cmd 只对人建的卡生效（防 agent 借卡执行任意命令）"], ""
+    cwd = str(WORKSPACE if WORKSPACE else ROOT)
+    try:
+        p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=600)
+    except subprocess.TimeoutExpired:
+        return False, [f"check_cmd 超时 600s：{cmd}"], ""
+    except Exception as e:
+        return False, [f"check_cmd 起不来：{type(e).__name__}: {e}"], ""
+    out = ((p.stdout or "") + (p.stderr or "")).strip()
+    tail = out[-1500:]
+    if p.returncode != 0:
+        return False, [f"check_cmd 退出码 {p.returncode}：{cmd}"], tail
+    return True, [], tail
+
+
 def budget_status(cid: str, card: dict = None, events: list = None) -> dict:
     """算这张卡「已经花了多少」和「上限是多少」。
 

@@ -502,3 +502,14 @@
   新增第 17 道闸 `tests/test_review_items.py`（8 条，含 2 条对照）。
 - 依据（实测）：`python tests/test_review_items.py` 8/8；16→17 道闸全绿。
 - 未做：UI 详情面板还没渲染 items（只走 CLI 与 show）；`--items-file` 尚无 schema 校验版本号。
+
+## D-027 · 卡的第四条闸：外部 `check_cmd`（2026-10-23）
+
+- 结论：卡上可声明 `check_cmd`，**提交时必跑**，非 0 即不过；只对人建的卡生效。
+- 为什么：翻译/单测/lint 这些专业闸门不该由看板重写，但必须在**提交那一刻**跑过，
+  否则复核席拿到的是没验过的件。现有的 `verify.py`（Ren'Py 译文结构保真 + 完成度）正好接进来。
+- 落地：`tools/board.py::gate_l4`、`tools/cli.py`（`--check-cmd`、submit 事件 `gate.L4` 与 `check_tail`）、
+  `tests/test_check_cmd.py`（5 条，含 2 条对照）、第 18 道闸。
+- 安全：**agent 建的卡带 check_cmd 一律拒跑**（否则建一张卡就能执行任意命令）；超时 600s；起不来判不过。
+- 实测：`verify.py` 对 `D:\青芽季遇\...\ru_RU\...\A第一章.rpy` 报 44 槽（已译 1 / 空译 43）、RESULT: FAIL、**退出码 1** ⇒ 可直接当闸门。
+- 未做：`verify_gate.py`（会删 .rpyc 与 game/cache 并试启动引擎）**不接自动流程**，仍由人单独跑。

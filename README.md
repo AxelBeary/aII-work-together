@@ -27,6 +27,20 @@ python <本项目>/tools/board.py do "给 README 加一段常见问题" --delive
 建卡、跑一轮、报结果，一条命令做完（`--no-run` 只建不跑）。
 跑完它会说「完成 / 待验收 / 打回了 / 卡住了」，并给出下一步该敲什么。
 
+## 翻译线怎么接（Ren'Py 视觉小说）
+
+机器闸不用看板重写——卡上写一条 `--check-cmd`，提交时自动跑，非 0 直接打回：
+
+```bash
+board do "把第一章译成俄文" \
+  --deliverable "game/tl/ru_RU/scripts/chun/A第一章.rpy" \
+  --check-cmd "python %USERPROFILE%\.agents\skills\renpy-vn-translation\scripts\verify.py game/tl/ru_RU/scripts/chun/A第一章.rpy"
+```
+
+`verify.py` 查的是**结构保真 + 完成度**（占位符丢失、空译、逐字节等于原文＝未译、裸引号），
+只读、不改文件。它过了才进复核席（母语子代理），复核过了才进「拍板中」。
+引擎级重编译（会删缓存并试启动）不放进自动流程，留给人工单独跑 `verify_gate.py`。
+
 ## 三分钟上手（命令行）
 ```bash
 # 1. 在任意项目目录，设一次默认值（只做一次）

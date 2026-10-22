@@ -163,6 +163,12 @@ def main():
     if not ok:
         fails.append("意见对账")
 
+    # 4k 外部门禁 L4（2026-10-23）：卡上声明的 check_cmd 在提交时必跑；
+    #    只对人建的卡生效；非零/超时/起不来 一律不过
+    ok, _ = run("外部门禁", [PY, "tests/test_check_cmd.py"])
+    if not ok:
+        fails.append("外部门禁")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:
