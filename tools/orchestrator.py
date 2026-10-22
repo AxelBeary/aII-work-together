@@ -610,10 +610,11 @@ def run_one(cid: str, engine: str, seat: str, model: str, effort: str,
     # ---- 返工 ----
     B.release(cid)
     attempts = count_attempts(cid)
-    if attempts >= 3:
+    limit = B.retry_limit(cid, card)
+    if attempts >= limit:
         B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
-                             "reason": f"返工 {attempts} 次仍不过，转阻塞等人"})
-        log(f"{cid} 返工 {attempts} 次 → 阻塞", "err")
+                             "reason": f"返工 {attempts} 次仍不过（额度 {limit}），转阻塞等人"})
+        log(f"{cid} 返工 {attempts} 次（额度 {limit}）→ 阻塞", "err")
         return "blocked-after-retries"
     log(f"{cid} 复核 FAIL（{reason[:60]}）→ 待返工（第 {attempts+1} 次）", "warn")
     return "rework"
@@ -708,9 +709,10 @@ def review_only(cid: str, engine: str, seat: str, model: str = None,
     if verdict == "pass":
         return "done"
     attempts = count_attempts(cid)
-    if attempts >= 3:
+    limit = B.retry_limit(cid, B.get_card(cid) or {})
+    if attempts >= limit:
         B.append_event(cid, {"type": "block", "actor": "system", "seat": "system",
-                             "reason": f"返工 {attempts} 次仍不过，转阻塞等人"})
+                             "reason": f"返工 {attempts} 次仍不过（额度 {limit}），转阻塞等人"})
         return "blocked-after-retries"
     return "rework"
 

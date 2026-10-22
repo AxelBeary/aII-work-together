@@ -60,6 +60,96 @@ def _created_kind(a) -> str:
     return "agent"
 
 
+def cmd_retry(a):
+    """把「待返工 / 阻塞」的卡重新派一轮（额度用完要显式 --force 才加）。
+
+    为什么需要它：编排器一轮跑完，卡会停在「待返工」或「阻塞」，人得一张张看。
+    这条命令按**额度**（默认 3 次复核打回）筛，把还能救的重新派出去，
+    把救不动的列出来并说明原因 —— 不静默重试，也不无限重试。
+    """
+    import subprocess
+    cands = []
+    for d in B.card_refs():
+        if not d.is_dir():
+            continue
+        cid = d.name
+        try:
+            st = B.replay(cid)
+            card = B.get_card(cid) or {}
+            evs = B.load_journal(cid)
+        except Exception:
+            continue
+        if st.get("state") not in ("待返工", "阻塞"):
+            continue
+        reason = (st.get("blocked_reason") or "").strip()
+        if not reason:
+            items = ((st.get("review") or {}).get("items") or [])
+            opens = [str(i.get("id")) for i in items if i.get("state") == "open"]
+            reason = ("未关闭意见：" + "、".join(opens[:4])) if opens else ""
+        cands.append({
+            "id": cid, "state": st.get("state"),
+            "attempts": B.attempts(cid, evs), "left": B.retry_left(cid, card, evs),
+            "reason": reason[:160],
+        })
+    if a.limit:
+        cands = cands[: a.limit]
+
+    todo, granted, skipped = [], [], []
+    for c in cands:
+        if c["left"] > 0:
+            todo.append(c)
+        elif a.force:
+            if not a.dry_run:
+                B.append_event(c["id"], {"type": "retry_grant", "actor": "human",
+                                         "seat": getattr(a, "seat", "retry"),
+                                         "delta": a.bump,
+                                         "note": f"额度用尽（{c['attempts']} 次）后人工加 {a.bump} 次"})
+            c["left"] = a.bump
+            granted.append(c)
+            todo.append(c)
+        else:
+            skipped.append(c)
+
+    for c in todo:
+        if not a.json:
+            print(f"  ↻ {c['id']}  {c['state']}  已返工 {c['attempts']} 次，剩 {c['left']} 次"
+                  + (f"  ← {c['reason']}" if c["reason"] else ""))
+    for c in skipped:
+        if not a.json:
+            print(f"  ✗ {c['id']}  额度用尽（已返工 {c['attempts']} 次）"
+                  + (f"  ← {c['reason']}" if c["reason"] else "")
+                  + "\n      要再试：加 --force（每次 +%d 次额度，会留痕）" % a.bump)
+
+    if a.json:
+        print(json.dumps({"ok": bool(todo), "retried": todo, "granted": granted,
+                          "skipped": skipped, "dry_run": bool(a.dry_run),
+                          "dispatched": bool(todo) and not a.dry_run},
+                         ensure_ascii=False))
+        if not todo or a.dry_run:
+            return
+    if not todo:
+        print("\n  没有可重试的卡。")
+        return
+    if a.dry_run:
+        print(f"\n  [dry-run] 会派 {len(todo)} 张，未执行。")
+        return
+
+    print(f"\n  派 {len(todo)} 张给编排器…")
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "orchestrator.py"),
+           "-C", str(B.ROOT), "run", "--cards", ",".join(c["id"] for c in todo),
+           "--seat", getattr(a, "seat", "auto-worker")]
+    if getattr(a, "engine", "any") not in (None, "", "any"):
+        cmd += ["--engine", a.engine]
+    if getattr(a, "model", None):
+        cmd += ["--model", a.model]
+    rc = subprocess.call(cmd, cwd=str(Path.cwd()))
+    for c in todo:
+        st = B.replay(c["id"])
+        print(f"  {c['id']} → {st.get('state')}")
+    if rc != 0:
+        sys.exit(rc)
+
+
 def cmd_add_batch(a):
     """按 JSON 批量建卡（给 AI 用：无交互、幂等、可 dry-run、可 --json）。
 
@@ -1241,7 +1331,10 @@ def cmd_bare(a):
     elif rows["blocked"]:
         first = rows["blocked"][0].split()[0]
         print(f"\n   → 先解开卡住的那张：{_board_cmd()} show {first}")
-    elif rows["doing_bad"] or rows["todo"]:
+    elif rows["doing_bad"]:
+        print(f"\n   → 有 {len(rows['doing_bad'])} 张被打回的，先看能不能救："
+              f"{_board_cmd()} retry --dry-run")
+    elif rows["todo"]:
         print(f"\n   → 让它自己跑：{_orch_cmd()} run --max 5")
     elif total and not (rows["doing"] or rows["blocked"]):
         print("\n   → 全部完成 🎉 下一步："
@@ -1910,6 +2003,17 @@ def main():
                    help="提交时必跑的外部闸门命令（非零即不过）；只对人建的卡生效")
     s.add_argument("--no-run", action="store_true", help="只建卡，不立刻跑")
     s.set_defaults(f=cmd_do)
+
+    s = sub.add_parser("retry", help="把待返工/阻塞的卡重新派一轮（额度制，可 --force 加额度）")
+    s.add_argument("--force", action="store_true", help="额度用尽也再试一次（会加额度并留痕）")
+    s.add_argument("--bump", type=int, default=3, help="--force 时加几次额度（默认 3）")
+    s.add_argument("--limit", type=int, default=0, help="最多处理几张")
+    s.add_argument("--seat", default="auto-worker")
+    s.add_argument("--engine", default="any")
+    s.add_argument("--model", default=None)
+    s.add_argument("--dry-run", action="store_true", help="只列计划，不派工")
+    s.add_argument("--json", action="store_true", help="机器可读输出")
+    s.set_defaults(f=cmd_retry)
 
     s = sub.add_parser("add-batch", help="按 JSON 批量建卡（给 AI 用：幂等/可 dry-run/可 --json）")
     s.add_argument("--file", help="JSON 文件；不填就读 stdin")

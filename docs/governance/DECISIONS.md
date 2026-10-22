@@ -526,3 +526,13 @@
 - 实测：`tl-plan --path D:\青芽季遇\...\QingYaJiYu --lang ru_RU` → 4 张卡（common/第一章/options/screens），
   每张带 `verify.py` 闸门；`add-batch --dry-run --json` 全过，真建 4 张，重跑全跳过。
 - 未做：跨项目批量（一条命令扫多个项目）；失败卡的重试编排。
+
+## D-029 · 重试编排：额度制（默认 3 次），加额度必须留痕（2026-10-23）
+
+- 结论：`board retry [--force] [--bump N] [--dry-run] [--json]` 把「待返工 / 阻塞」的卡重新派一轮。
+- 规则：一张卡默认 **3 次**复核打回额度（`board.RETRY_BASE`）。额度内 → 正常派；用尽 → 默认**不派**并说明原因；
+  `--force` 才加额度，写 `retry_grant` 事件（append-only、带席号与说明）——加额度是一个**要留痕的动作**。
+- 落地：`tools/board.py`（`attempts`/`retry_limit`/`retry_left`）、`tools/orchestrator.py`（两处 `attempts >= 3`
+  改成读额度）、`tools/cli.py::cmd_retry`、`board` 面板在「有被打回的卡」时直接建议 `board retry --dry-run`。
+- 依据：`tests/test_retry.py` 5 条（含「dry-run 不写事件」对照与「加额度必须留痕」），第 20 道闸全绿。
+- 未做：跨项目批量重试；把「同一意见卡住」的结构化信号直接接到额度（目前两套信号各管一段）。

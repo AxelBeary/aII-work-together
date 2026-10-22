@@ -174,6 +174,11 @@ def main():
     if not ok:
         fails.append("批量建卡")
 
+    # 4m 重试编排（2026-10-23）：额度制（默认 3 次返工）、用完不静默、--force 才加且留痕
+    ok, _ = run("重试编排", [PY, "tests/test_retry.py"])
+    if not ok:
+        fails.append("重试编排")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

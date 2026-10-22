@@ -276,6 +276,38 @@ def load_journal(cid: str):
     return _store().events(cid)
 
 
+RETRY_BASE = 3      # 一张卡默认允许几次「复核打回」；超了转阻塞等人
+
+
+def attempts(cid: str, events: list = None) -> int:
+    """这张卡被复核打回过几次（返工次数）。"""
+    n = 0
+    for ev in (events if events is not None else load_journal(cid)):
+        if ev.get("type") == "review" and ev.get("verdict") != "pass":
+            n += 1
+    return n
+
+
+def retry_granted(events: list) -> int:
+    """人工显式加过的返工额度（append-only，不进卡字段，可审计）。"""
+    return sum(int(e.get("delta") or 0) for e in events if e.get("type") == "retry_grant")
+
+
+def retry_limit(cid: str, card: dict, events: list = None) -> int:
+    evs = events if events is not None else load_journal(cid)
+    try:
+        budget = int((card or {}).get("retry_budget") or 0)
+    except (TypeError, ValueError):
+        budget = 0
+    return RETRY_BASE + budget + retry_granted(evs)
+
+
+def retry_left(cid: str, card: dict, events: list = None) -> int:
+    """还剩几次返工额度。"""
+    evs = events if events is not None else load_journal(cid)
+    return retry_limit(cid, card, evs) - attempts(cid, evs)
+
+
 def append_event(cid: str, ev: dict) -> dict:
     """append-only；哈希链与串行化由存储层事务保证。"""
     if get_card(cid) is None:
