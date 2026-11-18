@@ -549,3 +549,18 @@
 - 依据：`tests/test_retry.py` 7 条（新增「额度用尽挡住认领」＋「加额度后重新可开工」对照），第 20 道闸全绿。
 - 未做（评审席建议的件 B）：`item_stuck` 事件只留痕、不扣额 —— 暂不做，等真出现「同一意见反复卡住」的实例再说（治理体重上限：名不出事故就不加）。
 - 裁决全文：`docs/design/20261023-stuck-item-verdict/裁决__意见卡住要不要扣额度__评审席.md`
+
+## D-031 · 六合一整合吸纳：v2 方向（**待拍板** 2026-11-19）
+
+- 议题：把本仓看板内核、`dsh-taskboard`、`Oh-My-BBFF`、`sentinel-ops`、`sentinel-dock`、`waypost` 整合成一个系统。
+- 建议结论（三席评审后收敛，详见 `docs/design/20261119-integration-absorb/05_…修订说明.md`）：
+  1. **单一账本**＝本仓 kernel；DSH 面**不 fork 换心脏**，装 `KernelStore` 适配器；UI/routes 零改动。
+  2. 本地**零持久化**；副本只从内核回执/事件流前进；diff 用整 draft 深比较（非返回值）。
+  3. 调度唯一（内核 `tick`）；`external-sync` 摘除；`scheduler.ts` 写路径全删。
+  4. 不 subtree 合并；MCP 别名、BBFF role→seat 推迟。
+  5. P0 先做 T0（52 处写点四列表），出缺口报告前**不冻结** TaskEnvelope。
+- 依据：三席独立评审（子代理 DS / CLI GLM 5.3 / cross-session GLM 5.3）；复跑 `store.mutate` 52 处 / 6 文件；`storage.py` schema 只写不读；`server.py` 无 HTTP claim/epoch；发布包无构建链。
+- 未拍板：v2 方向本身；comments/executions/checklist/settings 挂 `cards.meta` 还是拆表；HTTP 写面是否 P1 一并做。
+- 影响面：`docs/design/20261119-integration-absorb/`；后续 P0–P2 的 `contracts/`、`kernel/`、`faces/dsh/`。
+- 状态：**待拍板**。
+

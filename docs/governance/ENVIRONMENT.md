@@ -631,3 +631,29 @@ TTL 只看它；墙钟 `at_ms` 只给人读。老行没有 `at_mono` 时回落�
 - 自愈：批次跑完（14:57）订阅速率 −99%，CPU 回到 1 核——**但泄漏没清干净（净剩 56 个）**，再开一轮必复发。
 - 纪律：批量实验**分块跑**（每块 ≤10 题）＋块间冷却；⛔ 不在用户正在用机时连跑；复发时**重启后端**（不是杀会话）。
 - 出处：`Default Project\.opencode\research\2026-10-22-opencode-resource-audit\`（主机观察席，只读体检，15:11 采样）。
+
+## E-42 · opencode CLI 在 MSYS 下会读到 POSIX `PWD`（2026-11-19 实测）
+
+- 现象：`cd /e/GithubClone/...` 后跑 `opencode-cli run`，退出码 0，但只回一行
+  `{"type":"error",...,"message":"Failed to change directory to /e/GithubClone/..."}`。
+- 根因：CLI 用环境变量 `PWD`（MSYS 的 POSIX 路径）而不是进程实际 cwd；`cd` 只改 cwd，不改 PWD 语义。
+- 修法：调用前 `unset PWD`（或 `env -u PWD`）。实测同一命令立刻正常。
+- 复跑：`cd /e/GithubClone/aII-work-together && unset PWD && echo '只回复 OK' | D:/opencode/opencode-cli.exe run --format json --model opencode-go/glm-5.3 --agent plan`
+
+## E-43 · 子代理允许表改完必须重启宿主才生效（2026-11-19 实测）
+
+- 现象：`cordis.patch.yml` 的 `subagent-model-selection-settings.allowedModels` 已加
+  `provider: opencode-go, model: glm-5.3`，但 `list_subagent_models` 仍只列 DS；派子代理报
+  `child LLM route "opencode-go/glm-5.3" is not allowed for this Session`。
+- 根因：允许表在宿主启动时装载；文件 mtime 晚于宿主进程启动时间（本次 05:25:28 vs 04:41:19），运行态未刷新。
+- 修法：改完配置**重启 DSH 宿主**（用户执行；agent 不启停宿主）。重启后先跑 `list_subagent_models` 复核，再派工。
+- 复跑：`stat -c '%y' ~/.dsh/profiles/desktop/cordis.patch.yml` 对比宿主进程 StartTime。
+
+## E-44 · 子代理不让的模型，可用 cross-session 新会话派出（2026-11-19 实测）
+
+- 场景：子代理允许表不含 `opencode-go/glm-5.3`，但确实需要 GLM 独立评审。
+- 做法：`cross_session_spawn(name, task, provider="opencode-go", model="glm-5.3")`；回执含 `provider/model`，
+  `cross_session_status` 也能看到 model 与状态；任务是独立上下文，等价于独立评审席。
+- 边界：这是**跨会话**通道，不是子代理；计费/并发按会话算，任务书必须自包含（对方看不到本会话上下文）。
+- 本次实例：`cs_wl3mgUbVAb`（reviewer-glm53-b2），模型 glm-5.3，effort high，回执见 06。
+

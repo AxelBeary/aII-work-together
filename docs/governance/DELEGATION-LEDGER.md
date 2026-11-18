@@ -69,3 +69,4 @@
 | 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | ZX-D0-40=done |
 | 2026-10-20 | 自动编排 | 内派（opencode/opencode-go/deepseek-v4.1-flash） | 成 1/1 | 1 | 0 | 否 | ZX-VERIFY=done |
 | 2026-10-21 | 安全与缺陷只读扫描 | 内派（宿主子代理 general ×1） | 成 1/1（报告 49.9 KB，23 条：P0×1／P1×6／P2×11／P3×5） | 1 | 0 | 否 | 基线 `f38fb7c`；主代理亲验 F-01～F-07 全属实（F-06 机理已复核）；报告暂不入公开库 |
+| 2026-11-19 | 整合方案调研 + 三席独立评审 | 内派子代理×1（DS）+ opencode CLI×1（GLM 5.3）+ cross-session×1（GLM 5.3） | 成 7/7 文件（3 回执 + 3 支撑 + 1 修订） | 3 | 1（kind 8→9 更正） | 否 | T0 未开工；D-031 待拍板 |

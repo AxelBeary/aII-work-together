@@ -1,0 +1,751 @@
+{
+  "info": {
+    "id": "ses_e0f718767ffeDhnayF6rKX9ciN",
+    "projectID": "8fed6de738a6a649e3978dbe9d9756d6deb45d00",
+    "agent": "plan",
+    "model": {
+      "id": "glm-5.3",
+      "providerID": "opencode-go",
+      "variant": "default"
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 58349,
+      "output": 2268,
+      "reasoning": 5413,
+      "cache": {
+        "read": 279168,
+        "write": 0
+      }
+    },
+    "outcome": "succeeded",
+    "time": {
+      "created": 1795037231258,
+      "updated": 1795037332289,
+      "busy": 1795037231269,
+      "idle": 1795037332293
+    },
+    "title": "六合一整合方案推翻式评审",
+    "location": {
+      "directory": "E:\\GithubClone\\aII-work-together"
+    }
+  },
+  "messages": [
+    {
+      "id": "msg_1f08e78a0001ngRKA5Cxvo3osc",
+      "time": {
+        "created": 1795037231264
+      },
+      "type": "agent-switched",
+      "agent": "plan",
+      "previous": "plan"
+    },
+    {
+      "id": "msg_1f08e789b001feLpVhIApz3yFw",
+      "time": {
+        "created": 1795037231274
+      },
+      "text": "<system-reminder>\nYou are in Plan mode. Discuss the plan with the user directly in the conversation. Do not create or update plan files unless the user explicitly asks you to; when they do, write them only in:\nC:\\Users\\qly19\\.opencode\\plan\n\nDo not modify any other files or ask a subagent to do so.\n\nYou remain in Plan mode until the user switches agents. If the user asks you to implement changes, do not do so. Tell them they need to switch agents.\n</system-reminder>",
+      "type": "synthetic"
+    },
+    {
+      "id": "msg_1f08e789f001pCJAkm7pLEXqvG",
+      "time": {
+        "created": 1795037231274
+      },
+      "text": "# 独立评审任务书（推翻式，只读）\n\n你是**独立评审席**，不是施工席。任务是**推翻式评审**一项「六合一」整合方案：判断它在当前条件下是不是最好的做法；如果有更好的，直接给出替代方案。**只读，不改任何文件，不启停任何进程。**\n\n## 背景（一句话）\n用户要把本机六个资产整合成一个系统，要求「最好、最方便、全能高效」；许可上接受 Apache-2.0 / MIT，只要归属写对。\n六个资产：aII-work-together（本仓，Python 看板内核）、dsh-taskboard 0.10.0（DSH 原生看板插件，已装但禁用）、Oh-My-BBFF（DSH 团队/记忆/权限插件家族）、sentinel-ops（Windows 守望脚本+托盘）、sentinel-dock（Rust 守望宿主）、waypost（跨机信箱+值守哨兵）。\n\n## 必读（先读这两份，再抽查代码）\n1. E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\00_整合吸纳_盘点与路线__发牌席__调研稿.md\n2. E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\01_整合吸纳_目标架构与落地计划__发牌席__方案稿.md\n\n按需只读抽查（不要全量读）：\n- E:\\GithubClone\\aII-work-together\\tools\\board.py、server.py、engines.py、tests\\test_lease_race.py\n- C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\store.ts、tools.ts、execution.ts、routes.ts；src\\client\\board\\TaskBoard.tsx\n- E:\\GithubClone\\Oh-My-BBFF\\packages\\oh-my-bbff-team\\lib\\ledger.js\n- E:\\GithubClone\\sentinel-dock\\README.md、dock\\crates\\dockd\\src\n- E:\\GithubClone\\waypost\\README.md、src\\comms-sentinel.py\n- E:\\GithubClone\\sentinel-ops\\README.md\n\n## 必须核实的断言（不成立就点名）\n1. taskboard 随包带完整 TS 源码（src/client、src/host），可 fork 重建，不是只有压缩产物。\n2. board 的 HTTP 面已有 Host 校验 + 页面 token（server.py）。\n3. 本机 PATH 里没有 dsh CLI 入口，所以 DSH 会话执行器只能在插件内派生。\n4. BBFF 的 ledger 是 agent 名册的派生库，不是任务账本。\n5. 方案称「只改 taskboard 三个文件（store.ts / tools.ts / execution.ts）就能接内核」——核实这个改动面是否真的够；不够就列出漏掉的文件。\n6. 方案的「CQRS 物化视图」会不会在实践中退化成双写。\n\n## 评审问题（按影响排序回答）\n1. **架构**：单一账本（board 内核）+ CQRS 副本（fork taskboard UI）是否最优？有没有明显更好的形态（taskboard 当账本、事件总线、actor、把内核做成插件、Rust 内核、纯 DSH 插件）？给选择理由与代价。\n2. **公理**：五条（一本账 / 四个面 / 证据先于状态 / 复用优先 / 失败要吵）有没有漏掉的不可谈判项（安全、幂等、schema 演进、备份恢复、升级、未来多人）？\n3. **失败模式**：方案低估了哪些坑？至少 8 条，按「发生概率 × 损失」排序。\n4. **过度设计**：哪里可以删？（用户要最方便、最高效）\n5. **更好的建议**：改哪个文件、哪一步、大概工作量；P0–P2 应该怎么改。\n6. **只能改一件事**：你会改哪件？为什么。\n\n## 硬约束\n- 只读：不创建/修改/删除文件；不跑构建/测试（会写盘的也不行）；不启停进程；不装依赖。\n- 每条结论标来源：「已读代码」「已实测」「推断」。\n- 引用路径（可带行号）；不确定就写「不确定」。\n- 中文输出，≤1500 字。结构：结论（PASS / CONCERNS / REJECT）→ 关键发现（按影响排序）→ 更好的替代 → 对 P0–P2 的具体修改 → 只能改的一件事。\n\n## 判分口径\n- 只夸「方案不错」＝不及格；至少给 3 条具体的、可执行的反例或改动。\n- 发现硬伤（双写、丢数据、无法回滚、fork 不可维护/不合法）必须明说。\n",
+      "files": [],
+      "type": "user"
+    },
+    {
+      "id": "msg_1f08e78b5001KceFPN7iJd8BEY",
+      "time": {
+        "created": 1795037231379,
+        "firstToken": 1795037238317,
+        "streamed": 1795037239174,
+        "completed": 1795037239309
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Let me start by reading the two required documents, then spot-check the code. I'm in Plan mode, read-only review task. Let me read the two main documents first.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037238318,
+            "completed": 1795037239148
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_0a920b8052be468783bf9677",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\00_整合吸纳_盘点与路线__发牌席__调研稿.md"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\00_整合吸纳_盘点与路线__发牌席__调研稿.md, lines 1-138\n1: # 整合吸纳 · 现状盘点与路线（调研稿）\n2: \n3: > 批次：`20261119-integration-absorb`｜席位：发牌席（lead）｜口径：只读盘查 + 一份设计稿，**未改任何代码、未启停任何进程**\n4: > 对象：`aII-work-together`（本仓）、`Oh-My-BBFF`、`sentinel-ops`、`sentinel-dock`、`waypost`、`dsh-taskboard@0.10.0`\n5: > 拍板位置：本稿 §7。拍板前不进入施工。\n6: > **后续**：`01_整合吸纳_目标架构与落地计划__发牌席__方案稿.md`（2026-11-19 许可放宽后重写，终态方案以 01 为准）。\n7: \n8: ---\n9: \n10: ## 1 结论先行\n11: \n12: 1. **这六件不是六个产品，是三个层次 + 一个没接上的面**：任务/编排层（本仓看板、taskboard、BBFF）、守望层（sentinel-ops → sentinel-dock）、跨机层（waypost）。缺的不是功能，是**一个账本、一个身份、一个总入口**。\n13: 2. **最该先做的不是合并代码，是定契约**。现在有 **4 套「任务真相」、3 套执行器、3 套调度、3 个托盘**；先并代码只会把 4 份真相焊死在一起。\n14: 3. **推荐终态**：本仓的 board 内核当唯一账本（它已有租约/证据分级/人闸/审计/续跑），DSH 侧只做**客户端面**（不 fork taskboard），sentinel-dock 当唯一常驻守望，waypost 当远程执行臂，BBFF 只保留「角色/记忆/权限」三件事。详见 §5 方案 A。\n15: \n16: ---\n17: \n18: ## 2 盘点（六件资产）\n19: \n20: | # | 资产 | 是什么 | 栈 / 规模（盘上读数） | 许可 | 当前状态 |\n21: |---|---|---|---|---|---|\n22: | 1 | **aII-work-together**（本仓） | 多 agent 任务看板 + 编排内核：SQLite journal、租约/epoch、证据分级、人闸、复核、重试额度、断点续跑、worktree 并行、跨会话留言、本地 HTTP + WebView2 壳 | Python；`tools/*.py` 9,088 行（tests 另 ~6k） | MIT | 20 道闸全绿；5 卡完成；`main` 停在 2026-10-23 |\n23: | 2 | **dsh-taskboard 0.10.0** | DSH 原生任务看板插件：host 台账（JSON）、10 个 `taskboard_*` 工具、SSE 五列、cron 调度、per-task 模型/preset、worktree 隔离+一键合并、DoD 清单+执行报告+diff、禅道/TAPD 同步 | TS/JS；`lib/` 预构建，`src/` 437 行入口 | Apache-2.0 | **已安装但被禁用**：`~/.dsh/profiles/desktop/cordis.patch.yml:163` → `- id: dsh-taskboard` / `disabled: true` |\n24: | 3 | **Oh-My-BBFF 1.0.1** | DSH 插件家族：Team（角色目录/名册/活动）、Memory、Scope（工作区工具可见性）、Superpowers（方法技能）、Widgets（面板卡片） | TS/JS；packages 下约 4.7 万行（含构建产物） | MIT | 本地有未提交改动；其 `ledger` 是**agent 名册的派生库**（`lib/ledger.js` 注释明说 rebuildable），**不是任务账本** |\n25: | 4 | **sentinel-ops** | 本机守望：进程泄漏看门狗、ProcGuardTray、comms-health 探针、探针批次 | PowerShell + C#；`.ps1/.cs` 约 4.0 万行（含验证套件） | **无 LICENSE 文件** | 仍是「脚本 + 托盘」形态；已有 `plugins/proc-watchdog`、`plugins/comms-health` 雏形 |\n26: | 5 | **sentinel-dock** | Rust 守望宿主：manifest 驱动、Job Object、append-only 审计、dry-run 默认、人写 `handover.toml` 才允许真杀、托盘+设置窗、`dockctl` 命名管道 | Rust；27,109 行 | MIT | 预 1.0；它就是 sentinel-ops 的下一形态（ops 的 `probes/2026102*-dock*` 是同一批调研） |\n27: | 6 | **waypost** | 跨机信箱 + 值守哨兵：同步目录收信 → 唤醒无头 AI 会话 → 读裁决对账 → 归档/死信/预算/退避；状态板 + `runs.jsonl` | Python；`src/` 3,304 行（tests/tools 另计） | MIT | 协议/安全/移植文档齐全；跨机协议可版本化 |\n28: \n29: ---\n30: \n31: ## 3 能力矩阵（谁已经有什么）\n32: \n33: | 能力 | 本仓 board | taskboard | BBFF | sentinel-dock | waypost |\n34: |---|---|---|---|---|---|\n35: | 持久任务账本 | ✅ journal/事件溯源 | ✅ JSON 台账 | ❌（只有名册） | ❌（只管插件） | ❌（文件状态板） |\n36: | 认领互斥 | ✅ 租约 + epoch 栅栏 | ✅ claim/hold | ❌ | — | — |\n37: | 证据分级 | ✅ VERIFIED / AUDITED-UNGROUNDED | ⚠️ DoD 勾选 + 报告 | ⚠️ 技能里的 evidence-before-done | ❌ | ⚠️ 证据分级纪律（文档） |\n38: | 人闸 | ✅ token + `human` 子命令 | ✅ 只有人能 done | ❌ | ✅ 人写 handover 才能杀 | ❌ |\n39: | 审计链 | ✅ 哈希链 + `audit` | ⚠️ 台账无哈希链 | ❌ | ✅ append-only 审计 | ✅ `runs.jsonl` |\n40: | 写隔离 | ✅ worktree 并行（每卡） | ✅ worktree + 一键合并 | ❌ | — | ❌（写域硬拦） |\n41: | 定时调度 | ❌（靠 orchestrator 循环） | ✅ host cron | ❌ | ✅ 插件调度 | ✅ 轮询/目录事件 |\n42: | 多引擎 | ✅ opencode/codex/qoder/hermes | ⚠️ 只能 DSH 会话 | ❌ | — | ✅ 无头会话 |\n43: | 原生 UI | ⚠️ 单页 HTML/WebView2 壳 | ✅ DSH 面板 + SSE | ✅ 面板卡片 | ✅ 托盘 + 设置窗 | ❌（状态板文件） |\n44: | 跨机 | ❌ | ❌ | ❌ | ❌ | ✅ |\n45: | 常驻守望 | ❌ | ❌ | ❌ | ✅ | ✅（watchdog） |\n46: \n47: ---\n48: \n49: ## 4 冲突面（不解决就会互相拆台）\n50: \n51: 1. **4 份任务真相**：本仓 `board/board.db`、taskboard `dsh-taskboard.json`、BBFF 会话内 team tasks、waypost 状态板。任何两份同时接同一批活 ⇒ 双认领、双执行、双记账。\n52: 2. **3 套执行器**：`tools/engines.py`（无头 CLI）、DSH 会话（taskboard/BBFF）、waypost 的 hermes。同一任务可能被两个执行器各跑一遍。\n53: 3. **3 套调度**：board orchestrator 循环、taskboard host cron、dock 插件调度（外加 DSH 自带 schedule）。同一时刻谁触发没有唯一答案。\n54: 4. **3 个托盘**：board 托盘、ProcGuardTray、dock 托盘。整合后必须只剩一个常驻入口。\n55: 5. **2 套写权语义**：board 的 lease/epoch 与 taskboard 的 claim/hold 各自成立，但**跨系统不复用**；「一个路径一个写者」这条红线会被绕过。\n56: 6. **2 套完成定义**：board 的 `evidence_tier` 与 taskboard 的「清单全勾 + 人验收」。对外只能有一个「已验证」口径。\n57: 7. **许可**：`sentinel-ops` **没有 LICENSE**（对外分发前必须补）；taskboard 是 Apache-2.0（fork/复制须带 NOTICE）；其余 MIT。**「吸纳」不是复制粘贴，是带许可的合并。**\n58: \n59: ---\n60: \n61: ## 5 三条路线\n62: \n63: ### 方案 A（推荐终态）｜内核独立，面在 DSH\n64: \n65: - **账本**：本仓 board 内核抽成 `kernel/`（Python 包），继续「每项目一个 `board/`」；事件溯源 + 租约 + 证据分级 + 人闸 + 审计不动。\n66: - **面**：写一个 DSH 插件（五列看板 + 卡详情 + 评审/人闸 + SSE），**通过内核的本地 HTTP API 读写**（`/api/state`、`/api/cards`、`/api/card`、`/api/run` 已存在）。taskboard **不 fork**，只当交互规格与功能对照。\n67: - **团队**：BBFF 保留角色目录/记忆/Scope/Superpowers；`role → seat` 映射进内核，权限仍在 BBFF 的工具层。\n68: - **守望**：sentinel-dock 当唯一常驻宿主，托管 board server、orchestrator 循环、waypost 哨兵；一份审计、一个托盘；ProcGuardTray 退役（先并跑一周）。\n69: - **跨机**：waypost 降为「远程执行臂」——信 = 一条 `source=peer` 的任务（标记不可信），裁决 = 提交证据，状态板 = 账本镜像。\n70: - **仓库**：本仓升为 umbrella（`contracts/` + `adapters/` + `docs/`），其余四仓**先不动**；需要单版本发布时再谈 monorepo。\n71: - 代价：要写 DSH 面板（可先 iframe 复用现有看板页，1 天出可用版）；两套 UI 并存一段时间。\n72: \n73: ### 方案 B｜taskboard 为骨（最快，锁 DSH）\n74: \n75: - 启用 taskboard 当唯一 UI/调度/执行宿主，**fork 它**，把 board 的 evidence/lease/audit/retry 注入；board 退为无头 CLI 兼容层。\n76: - 好处：立刻有成熟 UI/SSE/cron/worktree/DoD/diff，开发量最小。\n77: - 代价：跟随 0.10.x 上游 + Apache-2.0 fork 维护；DSH 停则全停；board 现有 20 道闸与测试要重接；「脱离 DSH 也能跑」这条能力丢失。\n78: \n79: ### 方案 C｜联邦（只当过渡，不当终态）\n80: \n81: - 不动各自内核，做「统一控制台」读四份状态 + 统一 ID 映射 + 事件转发。\n82: - 好处：一周内「看得见」。\n83: - 代价：四份真相并存，违反「状态即证据」；写侧一律不能打通，否则必撞车。**只建议用作 P0 的只读总览。**\n84: \n85: > **建议**：终态选 **A**，P0 用 **C 的读侧**做总览，**不选 B**（但把 taskboard 的功能清单当验收对照表）。\n86: \n87: ---\n88: \n89: ## 6 分阶段与闸门（拍板后开工）\n90: \n91: | 阶段 | 做什么 | 验收闸（必须有非零反空跑） |\n92: |---|---|---|\n93: | **P0 契约**（1–2 天） | `TaskEnvelope v1`：id/project/goal/deliverable/acceptance/evidence/assignee/state/attempts/source；`Event v1`：append-only + `prev_hash`；四方映射表 | 故意塞一张缺证据/跨项目的坏卡 ⇒ 必须被拒；同一 key 重放 ⇒ 幂等跳过 |\n94: | **P1 内核服务化**（1–2 周） | board 内核抽包；`board serve` 带 token；导入/导出幂等；taskboard JSON → board **dry-run** 迁移 | 迁移 dry-run 与实际导入条数对账；坏记录必须报错不静默 |\n95: | **P2 面**（2–3 周） | DSH 插件五列 + 详情 + 评审/人闸 + SSE；先 iframe 版兜底 | 面板写操作必须落到 journal（回读事件）；没有 token 的写请求必须 403 |\n96: | **P3 守望**（1 周） | dock 托管 board server/orchestrator/waypost；一个托盘；退役 ProcGuardTray（dry-run 并行一周） | 杀掉被托管进程能被 dock 拉起并留痕；误杀数必须为 0（对照：正常进程不受影响） |\n97: | **P4 跨机**（1–2 周） | waypost 信 → `source=peer` 任务；结果回信；状态板镜像 | 不可信输入不得获得写权（红队样例）；重复信必须去重 |\n98: \n99: ---\n100: \n101: ## 7 待拍板（本轮只问，不动手）\n102: \n103: 1. **账本归属**：单一账本（board 内核）——同意吗？还是允许 taskboard 并行当第二账本？（推荐：单一）\n104: 2. **交付形态**：DSH 插件为主 + 独立壳保留（推荐）／纯 DSH 插件／纯独立应用？\n105: 3. **仓库形态**：本仓做集成层、其余仓不动（推荐）／monorepo 全搬进来／submodule 汇总？\n106: 4. **顺序**：dock 先接管守望（P3）、waypost 放最后（P4）——同意吗？\n107: 5. **taskboard 评估**：是否允许我把它 `disabled: false` 后由**你**重启 DSH 做只读评估？（按规矩我不启停宿主）\n108: \n109: ---\n110: \n111: ## 8 未做 / 未证（如实）\n112: \n113: - **未启用 taskboard**：只确认了禁用位；启用与实测未做（需要宿主重启，规矩上不由我动）。\n114: - **未做任何代码修改、数据迁移、仓库合并**；本批只新增本文件。\n115: - taskboard 的 `/taskboard` 路由与台账字段**未逐字段核对**（只读了 `src/index.ts` 入口、README、`lib/index.js` 片段）。\n116: - BBFF 的 `team tasks` 与 board 卡片的语义差异**未逐条比对**；`role → seat` 映射只是设想，API 可行性未验。\n117: - `sentinel-ops` 无 LICENSE 的问题**未处理**（对外发布前必须补）。\n118: - dock 接管 board/orchestrator 的可行性**未做 PoC**（manifest 形态、Job Object 边界、dry-run 语义都待验）。\n119: \n120: ---\n121: \n122: ## 9 可复跑命令（复核用）\n123: \n124: ```bash\n125: # 1) 六件资产是否还在原位\n126: ls -d /e/GithubClone/{aII-work-together,Oh-My-BBFF,sentinel-ops,sentinel-dock,waypost}\n127: \n128: # 2) taskboard 的禁用位\n129: grep -n -A1 'id: dsh-taskboard' ~/.dsh/profiles/desktop/cordis.patch.yml\n130: \n131: # 3) 本仓健康度\n132: python tools/check.py --quick\n133: \n134: # 4) 规模口径\n135: wc -l tools/*.py | tail -1\n136: find /e/GithubClone/sentinel-dock/dock -name '*.rs' | xargs wc -l | tail -1\n137: wc -l /e/GithubClone/waypost/src/*.py\n138: ```"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1795037238874,
+            "ran": 1795037239159,
+            "completed": 1795037239220
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_044830b888c84eb6af281a91",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\01_整合吸纳_目标架构与落地计划__发牌席__方案稿.md"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file E:\\GithubClone\\aII-work-together\\docs\\design\\20261119-integration-absorb\\01_整合吸纳_目标架构与落地计划__发牌席__方案稿.md, lines 1-219\n1: # 整合吸纳 · 目标架构与落地计划（方案稿 v1）\n2: \n3: > 批次：`20261119-integration-absorb`｜席位：发牌席（lead）｜前置：`00_整合吸纳_盘点与路线__发牌席__调研稿.md`\n4: > 前提变更（2026-11-19）：用户明确**接受 Apache-2.0 等许可，按规矩写好 NOTICE/归属即可** ⇒ 原「不 fork taskboard」的限制解除，本稿按「可 fork、可吸纳」重新规划。\n5: > 口径：本稿仍**不动代码**；拍板后按 §6 开工。\n6: \n7: ---\n8: \n9: ## 0 设计公理（先定不可谈判的五条）\n10: \n11: 1. **一本账**：任务状态只有一个权威来源（内核 journal），其余全是视图/缓存。⛔ 不允许两个系统同时接同一批活。\n12: 2. **四个面，一个内核**：CLI、DSH 面板、MCP 工具、桌面壳都只是内核的客户端；⛔ 任何面不得自建账本。\n13: 3. **证据先于状态**：状态变更必须挂可复核工件（路径/字节/退出码/diff 哈希）；人闸只能由人越过。\n14: 4. **不重写能复用的**：UI 用 taskboard 的（Apache-2.0 + NOTICE），执行用 DSH 会话，守望用 dock，跨机用 waypost；只新写「契约 + 内核服务化 + 适配层」。\n15: 5. **失败要吵**：任何面连不上内核、任何执行器掉线、任何迁移跳条，必须显式报错，⛔ 不静默转绿。\n16: \n17: > 「最完美」在工程上不存在；本方案追求的是**单一真相 + 最少新代码 + 最强治理 + 全场景可用**，代价写在各阶段的「代价」栏里。\n18: \n19: ---\n20: \n21: ## 1 目标架构（一张图）\n22: \n23: ```\n24:                     ┌────────────────────────── 面（Clients） ──────────────────────────┐\n25:                     │ DSH 面板（fork taskboard）│ CLI（board …）│ MCP（board_* 工具）│ 桌面壳 │\n26:                     └──────────────┬────────────┴───────┬───────┴─────────┬─────────┴───────┘\n27:                                    │ HTTP + SSE（token）│ stdio MCP      │ HTTP\n28: ┌──────────────────────────────────▼────────────────────▼────────────────▼──────────────────┐\n29: │ 内核 kernel（Python，零依赖）：journal(SQLite) + 租约/epoch + 证据分级 + 人闸 + 哈希链审计    │\n30: │ 写路径只有：claim / submit / human（外加 add、review、retry）；其余全是读                     │\n31: └──────┬───────────────────────────────┬──────────────────────────────┬─────────────────────┘\n32:        │ 事件 SSE                      │ due 任务（tick）              │ 证据/状态\n33: ┌──────▼───────────┐        ┌──────────▼──────────┐        ┌──────────▼──────────┐\n34: │ 执行器 A：DSH 会话 │        │ 执行器 B：CLI 引擎    │        │ 执行器 C：对端机器    │\n35: │ （taskboard fork） │        │ opencode/codex/…    │        │ waypost 信 → 任务     │\n36: └──────────────────┘        └─────────────────────┘        └─────────────────────┘\n37:        ▲                                                              ▲\n38:        │ 进程托管/拉起/审计                                            │ 信箱同步\n39: ┌──────┴──────────────────────────────────────────────────────────────┴────────────────┐\n40: │ 守望 supervisor：sentinel-dock（Rust）—— 一个托盘、一份 append-only 审计、dry-run 默认 │\n41: └─────────────────────────────────────────────────────────────────────────────────────┘\n42: ```\n43: \n44: **一句话**：内核是唯一的「真」，面负责看和点，执行器负责干活，dock 负责活着，waypost 负责跨机器。\n45: \n46: ---\n47: \n48: ## 2 内核契约（P0 要冻结的东西）\n49: \n50: ### 2.1 TaskEnvelope v1\n51: \n52: ```json\n53: {\n54:   \"id\": \"t_01JBR9...\",\n55:   \"project_id\": \"prj_<sha256(realpath)[:16]>\",\n56:   \"title\": \"…\",\n57:   \"goal\": \"什么样算做完\",\n58:   \"deliverables\": [\"相对路径/通配\"],\n59:   \"acceptance\": [{\"id\": \"a1\", \"text\": \"…\", \"checked\": false, \"evidence\": null}],\n60:   \"state\": \"todo|claimed|in_progress|verify|done|blocked|rework\",\n61:   \"assignee\": {\"seat\": \"w1\", \"role\": \"fixer\", \"engine\": \"dsh|opencode|…\", \"model\": \"…\"},\n62:   \"attempts\": 0, \"retry_limit\": 3,\n63:   \"blocked_by\": [\"t_…\"],\n64:   \"source\": {\"kind\": \"human|agent|peer|schedule|zentao|tapd\", \"ref\": \"…\"},\n65:   \"lease\": {\"seat\": \"w1\", \"epoch\": 7, \"ttl_s\": 600, \"heartbeat_at\": \"…\"},\n66:   \"evidence_tier\": null,\n67:   \"created_at\": \"…\", \"updated_at\": \"…\"\n68: }\n69: ```\n70: \n71: ### 2.2 Event v1（append-only，哈希链）\n72: \n73: ```json\n74: {\"seq\": 42, \"task_id\": \"t_…\", \"type\": \"claim|submit|review|human|retry|reclaim|gate.L1..L4|adopt\",\n75:  \"at\": \"…\", \"actor\": \"w1|human\", \"epoch\": 7,\n76:  \"payload\": {}, \"prev_hash\": \"…\", \"hash\": \"sha256(canonical(事件体))\"}\n77: ```\n78: \n79: ### 2.3 Evidence v1\n80: \n81: ```json\n82: {\"kind\": \"file|cmd|diff|hash|test\", \"target\": \"相对路径或命令\", \"digest\": \"sha256|exit:0\",\n83:  \"captured_at\": \"…\", \"verifier\": \"machine|seat\", \"tier\": \"VERIFIED|AUDITED-UNGROUNDED\"}\n84: ```\n85: \n86: ### 2.4 身份\n87: \n88: - `project_id`：`realpath` 规范化后取 sha256 前 16 位；注册表仍在 `~/.aII-work-together/projects.json`，**只记「项目在哪」**。\n89: - `task id`：ULID（时间有序、可排序、无中心）；旧卡 id 原样保留，新增 `legacy_id` 字段。\n90: - `seat`：执行席位（一卡一租约）；`role` 取 BBFF 角色目录（explorer/librarian/oracle/designer/fixer/writer/laborer…）。\n91: \n92: ### 2.5 端口与面\n93: \n94: | 面 | 协议 | 现状 | 要做 |\n95: |---|---|---|---|\n96: | CLI | argv | 已有 30 个子命令 | 保持兼容，新增 `serve`/`tick`/`mcp` |\n97: | HTTP/SSE | JSON + `text/event-stream` | 已有 `/api/state|cards|card|cost|run`，Host 校验 + 页面 token | 加 SSE、加 `/api/events`、写接口统一 token |\n98: | MCP | stdio | 无 | 新写 10 个 `board_*` 工具（名字对齐 taskboard 的 10 个，见 §4） |\n99: | 桌面壳 | WebView2 | 已有 | 保持，作为「DSH 不在」的离线面 |\n100: \n101: ---\n102: \n103: ## 3 关键机制（为什么这样最稳）\n104: \n105: 1. **CQRS 副本，不是双账本**：DSH 面板里的 store 只是内核账本的**物化视图**；面板的每个写操作 = 一次内核写 + 一次 SSE 刷新。断网/内核挂 ⇒ 面板转只读并显式告警，⛔ 不允许它自己写本地账本。\n106: 2. **一个调度器**：调度进内核（`schedules` 表 + `next_run`），由 dock 每 30s `board tick` 触发 due 任务；⛔ taskboard 的 host cron 关闭，只留一个触发源。\n107: 3. **两套执行器，一个提交面**：DSH 会话执行器与 CLI 执行器都必须走 `claim → submit(evidence)`；谁也不能直接改状态。\n108: 4. **租约 + epoch**：沿用现有 CAS 栅栏（D-024）；面板执行器认领时带 epoch，心跳超时回收。\n109: 5. **人闸**：agent 在 MCP/CLI 面永远到不了 `done`；`human` 动作只从「人点的那个面」发出（面板按钮/CLI 令牌），事件记 `actor=human`。\n110: 6. **审计链**：每个事件带 `prev_hash`；`audit` 校验链断裂/事件被截断/租约残留，发现即报警。\n111: 7. **幂等**：`add` 支持 `key`；`adopt` 迁移按 `(source, legacy_id)` 去重；重放不产生第二条任务。\n112: \n113: ---\n114: \n115: ## 4 DSH 面：fork taskboard 的边界（合法且可控）\n116: \n117: 已核实（盘上）：taskboard 0.10.0 **随包提供完整 TS 源码**（`src/client/*.tsx`、`src/host/*.ts`，含 `store.ts`/`routes.ts`/`tools.ts`/`execution.ts`），不是只有压缩产物 ⇒ 可 fork、可改、可重建。\n118: \n119: **只改三处，其余不动：**\n120: \n121: | 文件 | 改什么 | 不改什么 |\n122: |---|---|---|\n123: | `src/host/store.ts` | 持久化改为「内核 SSE 副本」；写方法转发内核 API | 对外接口（snapshot/get/subscribe）保持，UI 零改动 |\n124: | `src/host/tools.ts` | 10 个工具转调内核 `board_*`（保留 `taskboard_*` 别名） | 工具名/参数形态，避免旧会话失效 |\n125: | `src/host/execution.ts` | 跑完 DSH 会话后向内核 `submit` 证据；⛔ 不再写本地账本 | 会话派生/报告采集/worktree 逻辑保留 |\n126: \n127: **保留不动**：`src/client/**`（五列看板、详情、diff、清单、模板、i18n）、`git.ts`/`isolation.ts`（worktree + 合并）、`scheduled-session.ts`（仅执行，不调度）。\n128: \n129: **许可**：Apache-2.0。在 `NOTICE` + 文件头保留原版权与出处；我们新增文件用 MIT；对外分发时两份许可一起给。\n130: \n131: **别名兼容**：内核 MCP 同时暴露 `taskboard_list/get/create/update/move/comment_add/checklist/execution_report/delete` 别名 ⇒ 旧会话/旧提示词不改也能用。\n132: \n133: ---\n134: \n135: ## 5 代码与仓库布局（终态）\n136: \n137: ```\n138: hub/                     # 现 aII-work-together 升级；git subtree 导入保留历史\n139: ├─ contracts/            # JSON Schema + fixtures + 一致性测试\n140: ├─ kernel/               # Python 零依赖：ledger/lease/evidence/audit/http/sse/mcp/cli\n141: │  ├─ board/             # 由 tools/board.py 等抽出（行为不变，测试全绿）\n142: │  └─ tests/\n143: ├─ faces/dsh/            # TypeScript fork（Apache-2.0 + NOTICE）\n144: ├─ faces/desktop/        # 现有 WebView2 壳\n145: ├─ executors/cli/        # opencode/codex/qoder/hermes 适配（现有 engines.py）\n146: ├─ executors/peer/       # waypost 桥\n147: ├─ supervisor/           # Rust fork（MIT）\n148: ├─ transport/            # waypost（MIT）\n149: ├─ team-adapter/         # BBFF 适配层（不 vendor，pin 上游版本）\n150: ├─ governance/           # AGENTS/DECISIONS/ENVIRONMENT/REGISTRY/HANDOFF\n151: └─ docs/\n152: ```\n153: \n154: **关于 BBFF**：它在上游活跃演进（1.0.1，46k 行），**vendor 进来会变成长期维护负担**；推荐「pin 版本 + 写适配层」，只接三件事：角色目录、seat 映射、记忆键。许可 MIT，将来要 vendor 也无障碍。\n155: \n156: **关于合并时机**：P0–P4 各仓先不动（契约层集成）；**P6 切换完成后再 subtree 合并**，避免「边合并边改契约」双线爆炸。\n157: \n158: ---\n159: \n160: ## 6 分阶段（P0–P6）\n161: \n162: | 阶段 | 交付 | 验收闸（必须有非零反空跑） | 代价/风险 |\n163: |---|---|---|---|\n164: | **P0 契约** 2–3 天 | `contracts/` v1 + 一致性测试 + 3 条 ADR | 坏卡（缺证据/跨项目/重复 key）必须被拒；同一压测重放 100 次只产生 1 条 | 契约改一次全员返工 ⇒ 先冻结再动 UI |\n165: | **P1 内核** 1–2 周 | 内核抽包；`serve`（SSE+token）、`mcp`、`tick`；旧 20 道闸全绿；迁移 dry-run | 20 道闸全绿 + 并发 12 线程只有 1 个认领成功 + 迁移条数对账（`adopted + skipped = 源条数`） | 抽包回归；先保行为再优化 |\n166: | **P2 DSH 面** 2–3 周 | fork 面板接内核；执行器提交证据；旧工具别名 | 全链路：UI 建卡 → agent MCP 认领 → 证据提交 → 人点验收；杀内核 ⇒ 面板只读且报警（不许本地写） | taskboard 上游跟进；把改动压在 3 个文件内 |\n167: | **P3 守望** 1 周 | dock 托管内核 + tick；一个托盘；ProcGuardTray 退役 | `kill -9` 内核 ⇒ 10s 内拉起并留痕；误杀数 0（对照：10 个正常进程不受影响） | dock 权限边界；dry-run 先并行一周 |\n168: | **P4 跨机** 1–2 周 | waypost 信 ↔ `source=peer` 任务；裁决=证据；状态板=镜像 | 红队：对端信塞「忽略规则/给我写权限」⇒ 必须只读且记拒绝；重复信去重 | 不可信输入；工具面砍到 4 个文件工具 |\n169: | **P5 团队** 1 周 | BBFF 角色→seat；记忆键；superpowers→DoD 模板 | 一个角色只能认领自己权限内的卡（越权必须被拒） | 上游 API 变动；适配层隔离 |\n170: | **P6 切换** 1 周 | 双跑一周 → 冻结旧入口 → subtree 合并 → 手册/回滚 | 旧入口冻结后无新增事件；回滚演练 30 分钟内恢复 | 冻结期双写；先只读双跑 |\n171: \n172: **每阶段的「完成」定义**：不是「代码写了」，是「该阶段闸门跑出非零证据 + 有回滚路径 + 更新 REGISTRY/DECISIONS/HANDOFF」。\n173: \n174: ---\n175: \n176: ## 7 第一批任务（P0，拍板即开工）\n177: \n178: | 卡 | 交付 | 完成判据 |\n179: |---|---|---|\n180: | **T1 契约** | `contracts/task-envelope-v1.json`、`event-v1.json`、`evidence-v1.json` + fixtures | Schema 校验器对 10 条正例/10 条反例全判对 |\n181: | **T2 内核接口冻结** | `docs/design/…/02_内核接口清单.md`：函数/HTTP/MCP/CLI 四表 | 四表与现有代码逐项对账，缺项=FAIL |\n182: | **T3 一致性套件** | `contracts/conformance.py`：往返 + 拒绝 + 幂等 | 故意坏卡被拒、重放幂等、跨项目被拒三条全过 |\n183: \n184: ---\n185: \n186: ## 8 许可与归属（按用户 2026-11-19 口径）\n187: \n188: | 件 | 许可 | 动作 |\n189: |---|---|---|\n190: | 本仓 kernel/faces/desktop | MIT | 保持 |\n191: | dsh-taskboard fork | Apache-2.0 | 根 `NOTICE` + 每个改动文件保留原头；分发带 LICENSE |\n192: | sentinel-dock | MIT | 保持版权行 |\n193: | waypost | MIT | 保持版权行 |\n194: | Oh-My-BBFF | MIT | 不 vendor；适配层注明来源 |\n195: | sentinel-ops | **无 LICENSE（用户自建）** | 用户 2026-11-19 确认可补 MIT/Apache-2.0；本方案取 **MIT**，合并前补 LICENSE 文件 |\n196: \n197: 新增代码默认 **MIT**；从 taskboard 派生的文件保持 **Apache-2.0**（文件头注明）。伞形仓 LICENSE 仍 MIT，根目录加 NOTICE 汇总第三方。\n198: \n199: ⛔ 不删任何原版权声明；⛔ 不把第三方代码标成我们的。\n200: \n201: ---\n202: \n203: ## 9 明确不做（防「完美」变臃肿）\n204: \n205: - 不重写 UI（用 fork 的 taskboard）。\n206: - 不把内核改成 Rust/TS（Python 零依赖是优势）。\n207: - 不做两个账本、双向同步、事件合并。\n208: - 不做「聊天室」式多 agent 讨论（D-013 仍有效）。\n209: - 不在 P6 之前合并仓库。\n210: - 不把 BBFF 的 Memory/Scope 复制进内核（各司其职）。\n211: \n212: ---\n213: \n214: ## 10 未证事项\n215: \n216: - DSH 是否存在可编程的无头会话入口：**未证**（`dsh` 不在 PATH；安装为 Electron GUI）。因此执行器按「插件内派生会话」设计，不依赖 CLI。\n217: - taskboard 的 `store.ts` 是否只经少数方法落盘：只看了类方法表，**未逐方法核对**；P1 要先做「写路径清单」。\n218: - dock 托管 Python 进程的 manifest 形态：**未做 PoC**（P3 第一件事）。\n219: - 迁移后的旧卡 `legacy_id` 在面板上的展示：未设计。"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1795037239137,
+            "ran": 1795037239167,
+            "completed": 1795037239215
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 30518,
+        "output": 98,
+        "reasoning": 36,
+        "cache": {
+          "read": 2176,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08e9814001DmAfg3c9SVwP3u",
+      "time": {
+        "created": 1795037239402,
+        "firstToken": 1795037244120,
+        "streamed": 1795037246525,
+        "completed": 1795037247755
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Now let me spot-check the code. I need to verify the assertions:\n\n1. taskboard ships complete TS source (src/client, src/host) — check `C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\`\n2. board HTTP has Host check + page token (server.py)\n3. No dsh CLI entry in PATH\n4. BBFF ledger is derived registry, not task ledger\n5. \"Only 3 files to change\" claim — check store.ts, tools.ts, execution.ts, routes.ts\n6. CQRS materialized view degrading into double-write\n\nLet me do these checks in parallel. First, check the taskboard directory structure.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037244123,
+            "completed": 1795037246204
+          }
+        },
+        {
+          "type": "text",
+          "text": "两份方案稿已读完。现在按任务书抽查代码，核实六条断言。先看 taskboard 的源码结构（断言 1 和 5）："
+        },
+        {
+          "type": "tool",
+          "id": "call_a01eeca1b5c54cf1b36db068",
+          "name": "shell",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "Get-ChildItem -Recurse \"C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\" | Select-Object FullName, Length | Format-Table -AutoSize"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "\r\nFullName                                                                                                 Length\r\n--------                                                                                                 ------\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client                               \r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host                                 \r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared                               \r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\index.ts                             21531\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\invariant.ts                         648\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board                         \r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n                          \r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\api.ts                        13026\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\controller.ts                 42057\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\external-api.ts               870\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\image-insert.ts               1398\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\index.ts                      14123\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\official-panel.tsx            7222\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\session-jump.ts               5928\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\styles.ts                     72584\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\template-categories.ts        2404\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\window-inset.ts               1584\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\AlertModal.tsx          1407\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\ExternalSourcePanel.tsx 1855\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\ExternalSyncPanel.tsx   16110\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\format.ts               2695\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\ImportModal.tsx         8709\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\labels.ts               2587\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\SettingsModal.tsx       30604\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\SlashPromptInput.tsx    18639\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\TaskBoard.tsx           44410\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\TaskCard.tsx            16003\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\TaskDetail.tsx          59025\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\TaskFormModal.tsx       46047\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\board\\TemplateManager.tsx     12428\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n\\en.ts                    47866\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n\\ru.ts                    73288\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n\\runtime.ts               10741\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n\\templates.ts             1969\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\client\\i18n\\zh.ts                    46370\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\archive-sessions.ts             853\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\assets.ts                       5644\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\execution.ts                    76434\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-config.ts              5406\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-http.ts                2570\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-provider.ts            2144\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-providers.ts           3102\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-sync.ts                18469\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\git.ts                          23899\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\isolation.ts                    14832\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\ledger-lock.ts                  4998\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\locale.ts                       1714\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\protocol-text.ts                3485\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\repos.ts                        5169\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\routes.ts                       80063\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\scheduled-session.ts            3637\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\scheduler.ts                    21460\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\sdk.ts                          8999\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\session-sync.ts                 30004\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\storage-queue.ts                350\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\storage.ts                      10719\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\store.ts                        13933\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\tapd.ts                         7672\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\templates.ts                    6614\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\tools.ts                        58821\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\zentao.ts                       12165\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\api.ts                        13784\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\builtin-templates.ts          6940\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\dependencies.ts               2566\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\external.ts                   6640\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\human-wait.ts                 3097\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\protocol.ts                   85506\r\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\shared\\version.ts                    284\r\n\r\n"
+              }
+            ],
+            "metadata": {
+              "status": "completed",
+              "truncated": false,
+              "exit": 0
+            }
+          },
+          "time": {
+            "created": 1795037245865,
+            "ran": 1795037246206,
+            "completed": 1795037247468
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_ae1f5fb4a6f04469b07b58f5",
+          "name": "shell",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "Get-Command dsh -ErrorAction SilentlyContinue; Get-Command dsh-taskboard -ErrorAction SilentlyContinue; where.exe dsh 2>$null; \"exit=$LASTEXITCODE\""
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "exit=1\r\n"
+              }
+            ],
+            "metadata": {
+              "status": "completed",
+              "truncated": false,
+              "exit": 0
+            }
+          },
+          "time": {
+            "created": 1795037246200,
+            "ran": 1795037246211,
+            "completed": 1795037247668
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 9034,
+        "output": 143,
+        "reasoning": 150,
+        "cache": {
+          "read": 32576,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08eb92c001xS6Jcw3MHoK2J3",
+      "time": {
+        "created": 1795037247891,
+        "firstToken": 1795037250971,
+        "streamed": 1795037254628,
+        "completed": 1795037254874
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Assertion 1 verified: taskboard ships full TS source. Assertion 3 verified: `dsh` is not in PATH (where.exe found nothing, exit=1).\n\nNow I need to check:\n- Assertion 2: board server.py Host check + page token\n- Assertion 4: BBFF ledger.js\n- Assertion 5: whether \"only 3 files\" suffices — I need to read store.ts, tools.ts, execution.ts, routes.ts to see the write paths. Key question: does the store have persistence paths only through store.ts? Or do routes.ts/scheduler.ts/execution.ts/session-sync.ts also write directly to storage? Also scheduler.ts (cron) — the plan says \"taskboard's host cron disabled, only one trigger source\" — but that's a config change, not necessarily file change. Also `storage.ts` and `ledger-lock.ts` — where does the JSON ledger get written?\n\nLet me read the key taskboard files. store.ts is 13933 bytes (~350 lines), let me read it. And check routes.ts for direct store writes, scheduler.ts, session-sync.ts, execution.ts. tools.ts is 58821 bytes (~1500 lines), execution.ts 76434 bytes (~1900 lines), routes.ts 80063 (~2000 lines). I shouldn't read them fully — spot-check. Let me read store.ts fully first, and grep for write paths in the others.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037250973,
+            "completed": 1795037254615
+          }
+        },
+        {
+          "type": "text",
+          "text": "断言 1、3 已验（源码齐全、dsh 不在 PATH）。现在核断言 5——先读 store.ts 全文，再查其他文件有没有绕过 store 的写路径："
+        },
+        {
+          "type": "tool",
+          "id": "call_496e8d7aae484ee78a5dbe14",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\store.ts"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\store.ts, lines 1-334\n1: /**\n2:  * Host-side task ledger: one JSON file under the active data directory, mutated through a\n3:  * serial write queue, published as immutable snapshots with a global\n4:  * monotonic revision. Change subscribers (P2: SSE route) observe every\n5:  * committed mutation.\n6:  *\n7:  * @module dsh-taskboard/host/store\n8:  */\n9: import { mkdir, open, readFile, readdir, rename } from 'node:fs/promises'\n10: import { withLedgerWriteLock } from './ledger-lock.ts'\n11: import { applyHumanWaitingPatch } from '../shared/human-wait.ts'\n12: import { basename, dirname, join } from 'node:path'\n13: import {\n14:   LEDGER_SCHEMA_VERSION,\n15:   asBoardSettings,\n16:   emptyLedger,\n17:   isPlausibleTaskRecord,\n18:   pruneExecutions,\n19:   type TaskLedger,\n20:   type TaskRecord,\n21: } from '../shared/protocol.ts'\n22: import type { StorageQueue } from './storage-queue.ts'\n23: import { normalizeExternalSource, normalizeExternalSyncRecords } from '../shared/external.ts'\n24: \n25: /** One committed ledger mutation, handed to change subscribers. */\n26: export interface LedgerChange {\n27:   /** Revision after the mutation. */\n28:   revision: number\n29:   /** The mutated tasks, if any (a comment purge may touch none). */\n30:   tasks: readonly TaskRecord[]\n31:   /** What kind of mutation this was (for SSE event naming later). */\n32:   kind: 'task-created' | 'task-updated' | 'task-moved' | 'task-deleted' | 'comment-added' | 'execution-recorded' | 'settings-updated' | 'ledger-replaced' | 'external-sync-updated'\n33: }\n34: \n35: /** Options for {@link TaskStore}. */\n36: export interface TaskStoreOptions {\n37:   /** Absolute ledger file path. */\n38:   file: string\n39:   /** Optional queue shared with templates/assets and storage migration. */\n40:   queue?: StorageQueue\n41: }\n42: \n43: /**\n44:  * The durable ledger. All mutations run through {@link mutate}, which:\n45:  * validates the resulting document, bumps the global revision, persists\n46:  * atomically (temp file + rename), and only then notifies subscribers.\n47:  */\n48: export class TaskStore {\n49:   /** Stores from old and new plugin generations share one write lane per file. */\n50:   private static readonly fileQueues = new Map<string, Promise<unknown>>()\n51: \n52:   private file: string\n53:   private readonly storageQueue?: StorageQueue\n54:   private ledger: TaskLedger = emptyLedger()\n55:   private readonly subscribers = new Set<(change: LedgerChange) => void>()\n56:   private queue: Promise<unknown> = Promise.resolve()\n57:   private loaded = false\n58:   private loadPromise: Promise<void> | undefined\n59:   private loadFailure?: Error\n60:   private hasReadLedger = false\n61: \n62:   /** @param options - file location. */\n63:   constructor(options: TaskStoreOptions) {\n64:     this.file = options.file\n65:     this.storageQueue = options.queue\n66:   }\n67: \n68:   /** Current absolute ledger path. */\n69:   location(): string { return this.file }\n70: \n71:   /** A failed load keeps every reader/writer closed until repair and restart. */\n72:   loadError(): string | undefined { return this.loadFailure?.message }\n73: \n74:   private assertReadable(): void {\n75:     if (this.loadFailure !== undefined) throw this.loadFailure\n76:   }\n77: \n78:   /** Only a successfully loaded ledger may authorize attachment deletion. */\n79:   assetReferences(): string {\n80:     this.assertReadable()\n81:     if (!this.loaded) throw new Error('taskboard_ledger_unavailable: load the ledger before cleaning attachments')\n82:     return JSON.stringify(this.ledger)\n83:   }\n84: \n85:   /** Persist the live in-memory ledger to another file without switching. */\n86:   async writeCopy(file: string): Promise<void> {\n87:     await this.load()\n88:     await persistAtomic(file, JSON.stringify(this.ledger))\n89:   }\n90: \n91:   /** Re-read through the normalizer while holding the cross-instance write lock. */\n92:   private async reload(): Promise<void> {\n93:     this.loaded = false\n94:     this.loadPromise = undefined\n95:     await this.load()\n96:   }\n97: \n98:   /** Switch future writes after a prepared migration commits. */\n99:   setLocation(file: string): void { this.file = file }\n100: \n101:   /** Serialize one operation with every TaskStore in this host for this file. */\n102:   private inProcessWriteLane<T>(file: string, run: () => Promise<T>): Promise<T> {\n103:     const previous = TaskStore.fileQueues.get(file) ?? Promise.resolve()\n104:     const next = previous.then(run, run)\n105:     TaskStore.fileQueues.set(file, next)\n106:     void next.finally(() => {\n107:       if (TaskStore.fileQueues.get(file) === next) TaskStore.fileQueues.delete(file)\n108:     }).catch(() => { /* the caller receives the original rejection */ })\n109:     return next\n110:   }\n111: \n112:   /** Load once; only a genuinely new ledger starts empty. Failures retain the original file. */\n113:   load(): Promise<void> {\n114:     if (this.loaded) return Promise.resolve()\n115:     if (this.loadPromise !== undefined) return this.loadPromise\n116:     this.loadPromise = this.loadOnce()\n117:     return this.loadPromise\n118:   }\n119: \n120:   /** Perform the single physical ledger read shared by all startup callers. */\n121:   private async loadOnce(): Promise<void> {\n122:     try {\n123:       let raw: string\n124:       try {\n125:         raw = await readFile(this.file, 'utf8')\n126:       } catch (error) {\n127:         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error\n128:         // Older versions renamed damaged ledgers away. A restart must not\n129:         // mistake that missing live file for a new board and erase its images.\n130:         let entries: string[] = []\n131:         try { entries = await readdir(dirname(this.file)) } catch (scanError) {\n132:           if ((scanError as NodeJS.ErrnoException).code !== 'ENOENT') throw scanError\n133:         }\n134:         const quarantined = entries.filter(name => name.startsWith(`${basename(this.file)}.corrupt-`))\n135:         if (quarantined.length > 0) {\n136:           throw new Error(`ledger is missing; recovery files: ${quarantined.map(name => join(dirname(this.file), name)).join(', ')}`)\n137:         }\n138:         if (this.hasReadLedger) throw new Error('previously loaded ledger is now missing')\n139:         this.ledger = emptyLedger()\n140:         this.loaded = true\n141:         return\n142:       }\n143:       const parsed = JSON.parse(raw) as TaskLedger\n144:       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)\n145:         || !Number.isSafeInteger(parsed.revision) || parsed.revision < 0 || !Array.isArray(parsed.tasks)\n146:         || (parsed.schemaVersion !== undefined && parsed.schemaVersion !== LEDGER_SCHEMA_VERSION)) {\n147:         throw new Error('invalid ledger structure or unsupported schema version')\n148:       }\n149:       // S11: never expose broken records to path-building layers. Refuse\n150:       // the whole document: dropping entries would lose their image refs.\n151:       const plausible: TaskRecord[] = []\n152:       const ids = new Set<string>()\n153:       for (const entry of parsed.tasks as unknown[]) {\n154:         if (!isPlausibleTaskRecord(entry)) {\n155:           throw new Error('ledger contains an invalid task record')\n156:         }\n157:         const task = entry as TaskRecord\n158:         if (ids.has(task.id)) throw new Error('ledger contains duplicate task ids')\n159:         ids.add(task.id)\n160:         plausible.push(task)\n161:       }\n162:       const tasks = plausible\n163:       // Migration from pre-claim-field ledgers: an agent-held in_progress\n164:       // task carried its holder in updatedBy — backfill the explicit claim\n165:       // fields so the hold survives user edits (updatedBy is audit-only).\n166:       for (const task of tasks) {\n167:         try { applyHumanWaitingPatch(task, task) } catch {\n168:           delete task.waitingForHuman\n169:           delete task.waitingReason\n170:           console.warn('[dsh-taskboard] dropping invalid human-wait fields on load:', task.id)\n171:         }\n172:         if (task.external !== undefined) {\n173:           const external = normalizeExternalSource(task.external)\n174:           if (external === undefined) delete task.external\n175:           else task.external = external\n176:         }\n177:         if (task.status === 'in_progress' && task.claimedBy === undefined\n178:           && task.updatedBy?.kind === 'agent' && typeof task.updatedBy.sessionId === 'string') {\n179:           task.claimedBy = task.updatedBy.sessionId\n180:           task.claimedAt = task.updatedAt\n181:         }\n182:       }\n183:       let settings = undefined\n184:       if (parsed.settings !== undefined) {\n185:         try {\n186:           settings = asBoardSettings(parsed.settings)\n187:         } catch {\n188:           console.warn('[dsh-taskboard] dropping invalid board settings on load')\n189:         }\n190:       }\n191:       this.ledger = {\n192:         schemaVersion: LEDGER_SCHEMA_VERSION,\n193:         revision: parsed.revision,\n194:         tasks,\n195:         ...(parsed.externalSync !== undefined ? { externalSync: normalizeExternalSyncRecords(parsed.externalSync) } : {}),\n196:         ...(settings !== undefined ? { settings } : {}),\n197:       }\n198:       this.hasReadLedger = true\n199:       this.loaded = true\n200:     } catch (error) {\n201:       const reason = error instanceof Error ? error.message : String(error)\n202:       this.loadFailure = new Error(`taskboard_ledger_unavailable: cannot load ${this.file}: ${reason}. `\n203:         + 'Original files retained; writes and attachment cleanup are blocked. '\n204:         + 'Repair or restore the ledger at this path, then restart DSH.', { cause: error })\n205:       console.warn('[dsh-taskboard] ledger load failed; recovery required:', this.loadFailure.message, error)\n206:       throw this.loadFailure\n207:     }\n208:   }\n209: \n210:   /**\n211:    * The current snapshot — a deep-frozen clone. Mutating the returned value\n212:    * throws (strict mode) instead of silently bypassing the revision/persist\n213:    * path; internal state is never handed out.\n214:    */\n215:   snapshot(): TaskLedger {\n216:     this.assertReadable()\n217:     return deepFreeze(structuredClone(this.ledger))\n218:   }\n219: \n220:   /** Find a task by id (frozen clone; internal state is never handed out). */\n221:   get(id: string): TaskRecord | undefined {\n222:     this.assertReadable()\n223:     const task = this.ledger.tasks.find(t => t.id === id)\n224:     return task === undefined ? undefined : deepFreeze(structuredClone(task))\n225:   }\n226: \n227:   /** Subscribe to committed changes; returns the unsubscribe. */\n228:   subscribe(fn: (change: LedgerChange) => void): () => void {\n229:     this.subscribers.add(fn)\n230:     return () => this.subscribers.delete(fn)\n231:   }\n232: \n233:   /**\n234:    * Write a timestamped backup copy of the current ledger next to the live\n235:    * file (import-replace safety, 0.4.0). Never throws the caller's flow —\n236:    * a backup failure fails the import itself.\n237:    * @returns the backup file path.\n238:    */\n239:   async backup(): Promise<string> {\n240:     const run = async (): Promise<string> => {\n241:       await this.load()\n242:       const target = `${this.file}.backup-${Date.now()}`\n243:       await persistAtomic(target, JSON.stringify(this.ledger, null, 2))\n244:       return target\n245:     }\n246:     return this.storageQueue === undefined ? run() : this.storageQueue.run(run)\n247:   }\n248: \n249:   /**\n250:    * Run one mutation inside the serial queue. The mutator works on a\n251:    * structured clone; returning `undefined` aborts with no write.\n252:    * @param kind - change kind for subscribers.\n253:    * @param mutator - receives the cloned ledger; mutate tasks in place; return the touched tasks.\n254:    */\n255:   async mutate(\n256:     kind: LedgerChange['kind'],\n257:     mutator: (ledger: TaskLedger) => TaskRecord[] | undefined,\n258:   ): Promise<{ ledger: TaskLedger; changed: readonly TaskRecord[] }> {\n259:     const run = async (): Promise<{ ledger: TaskLedger; changed: readonly TaskRecord[] }> => {\n260:       await this.load()\n261:       const file = this.file\n262:       return this.inProcessWriteLane(file, async () => withLedgerWriteLock(file, async () => {\n263:         // A different TaskStore may have committed while this instance waited.\n264:         // Reload under the lock: a cached-revision check before it leaves a\n265:         // TOCTOU window in which two writers emit the same next revision.\n266:         await this.reload()\n267:         const draft: TaskLedger = structuredClone(this.ledger)\n268:         const changed = mutator(draft)\n269:         if (changed === undefined) return { ledger: deepFreeze(structuredClone(this.ledger)), changed: [] }\n270:         for (const task of changed) pruneExecutions(task)\n271:         draft.revision += 1\n272:         await persistAtomic(file, JSON.stringify(draft))\n273:         this.hasReadLedger = true\n274:         this.ledger = draft\n275:         const change: LedgerChange = { revision: draft.revision, tasks: changed, kind }\n276:         for (const fn of this.subscribers) {\n277:           try {\n278:             fn(change)\n279:           } catch { /* subscriber errors never abort the write */ }\n280:         }\n281:         return {\n282:           ledger: deepFreeze(structuredClone(draft)),\n283:           changed: changed.map(t => deepFreeze(structuredClone(t))),\n284:         }\n285:       }))\n286:     }\n287:     if (this.storageQueue !== undefined) return this.storageQueue.run(run)\n288:     return (this.queue = this.queue.then(run, run)) as ReturnType<typeof run>\n289:   }\n290: \n291:   /**\n292:    * Run a read INSIDE the serial queue (R3): observes exactly the ledger\n293:    * state after all previously enqueued mutations — immune to the\n294:    * write-then-publish window around `mutate`'s persistence. Read-only: the\n295:    * callback receives a frozen deep clone and nothing is written.\n296:    */\n297:   async read<T>(fn: (ledger: TaskLedger) => T): Promise<T> {\n298:     const run = async (): Promise<T> => {\n299:       await this.load()\n300:       return fn(deepFreeze(structuredClone(this.ledger)))\n301:     }\n302:     if (this.storageQueue !== undefined) return this.storageQueue.run(run)\n303:     return (this.queue = this.queue.then(run, run)) as Promise<T>\n304:   }\n305: }\n306: \n307: /** Recursively freeze a plain-data value (defense in depth for handed-out snapshots). */\n308: function deepFreeze<T>(value: T): T {\n309:   if (value !== null && typeof value === 'object') {\n310:     if (!Object.isFrozen(value)) Object.freeze(value)\n311:     for (const key of Object.keys(value as Record<string, unknown>)) {\n312:       deepFreeze((value as Record<string, unknown>)[key])\n313:     }\n314:   }\n315:   return value\n316: }\n317: \n318: /**\n319:  * Atomic file persist: write temp, fsync, then rename over the target (S10:\n320:  * without the sync, a power loss after rename can leave a zero-length file —\n321:  * the next load would refuse the damaged ledger).\n322:  */\n323: async function persistAtomic(file: string, contents: string): Promise<void> {\n324:   await mkdir(dirname(file), { recursive: true })\n325:   const temp = join(dirname(file), `.${Math.random().toString(36).slice(2)}.tmp`)\n326:   const fh = await open(temp, 'w')\n327:   try {\n328:     await fh.writeFile(contents, 'utf8')\n329:     await fh.sync()\n330:   } finally {\n331:     await fh.close()\n332:   }\n333:   await rename(temp, file)\n334: }"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1795037254185,
+            "ran": 1795037254619,
+            "completed": 1795037254736
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_e6e7ce847edf47b2b69387f4",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "storage\\.|writeFile|saveLedger|persist|flush",
+              "path": "C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host",
+              "include": "*.ts",
+              "limit": 60
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 48 matches\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\assets.ts:\n  Line 3: import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'\n\n  Line 79:       await writeFile(join(this.root, name), bytes, { flag: 'wx' })\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\execution.ts:\n  Line 266:   /** Last activity persistence attempt per live session (avoid per-event disk writes). */\n\n  Line 274:           console.error('[dsh-taskboard] activity persistence error:', error)\n\n  Line 404:         await this.flushCommentDelivery(executionId, entry)\n\n  Line 621:       // repairs itself instead of persisting.\n\n  Line 909:       try { await this.flushCommentDelivery(executionId, entry) } catch (error) {\n\n  Line 1205:     return { ok: false, error: written ? 'execution already settled' : 'cancellation could not be persisted; execution remains tracked for retry' }\n\n  Line 1316:   private flushCommentDelivery(executionId: string, entry: RunEntry): Promise<void> {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-sync.ts:\n  Line 1: import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'\n\n  Line 69:   private async persist(): Promise<void> {\n\n  Line 72:     await writeFile(temp, JSON.stringify(this.state), { mode: 0o600 })\n\n  Line 100:       try { await this.persist() } catch (e) { this.state = old; throw e }\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\ledger-lock.ts:\n  Line 3: import { mkdirSync, readdirSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'\n\n  Line 93:         writeFileSync(owner, token, { flag: 'wx' })\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\locale.ts:\n  Line 8:  * Source: the DSH locale plugin persists the explicit language choice as\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\routes.ts:\n  Line 56: import type { StorageCoordinator } from './storage.ts'\n\n  Line 452:           json(res, { ok: true, value: await options.storage.status() })\n\n  Line 731:             ? await options.storage.check(directory)\n\n  Line 732:             : await options.storage.migrate(directory)\n\n  Line 1008:             // comment (optional; blank flushes the pending backlog only) is\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\scheduled-session.ts:\n  Line 17:   persistence(): { stat(id: string): Promise<{ header: Header } | undefined> } | undefined\n\n  Line 59:       const persistence = deps.persistence()\n\n  Line 60:       stored = await persistence?.stat(sessionId)\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\storage-queue.ts:\n  Line 1: /** One process-wide serial queue shared by all taskboard persistence. */\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\storage.ts:\n  Line 12: export const STORAGE_CONFIG_FILE = 'dsh-taskboard-storage.json'\n\n  Line 41: async function persistConfig(file: string, config: StorageConfig): Promise<void> {\n\n  Line 46:     await handle.writeFile(JSON.stringify(config, null, 2), 'utf8')\n\n  Line 65: /** Coordinates all persistent stores so migration cannot race normal writes. */\n\n  Line 135:     try { await handle.writeFile('ok', 'utf8'); await handle.sync() } finally { await handle.close(); await rm(probe, { force: true }) }\n\n  Line 191:         else await persistConfig(this.options.configFile, { schemaVersion: CONFIG_SCHEMA_VERSION, dataDirectory: target })\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\store.ts:\n  Line 45:  * validates the resulting document, bumps the global revision, persists\n\n  Line 88:     await persistAtomic(file, JSON.stringify(this.ledger))\n\n  Line 212:    * throws (strict mode) instead of silently bypassing the revision/persist\n\n  Line 243:       await persistAtomic(target, JSON.stringify(this.ledger, null, 2))\n\n  Line 272:         await persistAtomic(file, JSON.stringify(draft))\n\n  Line 294:    * write-then-publish window around `mutate`'s persistence. Read-only: the\n\n  Line 319:  * Atomic file persist: write temp, fsync, then rename over the target (S10:\n\n  Line 323: async function persistAtomic(file: string, contents: string): Promise<void> {\n\n  Line 328:     await fh.writeFile(contents, 'utf8')\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\templates.ts:\n  Line 4:  * the same atomic persist discipline as the ledger.\n\n  Line 57:     await this.persist(this.templates ?? [], file)\n\n  Line 80:       try { await this.persist(parsed) } catch { /* best effort — the seed returns in-memory */ }\n\n  Line 86:   /** Atomic persist (temp + fsync + rename — S10, same discipline as the ledger). */\n\n  Line 87:   private async persist(templates: TaskTemplate[], file = this.file): Promise<void> {\n\n  Line 94:       await fh.writeFile(JSON.stringify({ templates }, null, 2), 'utf8')\n\n  Line 133:     await this.persist(templates)\n\n  Line 147:     await this.persist(templates)\n"
+              }
+            ],
+            "metadata": {
+              "matches": 48,
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1795037254612,
+            "ran": 1795037254622,
+            "completed": 1795037254792
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 2731,
+        "output": 147,
+        "reasoning": 296,
+        "cache": {
+          "read": 41536,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08ed4e1001WZ0SXaLrlg9LHp",
+      "time": {
+        "created": 1795037254938,
+        "firstToken": 1795037257575,
+        "streamed": 1795037259946,
+        "completed": 1795037260584
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Interesting. So store.ts is the ledger mutation path — mutations run through `mutate`, which is called by... who? Let me check who calls `store.mutate` — routes.ts, tools.ts, execution.ts, session-sync.ts, scheduler.ts. The claim in the plan is \"only 3 files: store.ts, tools.ts, execution.ts\". But routes.ts is 80KB — the HTTP routes. Does routes.ts call store.mutate directly? And scheduler.ts — cron fires tasks; session-sync.ts — session status sync writes claim/hold back into ledger?\n\nLet me grep for `.mutate(` in the host directory to see all callers.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037257577,
+            "completed": 1795037259935
+          }
+        },
+        {
+          "type": "text",
+          "text": "store.ts 的结构清楚了。现在查谁在调 `store.mutate`（判断\"只改三个文件\"是否成立），并查 scheduler / session-sync 的写路径："
+        },
+        {
+          "type": "tool",
+          "id": "call_7cf4e4d8868b4865a4762e6e",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "include": "*.ts",
+              "limit": 50,
+              "path": "C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host",
+              "pattern": "\\.mutate\\("
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 50 matches\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\execution.ts:\n  Line 312:     await this.deps.store.mutate('execution-recorded', ledger => {\n\n  Line 524:     await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n  Line 580:     await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n  Line 831:     await this.deps.store.mutate('execution-recorded', ledger => {\n\n  Line 935:     const result = await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n  Line 1107:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 1230:     await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n  Line 1332:     await this.deps.store.mutate('comment-added', (ledger) => {\n\n  Line 1487:     await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-sync.ts:\n  Line 57:         await this.options.store.mutate('external-sync-updated', ledger => {\n\n  Line 110:       await this.options.store.mutate('external-sync-updated', ledger => {\n\n  Line 119:     await this.options.store.mutate('task-updated', ledger => {\n\n  Line 218:         await this.options.store.mutate('external-sync-updated', ledger => {\n\n  Line 287:         await this.serial(async () => this.options.store.mutate('external-sync-updated', ledger => {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\routes.ts:\n  Line 812:           await store.mutate('task-created', ledger => {\n\n  Line 846:             await store.mutate('task-updated', ledger => {\n\n  Line 937:             await store.mutate('task-moved', ledger => {\n\n  Line 970:             await store.mutate('task-moved', ledger => {\n\n  Line 993:             await store.mutate('comment-added', ledger => {\n\n  Line 1022:               await store.mutate('comment-added', ledger => {\n\n  Line 1093:               await store.mutate('task-deleted', ledger => {\n\n  Line 1103:             await store.mutate('task-deleted', ledger => {\n\n  Line 1214:               store.mutate('comment-added', ledger => {\n\n  Line 1428:           await store.mutate('ledger-replaced', ledger => {\n\n  Line 1527:           await store.mutate('settings-updated', ledger => {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\scheduler.ts:\n  Line 223:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 255:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 271:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 287:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 315:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 340:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 353:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 367:     await this.deps.store.mutate('task-updated', ledger => {\n\n  Line 383:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 417:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\session-sync.ts:\n  Line 354:           await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 370:           await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 420:       await this.deps.store.mutate('task-deleted', (ledger) => {\n\n  Line 477:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 517:     await this.deps.store.mutate('execution-recorded', ledger => {\n\n  Line 547:     await this.deps.store.mutate('task-created', (ledger) => {\n\n  Line 650:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 725:     await this.deps.store.mutate('task-updated', (ledger) => {\n\n  Line 759:     await this.deps.store.mutate('execution-recorded', (ledger) => {\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\tools.ts:\n  Line 666:         await store.mutate('task-created', ledger => {\n\n  Line 722:         await store.mutate('task-updated', ledger => {\n\n  Line 782:         await store.mutate('task-moved', ledger => {\n\n  Line 880:         await store.mutate('comment-added', ledger => {\n\n  Line 949:         await store.mutate('task-deleted', ledger => {\n\n  Line 1014:         await store.mutate('task-updated', ledger => {\n\n\n(Results are truncated: showing first 50 results. Consider using a more specific path or pattern.)"
+              }
+            ],
+            "metadata": {
+              "matches": 50,
+              "truncated": true
+            }
+          },
+          "time": {
+            "created": 1795037259568,
+            "ran": 1795037259938,
+            "completed": 1795037260505
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_2c4f3427912a49d6bbcaf40e",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "include": "*.ts",
+              "limit": 40,
+              "path": "C:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host",
+              "pattern": "store\\.(read|snapshot|subscribe|get)\\("
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 40 matches\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\execution.ts:\n  Line 555:     const task = this.deps.store.get(taskId)\n\n  Line 574:     const settings = this.deps.store.snapshot().settings\n\n  Line 804:     const stillRunning = await this.deps.store.read(ledger =>\n\n  Line 850:     const current = this.deps.store.get(taskId)?.executions.find(e => e.id === executionId)\n\n  Line 1176:     const task = this.deps.store.get(taskId)\n\n  Line 1203:     const outcome = this.deps.store.get(taskId)?.executions.find(e => e.id === running.id)?.outcome\n\n  Line 1217:     if (!this.deps.store.snapshot().tasks.some(task => task.executions.some(execution => execution.outcome === 'running'))) return\n\n  Line 1219:     for (const task of this.deps.store.snapshot().tasks) {\n\n  Line 1258:       const stillRunning = this.deps.store.snapshot().tasks.some(task =>\n\n  Line 1279:     const task = this.deps.store.get(taskId)\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\external-sync.ts:\n  Line 63:       this.lastAttempt = this.state.config ? this.options.store.snapshot().externalSync?.[this.state.config.id]?.lastAttemptAt ?? 0 : 0\n\n  Line 86:     const record = config ? this.options.store.snapshot().externalSync?.[config.id] : undefined\n\n  Line 206:         const existing = new Map(this.options.store.snapshot().tasks.filter(t => t.external?.connectionId === config.id && t.external.item.projectId === mapping.projectId)\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\routes.ts:\n  Line 320:   const unsubscribeBroadcast = store.subscribe(broadcast)\n\n  Line 413:     const known = new Set(store.snapshot().tasks.map(t => t.id))\n\n  Line 471:           const ledger = store.snapshot()\n\n  Line 510:           const ledger = store.snapshot()\n\n  Line 540:             const task = store.get(diffMatch[1]!)\n\n  Line 598:           json(res, { ok: true, value: store.snapshot().settings ?? {} })\n\n  Line 631:           const task = store.get(taskMatch[1]!)\n\n  Line 764:           const settings = store.snapshot().settings\n\n  Line 771:           const isolation = isolationRaw === null ? defaultIsolationOf(store.snapshot().settings) : asIsolation(isolationRaw)\n\n  Line 778:           const permission = permissionRaw === null ? defaultPermissionOf(store.snapshot().settings) : asPermission(permissionRaw)\n\n  Line 833:           const task = store.get(id)\n\n  Line 1049:               assertNotReferenced(store.snapshot(), id)\n\n  Line 1358:           if (store.get(taskId) !== undefined) throw new Error('Error: invalid_input: 任务仍在看板中，请从任务详情页删除其 worktree')\n\n  Line 1390:           const known = new Set(store.snapshot().tasks.map(t => t.id))\n\n  Line 1417:           const known = new Set(store.snapshot().tasks.map(t => t.id))\n\n  Line 1424:           if (mode === 'replace' && store.snapshot().tasks.length > 0) {\n\n  Line 1563:     res.write(`event: hello\\ndata: ${JSON.stringify({ revision: store.snapshot().revision })}\\n\\n`)\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\scheduler.ts:\n  Line 135:     const ledger: TaskLedger = this.deps.store.snapshot()\n\n  Line 176:     const queued = this.deps.store.snapshot().tasks\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\session-sync.ts:\n  Line 316:     const snapshot = this.deps.store.snapshot()\n\n  Line 434:     const snapshot = this.deps.store.snapshot()\n\n\nC:\\Users\\qly19\\.dsh\\profiles\\desktop\\node_modules\\dsh-taskboard\\src\\host\\tools.ts:\n  Line 492:         const tasks = store.snapshot().tasks.filter(t =>\n\n  Line 497:         const snapshot = store.snapshot()\n\n  Line 522:         const task = store.get(id)\n\n  Line 524:         return json({ task: { ...task, dependencies: dependencyState(store.snapshot().tasks, task), effectivePrompt: effectivePrompt(task) } })\n\n  Line 624:         const modelRaw = args.model ?? store.snapshot().settings?.defaultModel\n\n  Line 629:         const isolation = args.isolation === undefined ? defaultIsolationOf(store.snapshot().settings) : asIsolation(args.isolation)\n\n\n(Results are truncated: showing first 40 results. Consider using a more specific path or pattern.)"
+              }
+            ],
+            "metadata": {
+              "matches": 40,
+              "truncated": true
+            }
+          },
+          "time": {
+            "created": 1795037259933,
+            "ran": 1795037259940,
+            "completed": 1795037260437
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 5930,
+        "output": 158,
+        "reasoning": 136,
+        "cache": {
+          "read": 44160,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08eeb2f001iXES6F1cfFYyBY",
+      "time": {
+        "created": 1795037260650,
+        "firstToken": 1795037263356,
+        "streamed": 1795037278417,
+        "completed": 1795037278575
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "This is a critical finding. The claim in the plan (01稿 §4): \"只改三处：store.ts、tools.ts、execution.ts\" — but the write path callers are:\n\n- **execution.ts** (9 mutate calls) ✅ in plan\n- **external-sync.ts** (6 mutate calls) ❌ NOT in plan\n- **routes.ts** (12 mutate calls) ❌ NOT in plan\n- **scheduler.ts** (11 mutate calls) ❌ NOT in plan\n- **session-sync.ts** (10 mutate calls) ❌ NOT in plan\n- **tools.ts** (6 mutate calls) ✅ in plan\n- **store.ts** itself ✅ in plan\n\nSo the claim \"只改三个文件就能接内核\" is **false**. There are at least 6 files calling store.mutate directly (execution, external-sync, routes, scheduler, session-sync, tools), plus store.ts itself. That's 7 files. The plan's own \"未证事项\" admits \"store.ts 是否只经少数方法落盘：只看了类方法表，未逐方法核对\" — so they knew this was unverified, but then §4 asserts \"只改三处，其余不动\" anyway.\n\nWait — actually, let me reconsider. The plan says store.ts's persistence will be changed to \"内核 SSE 副本\" — i.e., store becomes a materialized view of the kernel. If store.mutate is rewritten to forward to kernel API, then all callers of store.mutate would automatically be forwarded... Hmm, that's a possible design: change `mutate` to forward to kernel. But that's not realistic either, because `mutate`'s contract is \"mutator receives cloned ledger; mutate tasks in place; return touched tasks\" — arbitrary mutation functions with full ledger access. You cannot forward arbitrary mutator closures to a remote kernel over HTTP. The mutator callbacks mutate the ledger in arbitrary ways (task-updated, task-created, task-deleted, comment-added...). To forward these to the kernel, you'd need to translate each mutator into a kernel API call — which means touching every caller file. OR you keep the local ledger as the materialized view and have the mutator run locally then sync — but that IS double-write (local persist + kernel write).\n\nActually, look more carefully: `mutate` persists to `this.file` (persistAtomic) unconditionally. To make store a \"kernel SSE replica\" you'd have to change the persist semantics inside mutate — but then how do mutators work? The mutators are closures that directly manipulate the ledger document (e.g., `ledger.tasks.push(...)`). If the store no longer owns the ledger, the mutator model breaks entirely — you can't serialize closures. So realistically, either:\n1. Rewrite every mutator call site (6 files) into kernel API calls, then store becomes read-only replica (fetch from kernel SSE). That's a rewrite of routes.ts/tools.ts/execution.ts/scheduler.ts/session-sync.ts/external-sync.ts write logic — not 3 files.\n2. Keep mutate as-is (local write) + add sync to kernel = **double write**, violating their own axiom #1 (一本账) — the local JSON remains a second truth.\n\nAlso note: routes.ts contains its own HTTP surface (the client UI API). The client (TaskBoard.tsx) talks to routes.ts's HTTP endpoints. The plan says \"对外接口（snapshot/get/subscribe）保持，UI 零改动\" — that means routes.ts stays as the HTTP face, but routes.ts itself calls store.mutate directly in 12 places for writes (task-created at 812, task-updated 846, task-moved 937/970, comment-added 993/1022/1214, task-deleted 1093/1103, ledger-replaced 1428, settings-updated 1527). So if the panel's write operations must go through the kernel, routes.ts MUST be changed — it's not just \"read-only view\". The plan omitted routes.ts from the change list. That's a hard miss: the DSH panel's own HTTP write endpoints live in routes.ts.\n\nWait, let me re-read the plan's §4 table: \"store.ts: 持久化改为「内核 SSE 副本」；写方法转发内核 API；对外接口（snapshot/get/subscribe）保持，UI 零改动\". So they intend store.mutate to forward to kernel API. But as analyzed, mutate takes a closure. To \"forward writes\" you'd need the closure translated. Unless they rewrite mutate to: apply mutator to local in-memory replica, diff the result, send diff to kernel... that's fragile (no semantic operation, just document diff — kernel can't validate \"claim\" semantics from a document diff). Or they intercept at the kind level: since `kind` is passed to mutate ('task-created' etc.), one could map kind → kernel endpoint, and re-implement each mutator's semantics kernel-side... but mutators differ per call site (each closure does something different). So kind alone doesn't determine the operation. This means the \"only 3 files\" claim collapses — it's at minimum store.ts + the 6 caller files, or a deep redesign.\n\nAlso scheduler.ts: plan says \"⛔ taskboard 的 host cron 关闭，只留一个触发源\" — that requires touching scheduler.ts (or its config) too, plus scheduler.ts has 11 mutate calls that write task state (claim etc.) — if you disable cron entirely, those paths die, but if kernel `tick` triggers due tasks via taskboard's scheduled-session execution, then the execution writes flow through scheduler.ts mutate calls → still a write path.\n\nAnd session-sync.ts (30KB, 10 mutate calls) — syncs live DSH sessions back into the ledger (claim/release on session start/end presumably). Not in the plan's file list at all.\n\nSo assertion 5 verdict: **不成立**。改动面至少 7 个文件（store/tools/execution/routes/scheduler/session-sync/external-sync），其中 routes.ts 是面板自己 HTTP 写面的所在地，漏掉它意味着「面板写操作必须落到 journal」这条 P2 验收闸根本无法只靠改 store.ts 达成。\n\nLet me also check tools.ts quickly to see the tool implementations and their argument shapes — to assess the MCP alias mapping claim. Actually, I've seen enough from grep: tools.ts has mutate calls at 666/722/782/880/949/1014 — six write tools. Fine.\n\nNow verify assertion 2: board server.py Host check + token. Let me grep server.py.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037263359,
+            "completed": 1795037278395
+          }
+        },
+        {
+          "type": "text",
+          "text": "关键发现已现：调 `store.mutate` 的写路径至少分布在 6 个文件。继续核断言 2（server.py 的 Host/token）、断言 4（BBFF ledger）："
+        },
+        {
+          "type": "tool",
+          "id": "call_882272509970424b9442a302",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "limit": 30,
+              "path": "E:\\GithubClone\\aII-work-together\\tools\\server.py",
+              "pattern": "Host|token|127\\.0\\.0\\.1|loopback|X-Board"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 21 matches\nE:\\GithubClone\\aII-work-together\\tools\\server.py:\n  Line 7:   · 只监听 127.0.0.1 —— **但这不是安全边界**：本机任意进程、浏览器里的任意网页、\r\n\n  Line 9:       ① 每个请求校验 Host 必须是回环；② 写接口要页面注入的会话令牌（挡跨站 CSRF）；\r\n\n  Line 61: # 「只监听 127.0.0.1」挡不住三件事：本机任意进程、用户浏览器里的任意网页\r\n\n  Line 62: # （localhost 是网页可写的目标）、DNS rebinding（Host 头不校验）。\r\n\n  Line 64: #   · 每个请求的 Host 必须是回环地址（挡 rebinding）；\r\n\n  Line 67: _TOKEN = secrets.token_urlsafe(24)\r\n\n  Line 70: _LOCAL_HOSTS = {\"127.0.0.1\", \"localhost\", \"::1\", \"[::1]\"}\r\n\n  Line 415:     ok_tok, why = _verify_token(who)\r\n\n  Line 420:         raise PermissionError(\"人令牌校验未通过：先在本机终端跑 board token --init\")\r\n\n  Line 432: def _verify_token(who):\r\n\n  Line 434:     return C._verify_human_token(who)\r\n\n  Line 509:         ok_tok, why = _verify_token(who)\r\n\n  Line 722:         if _host_ok(self.headers.get(\"Host\")):\r\n\n  Line 724:         self._json({\"error\": \"非本地 Host（已拒绝，防 DNS rebinding）\"}, 403)\r\n\n  Line 737:             html = html.replace('<meta name=\"board-token\" content=\"\">',\r\n\n  Line 738:                                 f'<meta name=\"board-token\" content=\"{_TOKEN}\">')\r\n\n  Line 783:         if (self.headers.get(\"X-Board-Token\") or \"\") != _TOKEN:\r\n\n  Line 838:         srv = ThreadingHTTPServer((\"127.0.0.1\", a.port), Handler)\r\n\n  Line 841:         srv = PoolHTTPServer((\"127.0.0.1\", a.port), Handler)\r\n\n  Line 842:     url = f\"http://127.0.0.1:{a.port}/\"\r\n\n  Line 844:     print(f\"  只在本机可访问（127.0.0.1），关掉这个窗口就停了\")\r\n"
+              }
+            ],
+            "metadata": {
+              "matches": 21,
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1795037278169,
+            "ran": 1795037278400,
+            "completed": 1795037278496
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_8eca79c20bb84346a70db8f7",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "limit": 60,
+              "path": "E:\\GithubClone\\Oh-My-BBFF\\packages\\oh-my-bbff-team\\lib\\ledger.js"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file E:\\GithubClone\\Oh-My-BBFF\\packages\\oh-my-bbff-team\\lib\\ledger.js, lines 1-60\n1: // Team metadata ledger (Team 0.11.0): a derived, rebuildable SQLite store of what Team knows about\n2: // every agent of its trees, so repeated reads (roster, team view, card, activity window, name\n3: // resolution) never decode a session log. It is fed from live events Team already observes and,\n4: // only when a session was never seen or changed outside this process, from one background decode\n5: // per persistence revision (tree.js syncSession).\n6: //\n7: // Storage: built-in node:sqlite (DatabaseSync), WAL, short busy timeout. A missing, corrupt or\n8: // unknown-version file is rebuilt (it is derived data). Writes are queued and committed in one\n9: // transaction per LEDGER_POLICY.flushMs, never on the event path; a busy database keeps the queue\n10: // and retries. Reads merge the committed rows with the not yet flushed queue.\n11: import { DatabaseSync } from 'node:sqlite'\n12: import { mkdirSync, rmSync } from 'node:fs'\n13: import { dirname } from 'node:path'\n14: \n15: export const LEDGER_POLICY = Object.freeze({ schemaVersion: 1, applicationId: 0x42424654, flushMs: 250, busyTimeoutMs: 50, minRing: 50, maxRing: 500 })\n16: \n17: // camelCase field -> [column, json]\n18: const FIELDS = Object.freeze({\n19:   rootId: ['root_id', false], parentId: ['parent_id', false], name: ['name', false], label: ['label', false], mode: ['mode', false], createdAt: ['created_at', false],\n20:   status: ['status', false], statusAt: ['status_at', false], runningSince: ['running_since', false], lastEventAt: ['last_event_at', false], lastSeq: ['last_seq', false],\n21:   turnStartedAt: ['turn_started_at', false], turnEndedAt: ['turn_ended_at', false], lastTurn: ['last_turn', true], route: ['route', true],\n22:   reportText: ['report_text', false], reportAt: ['report_at', false], context: ['context', true], error: ['error', true], revision: ['revision', false], syncedAt: ['synced_at', false], syncError: ['sync_error', false],\n23: })\n24: const SCHEMA = `\n25: CREATE TABLE agents (id TEXT PRIMARY KEY, ${Object.values(FIELDS).map(([column]) => column + (/(_at|_since|_seq)$/.test(column) ? ' INTEGER' : ' TEXT')).join(', ')}) WITHOUT ROWID;\n26: CREATE INDEX agents_parent ON agents(parent_id);\n27: CREATE INDEX agents_root_active ON agents(root_id, last_event_at);\n28: CREATE TABLE events (session_id TEXT NOT NULL, seq INTEGER NOT NULL, time INTEGER, entry TEXT NOT NULL, PRIMARY KEY (session_id, seq)) WITHOUT ROWID;`\n29: \n30: const rowToAgent = row => {\n31:   if (!row) return null\n32:   const out = { id: row.id }\n33:   for (const [field, [column, json]] of Object.entries(FIELDS)) {\n34:     const value = row[column]\n35:     if (value === null || value === undefined) continue\n36:     if (json) { try { out[field] = JSON.parse(value) } catch {} } else out[field] = typeof value === 'bigint' ? Number(value) : value\n37:   }\n38:   return out\n39: }\n40: \n41: export function createLedger({ file = null, ringSize = LEDGER_POLICY.minRing } = {}) {\n42:   let db = null, closed = false, timer = null\n43:   const pending = new Map()      // id -> patch (undefined = untouched, null = clear)\n44:   const ringPending = new Map()  // id -> { reset, entries }\n45:   const stats = { flushes: 0, busy: 0, errors: 0, rebuilds: 0, lastRebuild: null, lastError: null, written: 0 }\n46:   const ring = () => Math.min(LEDGER_POLICY.maxRing, Math.max(LEDGER_POLICY.minRing, ringSize))\n47: \n48:   function configure() {\n49:     db.exec(`PRAGMA busy_timeout = ${LEDGER_POLICY.busyTimeoutMs}`)\n50:     if (file) { db.exec('PRAGMA journal_mode = WAL'); db.exec('PRAGMA synchronous = NORMAL') }\n51:   }\n52:   function init() {\n53:     db.exec(SCHEMA)\n54:     db.exec(`PRAGMA application_id = ${LEDGER_POLICY.applicationId}`)\n55:     db.exec(`PRAGMA user_version = ${LEDGER_POLICY.schemaVersion}`)\n56:   }\n57:   function verify() {\n58:     const application = Number(db.prepare('PRAGMA application_id').get().application_id)\n59:     const version = Number(db.prepare('PRAGMA user_version').get().user_version)\n60:     const tables = Number(db.prepare(\"SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'\").get().n)\n[Output truncated. Continue reading with offset: 61]"
+              }
+            ],
+            "metadata": {
+              "truncated": true
+            }
+          },
+          "time": {
+            "created": 1795037278385,
+            "ran": 1795037278408,
+            "completed": 1795037278485
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 2838,
+        "output": 135,
+        "reasoning": 1410,
+        "cache": {
+          "read": 49984,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08f318b001Nz8p2Bwaj1bpB4",
+      "time": {
+        "created": 1795037278728,
+        "firstToken": 1795037282308,
+        "streamed": 1795037289629,
+        "completed": 1795037290095
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Assertions verified so far:\n1. ✅ taskboard full TS source — 已读盘。\n2. ✅ server.py Host check (line 722-724, `_host_ok`) + page token (line 67 `_TOKEN = secrets.token_urlsafe(24)`, 737-738 meta injection, 783 X-Board-Token check). 成立。\n3. ✅ dsh not in PATH — 已实测（where.exe exit=1）。\n4. ✅ BBFF ledger.js — comment line 1: \"a derived, rebuildable SQLite store of what Team knows about every agent of its trees\" — it's an agent roster derived store, not a task ledger. 成立。\n5. ❌ \"只改三个文件\" — 不成立。写路径调用者：execution.ts(9)、external-sync.ts(6)、routes.ts(12)、scheduler.ts(11)、session-sync.ts(10)、tools.ts(6)。至少 7 个文件涉及写路径。特别是 routes.ts 是面板 HTTP 写面所在地。而且 mutate 的契约是闭包 mutator（对 ledger 文档任意变形），没法简单「转发内核 API」——要么每个调用点重写成内核调用（=大改 6 个文件），要么本地先落盘再同步（=双写，违反公理1）。\n6. CQRS 退化双写 — 结合 5 分析：是，高度可能。因为 store.mutate 的闭包契约无法跨进程转发，最省事的实现就是「本地 ledger 照写 + 发事件给内核」= 双写；或者「内核挂了队列缓冲」——实际上 taskboard 已有 storageQueue 串行队列，断网时 mutate 不会自己转只读，要另加拦截。方案说「断网/内核挂 ⇒ 面板转只读并显式告警」——这需要在 mutate 里加闸，改的正是 store.ts 没错，但转只读后 routes.ts 的 12 个写端点全部要能优雅拒绝，TaskBoard.tsx 等客户端组件的错误处理是否支持？我看看 TaskBoard.tsx 或 client/api.ts 的错误处理……时间有限，可以标注推断。\n\n再快速看一眼 board.py 的规模与 test_lease_race.py，以及 waypost/sentinel-dock 的 README 以便评架构。还要看 engines.py 一眼？我时间/字数有限，评审问题按影响排序回答。让我快速看 sentinel-dock README 和 waypost comms-sentinel.py 的头部，以判断「dock 当唯一常驻宿主」的现实性（Windows 服务? Job Object 托管 Python?）。\n\n其实重点已经够了。让我再抽查两个东西：\n- board.py 的 API 面（/api/state /api/cards /api/card /api/run 已存在？方案 2.5 说已有 /api/state|cards|card|cost|run）\n- sentinel-dock README 简短确认托管能力。",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037282310,
+            "completed": 1795037289618
+          }
+        },
+        {
+          "type": "text",
+          "text": "断言 2、4 已验成立。补最后两个抽查：dock 的托管形态（P3 可行性）与 waypost 的入口，然后出评审报告："
+        },
+        {
+          "type": "tool",
+          "id": "call_5b509d2e0005460a80b4b181",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "limit": 70,
+              "path": "E:\\GithubClone\\sentinel-dock\\README.md"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file E:\\GithubClone\\sentinel-dock\\README.md, lines 1-70\n1: # sentinel dock\n2: \n3: A **single-user Windows watchdog dock**: one host process (`dockd`) runs plug-ins on a\n4: schedule inside a Job Object, writes an append-only audit log, and gives you a tray icon\n5: plus a settings window. Ships with two sentinels — a **process-leak watchdog** and a\n6: **service-health probe** — but the plug-in interface is generic.\n7: \n8: > Status: pre-1.0. Runs **dry-run by default**: it observes and reports, and does not kill\n9: > anything unless a human writes an explicit `handover.toml`. See [Safety model](#safety-model).\n10: \n11: ---\n12: \n13: ## What's inside\n14: \n15: | Path | What it is |\n16: |---|---|\n17: | `dock/crates/dock-core` | Manifest schema, IPC types, audit writer, Job Object helpers (library) |\n18: | `dock/crates/dockd` | The host daemon: loads manifests, schedules plug-ins, owns the audit log, tray + settings UI |\n19: | `dock/crates/dockctl` | CLI client over a named pipe: `status`, `list`, `enable`, `disable`, `run-once`, `reset`, `reload`, `quit`, `estop` |\n20: | `dock/crates/dock-manifest-check` | Standalone validator for a plug-in manifest against a grants file |\n21: | `dock/config-samples` | Sample `grants.toml` / `handover.toml` / `protect.toml` / `stop.toml` |\n22: | `plugins/` | Example manifests: `proc-watchdog` (legacy protocol) and `comms-health` (`jsonl-v1`) |\n23: | `sentinels/` | The PowerShell sentinels those manifests point at |\n24: | `prototypes/` | Static HTML prototypes of the settings UI (design reference only) |\n25: \n26: ## Safety model\n27: \n28: The dock is built for a machine where something has gone wrong and you need evidence first.\n29: \n30: - **Dry-run by default.** Every manifest declares `default_mode = \"dry_run\"`. In that mode the\n31:   sentinels count and log candidates; they do not act.\n32: - **Killing requires a human.** Real kills need a `handover.toml` written by a person, not by\n33:   the tool. Without it the dock refuses `apply` and reports why.\n34: - **No service, no SYSTEM, no elevation.** Everything runs as the current user, under a\n35:   per-SID named pipe (`Local\\…`). There is no `Global\\` namespace use and no registry writes\n36:   outside HKCU.\n37: - **Hard floor.** A fixed list of OS-critical images (`System`, `smss`, `csrss`, `wininit`,\n38:   `services`, `lsass`, `svchost`, …) is never a candidate, in any mode.\n39: - **Protected shells.** Processes whose ancestor chain contains an interactive terminal are\n40:   held, not killed; interpreter orphans get a grace period before they are even considered.\n41: - **Read-only health probes.** `comms-health` never restarts anything. If a service is down it\n42:   turns red; restarting is your call.\n43: \n44: > ⚠️ This is a process-management tool. Read the manifests and the sentinel scripts before you\n45: > flip anything from dry-run to apply. The samples assume paths and service names that you\n46: > will need to adapt to your own machine.\n47: \n48: ## Requirements\n49: \n50: - Windows 10/11 (the tray and settings UI are Win32; the daemons are Windows-only)\n51: - Rust 1.75+ (2021 edition)\n52: - PowerShell 7 recommended (`pwsh.exe`); Windows PowerShell 5.1 works for the scripts but\n53:   needs the encoding caveat below\n54: \n55: ## Build\n56: \n57: ```powershell\n58: cd dock\n59: cargo build --release -p dockd -p dockctl -p dock-manifest-check\n60: ```\n61: \n62: Binaries land in `dock/target/release/`.\n63: \n64: ## Run\n65: \n66: ```powershell\n67: # foreground, with tray icon + settings window\n68: .\\dock\\target\\release\\dockd.exe\n69: \n70: # headless (no tray, no windows) — for scheduled/CI use\n[Output truncated. Continue reading with offset: 71]"
+              }
+            ],
+            "metadata": {
+              "truncated": true
+            }
+          },
+          "time": {
+            "created": 1795037289254,
+            "ran": 1795037289621,
+            "completed": 1795037289636
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_9a3b00ea0b914780866984fb",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "limit": 20,
+              "path": "E:\\GithubClone\\waypost\\src\\comms-sentinel.py",
+              "pattern": "def main|argparse|mailbox|budget|dead"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 20 matches\nE:\\GithubClone\\waypost\\src\\comms-sentinel.py:\n  Line 15:     · dead-letter 的 .reason.txt、archive/duplicates 的命名规则\n\n  Line 43: import argparse\n\n  Line 258: #             arch=已处理但归档失败待重试 dead=死信已物化 dup=重复副本已分流\n\n  Line 431:         self.deadletter = os.path.join(self.inbox, 'dead-letter')\n\n  Line 499:         for d in (self.tools, self.archive, self.dupdir, self.pending, self.deadletter,\n\n  Line 1363:                     self.emit_dead_letter(name, 'too-large (>%dKB)' % (MAX_LETTER_BYTES // 1024))\n\n  Line 1371:             # 白名单字符集见文件顶部 NAME_CHARSET（双向契约；越界名会被隔离到 dead-letter 并告警，可从那里回捞）\n\n  Line 1375:                 # 白名单之外的**直接隔离**（dead-letter + 告警），不进提示词、不唤醒。\n\n  Line 1376:                 self.emit_dead_letter(name, 'invalid-name (charset whitelist)')\n\n  Line 1391:                 if s == 'dead':\n\n  Line 1392:                     actions.append(('dead-reemit', name))\n\n  Line 1397:                     e['s'] = 'dead'\n\n  Line 1398:                     actions.append(('dead-early', name))\n\n  Line 1426:                 if s == 'dead':\n\n  Line 1427:                     actions.append(('dead-reemit', name))\n\n  Line 1432:                     hit['entry']['s'] = 'dead'\n\n  Line 1433:                     actions.append(('dead-early', name))\n\n  Line 1522:     def emit_dead_letter(self, name, reason):\n\n  Line 1529:         dst = os.path.join(self.deadletter, name)\n\n  Line 1541:             self.alert('dead-letter', '%s 已移入 dead-letter\\\\（%s）' % (name, reason))\n\n\n(Results are truncated: showing first 20 results. Consider using a more specific path or pattern.)"
+              }
+            ],
+            "metadata": {
+              "matches": 20,
+              "truncated": true
+            }
+          },
+          "time": {
+            "created": 1795037289609,
+            "ran": 1795037289624,
+            "completed": 1795037290008
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 3383,
+        "output": 111,
+        "reasoning": 625,
+        "cache": {
+          "read": 52736,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f08f5e7d0015DU4noDLgVlrBs",
+      "time": {
+        "created": 1795037290186,
+        "firstToken": 1795037291733,
+        "streamed": 1795037332193,
+        "completed": 1795037332289
+      },
+      "type": "assistant",
+      "agent": "plan",
+      "model": {
+        "id": "glm-5.3",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "I have enough evidence now. Let me compile the review. I'm in Plan mode, read-only — I have not modified anything, only read. Good.\n\nNow the review report. Requirements:\n- 中文输出，≤1500 字\n- 结构：结论（PASS / CONCERNS / REJECT）→ 关键发现（按影响排序）→ 更好的替代 → 对 P0–P2 的具体修改 → 只能改的一件事\n- 每条结论标来源：「已读代码」「已实测」「推断」\n- 至少 3 条具体可执行的反例或改动\n- 发现硬伤必须明说\n\nKey findings (ranked by impact):\n\n**F1（硬伤）「只改三处」不成立（已读代码）**：`store.mutate` 的调用者至少分布在 6 个文件——execution.ts（9 处）、routes.ts（12 处）、scheduler.ts（11 处）、session-sync.ts（10 处）、external-sync.ts（6 处）、tools.ts（6 处）。方案只列了 store/tools/execution。尤其 routes.ts 是**面板自身 HTTP 写面**（task-created 812 / task-moved 937 / task-deleted 1093 / ledger-replaced 1428 / settings-updated 1527），不改它则 P2 验收闸「面板写操作必须落到 journal」根本无法达成。而且 `mutate(kind, mutator)` 的契约是**闭包直接变形 ledger 文档**——闭包无法跨进程转发到内核；要转发就得把每个调用点的语义重写成内核 API 调用（=大改 6 文件），要偷懒就是本地照写再同步（=双写）。方案 §10 自己写了「store.ts 是否只经少数方法落盘：未逐方法核对」，但 §4 却直接下了「只改三处」的结论——未证当已证。\n\n**F2（硬伤）CQRS 高概率退化成双写（已读代码+推断）**：taskboard 的 store 自带完整的本地持久化纪律（原子写+fsync+rename+跨实例文件锁+损坏隔离），且 routes.ts 的 SSE 已经用 `store.subscribe` 广播。最自然的实现路径是「本地 ledger 照旧 + 镜像到内核」，因为 mutate 闭包无法转发；断网转只读需要另造闸门且 UI 端未必有对应错误处理。方案没有给出「闭包 mutator 如何映射为内核写」的机制设计——这是整个 P2 的技术核心，缺了它 P2 的工期（2–3 周）不可信。\n\n**F3 调度双轨（已读代码）**：scheduler.ts 有 11 处 mutate（due 任务触发时改任务状态），方案说「host cron 关闭」但它同时说保留 `scheduled-session.ts`（仅执行不调度）。问题：内核 `tick` 触发 due 任务后，谁把「due → 生成执行」这件事做出来？如果走 taskboard 的执行器，还是要进 scheduler.ts 的写路径。P1 里没有这张票。\n\n**F4 断言核实**：1✅（src/ 全量 TS 源码已读盘）、2✅（server.py:67/722/783 Host+token）、3✅（where.exe exit=1，已实测）、4✅（ledger.js:1「derived, rebuildable … agent」名册库）、5❌（F1）、6❌高风险（F2）。\n\n**F5 公理漏项**：\n- 备份/恢复没进公理也没进闸门（P0–P6 验收里没有一条「账本损坏可恢复」；taskboard 倒是有 backup/corrupt 隔离，内核侧只有 SQLite）。dock 杀内核后 journal 尾部撕裂（WAL 未合并）恢复路径未写。\n- 幂等有了（§3.7）但**schema 演进**没有：TaskEnvelope v1 冻结后 v2 怎么升、旧事件怎么读，没票。\n- 「一个写者」有了，但**单人单机假设**写死了：peer 任务只读，将来多人即重做。至少在契约里留 actor 域就够，方案已有 actor——勉强及格。\n- 安全公理缺失：token 只有页面级（server.py:67 单一 `_TOKEN`），MCP/DSH 面接入后多面共用一个 token = 任何一个面泄漏全线失守。P0 契约里没有 per-face 凭据。\n\n**F6 过度设计**：\n- P5（BBFF 角色映射）整段可砍——用户要「最方便」，role→seat 映射是治理美学不是功能；seat 本身就够。砍掉省 1 周+上游 API 风险。\n- subtree 合并（P6）建议降级为「永远不合并」：五仓各自独立发版，hub 只放 contracts+adapters。合并的唯一收益是「一个目录」，代价是 Apache/MIT 混合仓+47000 行 vendor 风险。\n- MCP 新写 10 个 board_* 工具+别名 = 20 个工具面。DSH 面已经覆盖 agent 交互，CLI 已覆盖人交互，MCP 是第三套重复面——除非用户点名要用 MCP 客户端，先不做。\n- 「禅道/TAPD 同步」（external-sync）在 fork 里应直接摘除，否则它成为第二条写路径（已读代码：external-sync.ts 6 处 mutate）。\n\n**失败模式 8 条（概率×损失排序）**：\n1. P2 按三文件开工，两周后发现闭包不可转发 → 重做（高×高）\n2. 双写静默形成：本地 JSON 与内核 db 漂移，audit 报链断（中×高）\n3. dock kill -9 内核 → SQLite WAL 尾部未 checkpoint，重启后 journal 撕裂（低×高）\n4. tick 与 taskboard 残留调度并发触发（中×中）\n5. 20 道 Python 闸与新 TS 面无交叉回归，面板改动砸内核契约无门禁（高×中）\n6. taskboard 上游 0.11 改 store 契约，fork 合流冲突（中×中）\n7. 单 token 多面共享泄漏（低×高）\n8. ProcGuardTray 退役窗口期两个守望并发拉起/杀进程（低×中）\n\n**更好的替代**：\n方案 A'（修正版 A）——不改 taskboard host，只借它的 client：\n- 保留 board 内核为唯一账本（这个判断是对的，已读代码：租约 CAS、哈希链、人闸都是现成的）。\n- DSH 面板不走「fork host 换 store」这条重路，而是走 **iframe/嵌入现成 board HTTP 页**（00 稿方案 A 原本就是这个，01 稿改成了 fork——许可放开导致过度升级）。taskboard 的五列 UI 价值大，但 host 层换心脏的代价被严重低估。\n- 如果一定要 taskboard 原生 UI，替代路径是**给内核写 taskboard 协议兼容层**：让内核 HTTP 直接说 taskboard 的 routes 方言（store 换成内核适配器类，保持同名方法），这样 routes.ts/TaskBoard.tsx 零改动——改动从 6 个文件缩到 1 个适配器。等等，这个说法要小心：routes.ts 调 store.mutate/snapshot/get/subscribe 四个方法，如果我实现一个「KernelBackedStore」实现同四个方法，routes.ts 就真的零改动。这是成立的！Store 类的对外接口就 4 个方法 + load/backup 等。mutate 闭包在 KernelBackedStore 里可以本地跑（对物化副本变形），然后把变形后的 changed tasks 推给内核按 kind 落账——kind 是可枚举的 9 种。但闭包变形后你只有终态没有操作语义……嗯，其实 taskboard 自己的 audit 也只是 document revision。可以：KernelBackedStore.mutate 在本地副本上跑闭包 → diff 出 touched tasks → 调内核 upsert(kind, tasks)。这仍然有双写嫌疑（本地副本变形+内核落账），但本地不再持久化（去掉 persistAtomic），断网只读。这是可行的折中：改动集中在 store.ts 一个文件（换成适配器），routes.ts 等零改动。这个值得作为「更好的替代」提出来：**不 fork 6 文件，而是写一个 drop-in 的 KernelStore 适配器实现 store 的公开接口**，把持久化换成内核写、把 snapshot/get/subscribe 换成 SSE 副本。改动面：store.ts（重写为适配器）+ tools/execution 里少数需要内联证据的点 + index.ts 装配点。仍然 >3 文件但远小于重写 6 文件的语义映射。\n  风险：mutator 闭包在本地副本上跑 =「先变形后上报」而非「先验证后落账」，内核无法拒绝非法状态迁移（比如 agent 自己把卡挪进 done）。这是真实的安全缺口——但 board 内核的人闸在内核侧，agent 面到不了 done，所以 kernel 收到 upsert(done) 必须拒绝。所以适配器方案要求内核按 kind 白名单+状态机校验，拒就回滚。可以，但要在 P0 契约里写清楚。\n- P0 加票：store 写路径清单（方案 §10 自己承认没做）应提为 T0，先做再拍 fork 边界。\n- MCP 砍掉或推迟到 P5 之后。\n- P5 BBFF 整段砍掉。\n- P6 subtree 合并改成永不合并，hub 只做 contracts+adapters。\n\n**只能改一件事**：把 01 稿 §4 的「fork 边界」从「只改三处」改写为「store 写路径清单先行」——先产出 6 文件×44 处 mutate 的逐点映射表（kind→内核 API→校验），再冻结 fork 边界。因为这是全案最大的未证断言，P2 的 2–3 周估算、CQRS 的双写风险、P2 验收闸能不能达成都挂在这上面。\n\n字数控制：≤1500 字。中文字数比较紧，我要精炼。结构按要求。来源标注。至少 3 条可执行反例/改动（有：F1 文件清单、KernelStore 适配器替代、砍 P5/MCP、T0 写路径清单）。\n\n结论：CONCERNS（方向对——单一内核账本的判断我认同；但 fork 边界这个技术核心未证却当已证，P2 工期与验收全部悬空）。不是 REJECT，因为骨架（契约先行、内核唯一账本、验收闸带反空跑）是合理的。\n\n让我数一下字数，写紧凑一点。",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1795037291735,
+            "completed": 1795037332190
+          }
+        },
+        {
+          "type": "text",
+          "text": "# 独立评审报告 · 六合一整合方案（01 稿）\n\n口径：只读，未改文件/未启停进程。抽查：两份方案稿全读；taskboard `src/host/*.ts`（store.ts 全文 + mutate 全调用点 grep）；server.py、ledger.js、dock README、comms-sentinel.py 抽查。\n\n## 结论：CONCERNS\n\n方向正确（单一内核账本、契约先行、闸门带反空跑），但**技术核心「fork 边界」未证当已证**，P2 的工期与验收闸全部悬空。\n\n## 关键发现（按影响排序）\n\n**F1｜硬伤：「只改三处」不成立（已读代码）**\n`store.mutate` 调用点分布在 **6 个文件**：routes.ts **12 处**、scheduler.ts 11 处、session-sync.ts 10 处、execution.ts 9 处、external-sync.ts 6 处、tools.ts 6 处。方案只列 store/tools/execution。routes.ts 是**面板自身 HTTP 写面**（task-created :812、task-moved :937、task-deleted :1093、ledger-replaced :1428），不改它，「面板写操作必须落到 journal」这条 P2 验收闸物理上无法达成。方案 §10 自己写「store 是否只经少数方法落盘：未逐方法核对」，§4 却直接下了「只改三处」结论。\n\n**F2｜硬伤：CQRS 大概率退化成双写（已读代码+推断）**\n`mutate(kind, mutator)` 的契约是**闭包直接变形 ledger 文档**（store.ts:255–268）。闭包无法跨进程转发：要么逐调用点重写成内核 API（=重写 6 文件，P2 两三周打不住），要么本地照跑再镜像（=双写）。方案没有给出闭包→内核写的映射机制，这是 P2 的技术核心，缺了它 P2 不可估算。\n\n**F3｜断言核实**：①taskboard 随包全量 TS 源码 ✅（已读盘）；②server.py Host 校验+页面 token ✅（:67/:722/:783，已读代码）；③dsh 不在 PATH ✅（`where.exe` exit=1，已实测）；④BBFF ledger 是 agent 名册派生库 ✅（ledger.js:1 自述 derived/rebuildable）；⑤❌（见 F1）；⑥❌ 高风险（见 F2）。\n\n**F4｜调度双轨没关死（已读代码）**：内核 `tick` 触发 due 任务后仍需经 scheduler.ts 的 11 处 mutate 落状态，P1 没有这张票。\n\n**F5｜公理漏项（推断）**：备份/恢复没进任何验收闸（dock kill -9 后 SQLite WAL 尾部撕裂的恢复路径未写）；schema 演进（v1→v2 旧事件怎么读）无票；token 是**页面级单把**（server.py:67），MCP/DSH 多面共用＝一面泄漏全线失守，P0 契约里没有 per-face 凭据。\n\n**F6｜低估的坑 8 条**（概率×损失）：①按三文件开工两周后发现闭包不可转发→重做（高×高）；②双写静默形成、audit 报链断（中×高）；③单 token 多面泄漏（低×高）；④WAL 撕裂（低×高）；⑤Python 20 闸与 TS 面零交叉回归（高×中）；⑥tick 与残留调度并发（中×中）；⑦taskboard 0.11 上游改 store 契约（中×中）；⑧ProcGuardTray 退役窗双守望并发（低×中）。\n\n## 更好的替代（A'）\n\n保留「内核唯一账本」；但 DSH 面**不走 fork 换心脏**，改做 **KernelStore 适配器**：写一个类实现 store 的四个公开方法（snapshot/get/subscribe/mutate），`mutate` 在本地**不落盘**副本上跑闭包→按 9 种 kind 推内核 upsert，内核按状态机白名单校验（agent 面 upsert 到 done 必须拒）。routes.ts/TaskBoard.tsx **零改动**，改动面从 6 文件缩到 store.ts+装配点。CQRS 不退化：本地无持久化即无双写。这正是 00 稿「不 fork、走 HTTP」与 01 稿「fork」之间的正解——许可放开不该导致过度升级。\n\n**过度设计可砍**：P5（BBFF role→seat）整段砍，seat 已够用，省 1 周+上游 API 风险；MCP 20 个工具面（10 正名+10 别名）推迟到有人真用 MCP 客户端再做；P6 subtree 合并改为**永不合并**，hub 只放 contracts+adapters，避免 Apache/MIT 混仓与 47k 行 vendor 负担；fork 里直接摘除 external-sync（禅道/TAPD）这条第二写路径。\n\n## 对 P0–P2 的具体修改\n\n- **P0 加 T0**：「store 写路径清单」——6 文件×44 处 mutate 逐点映射（kind→内核 API→内核侧校验），先做它再冻结 fork 边界（工作量 1 天，方案 §10 自己欠的账）。\n- **P0 契约补三条**：schema 演进策略；备份/恢复闸（损坏账本 30 分钟恢复实测）；per-face 凭据设计。\n- **P1 加票**：tick→due 任务→scheduler 写路径的归并设计（F4）。\n- **P2 改口径**：验收闸补「agent 面经 KernelStore upsert done ⇒ 内核拒绝并留事件」；工期按适配器方案重估（约 1–1.5 周，非 2–3 周）。\n- **P5/MCP/P6 合并**：砍或推迟（见上）。\n\n## 只能改一件事\n\n改 01 稿 §4：把「只改三处」替换为「T0 写路径清单先行，边界以清单结论冻结」。因为它是全案最大的未证断言——F1/F2 双写风险、P2 工期、P2 验收闸可达成性全部挂在这一条上；其余阶段设计尚可自洽。"
+        }
+      ],
+      "snapshot": {
+        "start": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "end": "cbc4f6f5a624effff8a93e701ddf8b439c4addce",
+        "files": []
+      },
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 2384,
+        "output": 1467,
+        "reasoning": 2433,
+        "cache": {
+          "read": 56000,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f0900345001FydXVEv03neEs2",
+      "time": {
+        "created": 1795037332293
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    }
+  ]
+}

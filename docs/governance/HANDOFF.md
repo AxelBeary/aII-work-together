@@ -1,7 +1,68 @@
 # HANDOFF.md — 会话交接块
 
 > 给**下一个主会话**读。子代理读的是派工单，⛔ 两者不得混用。
-> 最近更新：2026-10-20（收工批次）。上一次交接在 `04c2dc6` 之前。
+> 最近更新：**2026-11-19（整合吸纳批次，进行中）**。旧交接块保留在文末 §11，供查历史。
+
+---
+
+## 0 最新交接 · 2026-11-19 · 六合一整合吸纳
+
+**一句话**：六个资产（本仓看板内核 / dsh-taskboard / Oh-My-BBFF / sentinel-ops / sentinel-dock / waypost）的整合方案已到 **v2.1**，三席独立评审跑完，**代码一行未动**；下一步是 P0 的 **T0（52 处写点清单）**。
+
+**会话**：`session-5d949281-ab88-4a12-9b13-43b9c4f442e2`（工作区 `E:\GithubClone\aII-work-together`）
+
+### 0.1 本会话改了什么（只在两处）
+
+| 位置 | 内容 |
+|---|---|
+| `docs/design/20261119-integration-absorb/` | 00 盘点、01 方案（§4 已作废）、02 评审任务书、03/04/06 三席回执、03b/03c GLM 证明、05 **v2.1 权威稿**、README 索引 |
+| `docs/governance/` | 本交接块 + REGISTRY 新增 N 节 + DELEGATION-LEDGER 一行 + ENVIRONMENT E-42/E-43/E-44 + DECISIONS D-031（待拍板） |
+
+⛔ **未改**：`tools/*.py`、`tests/*`、`shell/*`、`tray/*`、任何外部仓。
+
+### 0.2 三席结论（独立、互不可见）
+
+| 席 | 通道 / 模型 | 结论 | 关键 |
+|---|---|---|---|
+| A | 宿主子代理，opencode-go / deepseek-v4.1-flash | REJECT | 「只改 3 文件」不成立；fork 不可重建；缺 schema/备份/epoch |
+| B | opencode CLI，opencode-go / **glm-5.3** | CONCERNS | 建议 KernelStore 适配器；本地不落盘；砍 P5/MCP 别名/subtree |
+| C | cross-session，opencode-go / **glm-5.3** | CONCERNS | diff 语义、kind=9、约 30/52 处无内核命令可映射；P0 低估 |
+
+**复跑已证**：`store.mutate` 52 处 / 6 文件（routes 11、scheduler 10、session-sync 9、execution 9、tools 8、external-sync 5）；发布包无 `tsconfig/tsdown`；`SCHEMA_VERSION` 只写不读；`_BOARD_LOCK` 单把 RLock；HTTP 面无 epoch。
+
+### 0.3 v2.1 的六条硬决定（详见 05）
+
+1. 账本唯一 = 本仓 kernel；DSH 面 **装 KernelStore 适配器**，不换 taskboard 的心脏。
+2. 本地**零持久化**：`persistAtomic` 抛 `ReadOnlyLedger`；副本只从内核回执/事件流前进。
+3. diff 用**整个 draft 前后深比较**，不是 mutator 返回值（多处「返回 [] 仍提交」）。
+4. 调度唯一（内核 `tick`）；`scheduler.ts` 10 处写全删；`external-sync` 摘除。
+5. P2 闸门扩展：agent 面任何非 add/claim/submit 写必须拒；拒绝数 ≥3。
+6. **不做 subtree 合并**；MCP 别名与 BBFF role→seat 推迟。
+
+### 0.4 明天开工顺序
+
+1. 读 `docs/design/20261119-integration-absorb/README.md` → 00 → 05 → 06（约 15 分钟）。
+2. `python tools/check.py --quick`（期望 20 道闸全绿；这是基线，不是本次产物）。
+3. **开 T0**：52 处调用点四列表（kind → 内核 API → 内核侧校验 → 命令缺口），1 天。
+4. T0 出缺口报告后，才拍板：TaskEnvelope 冻结、comments/executions/checklist/settings 承载（建议先 `cards.meta`）、是否补 HTTP 写面（claim/submit/heartbeat/release/review）。
+
+⛔ T0 前不写 KernelStore；⛔ 不先改 taskboard 源码；⛔ 不双账本/双向同步。
+
+### 0.5 待拍板（D-031）
+
+- v2 方向本身（单一内核 + 适配器 + 单调度 + 不 subtree）。
+- comments/executions/checklist/settings：`cards.meta` 还是拆表/加命令。
+- T0 缺口后，HTTP 写面是 P1 一并做还是单开一卡。
+
+### 0.6 本批新踩的坑（详见 ENVIRONMENT E-42/E-43/E-44）
+
+- opencode CLI 在 MSYS 下会读到 POSIX `PWD`，报 `Failed to change directory to /e/...`；调用前 `unset PWD`。
+- 子代理允许表（`subagent-model-selection-settings.allowedModels`）改完必须**重启宿主**才生效；报错原文见 E-43。
+- 交叉验证：宿主子代理不让 GLM 时，`cross_session_spawn(provider=opencode-go, model=glm-5.3)` 可用。
+
+### 0.7 回滚
+
+本批只新增/修改文档，无代码回滚项。回滚 = `git checkout -- docs/governance/*.md` + 删除 `docs/design/20261119-integration-absorb/`（不推荐，评审证据要留）。
 
 ---
 
