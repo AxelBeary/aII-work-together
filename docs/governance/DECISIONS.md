@@ -574,24 +574,11 @@
   - 缺口分三类：A 类新增命令 10 类、B 类承载位 6 类、**C 类红线 2 类**。
 
 
-## D-034 · P1 第一批落地：事件流实装（**已定** 2026-11-19）
 
-- 议题：把 D-033 的丙案从设计变成可用的代码。
-- **已实装**（全部实测跑过）：
-  1. `storage.py`：`events` 加 `idem_key` 列 + 部分唯一索引；`append_event` 幂等（重放返回原事件、`replayed=True`）；`events(since=)` 增量；`last_seq()`。
-  2. `tools/fold.py`（新）：事件折叠 —— comments / executions / checklist / branches / 软删除。
-  3. `board.py`：10 个事件流写命令（`add_comment`/`open_execution`/`close_execution`/`add_checklist`/`check_item`/`trash_card`/`restore_card`/…）+ `card_view()`。
-  4. `cli.py`：`comment`/`checklist`/`exec`/`events`/`trash`/`schema` 六个新命令；`--json` 全覆盖；结构化错误（8 码闭集）；`next` 提示。
-  5. `server.py`：`GET /api/card/events?id=&since=` 增量接口；`/api/card` 返回折叠投影。
-  6. `tests/test_event_stream.py`（新，第 21 道闸）：35 条断言，含反例（手改被抓 / 老库迁移 / 不同 key 不被吞）。
-- **实测读数**：
-  - `check.py --quick` → **21 道闸全绿**；
-  - `conformance.py` → **14/14**（幂等那条从红转绿）；
-  - 端到端：建卡 → 同句评论 2 次 → **只 1 条**；清单勾选 1/1；执行 open→close→succeeded；`since=2` 精确返回后 4 条；软删→恢复 OK；
-  - HTTP：全量 4 条 / `since=2` 回 2 条 / `api/card` 折叠出 comments 2、checklist 1。
-- **踩坑并修掉**（写进 ENVIRONMENT E-45）：
-  1. 部分唯一索引若写在 `SCHEMA` 里，老库（无 `idem_key` 列）会**启动即崩**；必须建在补列之后。
-  2. `verify_chain` 若不排除 `idem_key`，带幂等键的事件会**全部误报哈希不符**。
-  3. `cmd_new` 在 `--json` 下多打一行人话 → JSON 解析崩；现在 `--json` 时不打人话。
-- 影响面：`tools/{storage,board,cli,server,fold}.py`、`tests/test_event_stream.py`、`tools/check.py`（21 道闸）、`docs/usage-events.md`。
-- 状态：**已定**。未做：A 类 10 个新命令（edit/move/软删已有，其余待做）、调度五语义、KernelStore 适配器。
+## D-035 · ENVIRONMENT 补三条本批实踩的坑
+
+见 `docs/governance/ENVIRONMENT.md` E-45。
+
+- **E-45a**：SQLite 部分唯一索引若依赖的列在老库里不存在，写进 `SCHEMA` 会**启动即崩**。必须建在补列之后。
+- **E-45b**：给事件表加「索引元数据列」时，`verify_chain` 的哈希源必须排除它，否则**所有带该列的事件误报哈希不符**。
+- **E-45c**：CLI 加 `--json` 时，成功路径的人话（`✓ …`）必须一并关掉，否则 JSON 混排导致解析崩。

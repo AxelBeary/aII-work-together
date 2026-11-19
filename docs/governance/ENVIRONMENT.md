@@ -657,3 +657,28 @@ TTL 只看它；墙钟 `at_ms` 只给人读。老行没有 `at_mono` 时回落�
 - 边界：这是**跨会话**通道，不是子代理；计费/并发按会话算，任务书必须自包含（对方看不到本会话上下文）。
 - 本次实例：`cs_wl3mgUbVAb`（reviewer-glm53-b2），模型 glm-5.3，effort high，回执见 06。
 
+
+## E-45 · 事件流实装踩的三条坑（2026-11-19 实测）
+
+### E-45a · 部分唯一索引写进 SCHEMA 会让老库启动即崩
+
+- 现象：加 `idem_key` 列后，老项目库启动报 `sqlite3.OperationalError: no such column: idem_key`，8 道闸连带红。
+- 根因：`CREATE UNIQUE INDEX ... ON events(card_id, idem_key)` 写在 `SCHEMA` 常量里，
+  `executescript(SCHEMA)` 在**补列之前**执行，老库还没有这列。
+- 修法：索引从 `SCHEMA` 里拿掉，建在 `_init_schema()` 补列之后。
+- 复跑：造一个 events 无 idem_key 的老库 → `S.Store(db)` 必须成功（`tests/test_event_stream.py::t_old_db_migration`）。
+
+### E-45b · 索引元数据列会污染哈希链校验
+
+- 现象：加列后所有事件 `verify_chain` 报「第 1 条 hash 不符（内容被改过）」，连刚写的事件也是。
+- 根因：`verify_chain` 用 `{k: v for k, v in ev.items() if k not in (seq,at,at_ms,prev,hash)}` 重建哈希源，
+  新列 `idem_key` 被算进去了，而 `append_event` 写哈希时没算它。
+- 修法：`idem_key` 加进排除列表（它是**索引元数据**，不是内容）。
+- 复跑：`t_idem_not_in_hash` —— 带幂等键的两条事件，链必须验过。
+
+### E-45c · --json 模式下打人话会让脚本崩
+
+- 现象：`board add --title x --json | python -c "json.load(sys.stdin)"` 抛 `JSONDecodeError`。
+- 根因：`cmd_new` 先 `B.ok("✓ 人建 …")` 再打 JSON，输出混排。
+- 修法：`--json` 时跳过 `B.ok`。任何新命令照此办理。
+- 复跑：`board add --title x --json 2>/dev/null | python -c "import json,sys;json.load(sys.stdin)"` 必须成功。

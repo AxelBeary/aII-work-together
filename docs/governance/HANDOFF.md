@@ -39,25 +39,41 @@
 5. P2 闸门扩展：agent 面任何非 add/claim/submit 写必须拒；拒绝数 ≥3。
 6. **不做 subtree 合并**；MCP 别名与 BBFF role→seat 推迟。
 
-### 0.4 当前进度与下一步（2026-11-19 晚更新）
+### 0.4 当前进度与下一步（2026-11-19 晚·P1 实装完成）
 
-**T0 已完成**（`10`–`14` 五份，52/52 逐条清点）：
+**T0 + P1 第一批已完成，代码可用。**
 
-- 可直接映射内核命令 **4 处（7.7%）**；部分映射 8；**缺口 40 处（76.9%）**。
-- **红线 C1**：4 处无租约置 `in_progress`（session-sync:370/477/650、execution:831）。
-- 「只改三个文件」证伪；P2 维持 **4–6 周**。
+| 阶段 | 状态 | 证据 |
+|---|---|---|
+| T0 52 处写点清点 | ✅ | `10`–`14` 五份，缺口 22 类 |
+| 承载决议（丙案=事件流） | ✅ D-033 | `15_AI友好性与承载决议丙案` |
+| 契约 + 一致性套件 | ✅ | `contracts/`，14/14 全绿 |
+| **P1 事件流实装** | ✅ D-034 | `tools/fold.py` 新增；`storage/board/cli/server` 改造 |
+| 第 21 道闸 | ✅ | `tests/test_event_stream.py`，35 条断言 |
+| 全量自检 | ✅ | **21 道闸全绿** |
 
-**下一步（按顺序）**：
+**现在能用了（见 `docs/usage-events.md`）**：
 
-1. **拍板承载决议**（`14` §2：甲 = 全挂 `cards.meta`，推荐；乙 = 拆表，多 1 周）。
-2. 按 `14` §4 回改 `contracts/task-envelope-v1.schema.json`（加 `version`/`if_version`/`meta` 子结构）——约 1 小时。
-3. 写 `contracts/conformance.py`（T3）：坏卡被拒 + 重放幂等 + 跨项目拒。
-4. 进 P1：内核长能力（A1–A10 命令 + B1–B5 承载 + 调度五语义）。
+```bash
+board add --title "任务" --json          # {ok, value:{id}, next:[...]}
+board comment <卡号> "评论" --as agent    # 同句重发只 1 条（幂等）
+board checklist <卡号> add --text "能跑" --json
+board exec <卡号> open --json            # 执行记录
+board events <卡号> --since 42 --json    # 增量拉取
+board trash <卡号> / --restore           # 软删除
+board schema --json                      # 能力自描述
+```
 
-⛔ 未拍板承载决议前不写 KernelStore；⛔ 不改 taskboard 源码；⛔ 不双账本。
+HTTP：`GET /api/card/events?id=<卡号>&since=42`
 
-**⚠️ 子代理通道故障**：`t0-routes`/`t0-exec`/`t0-tools`/`t0-exec2`/`t0-tools2` 五次派工 + 探针 `probe-min` 全部零产出且无收尾消息。
-判定为宿主子代理通道问题，非派工书问题。新会话若要派分席，**先跑一个最小探针**确认通道可用。
+**下一步（按价值排序）**：
+
+1. **A 类剩余命令**：`board edit --if-version`（改卡字段）、`board move --by human`（人类移动）、`board revert`（执行失败退回）。这三条解锁面板 5 处写点。
+2. **调度五语义**（`14` §3）：删 `scheduler.ts` 的前置条件，P1 必做。
+3. **KernelStore 适配器**：52 处写点收敛（T0 已给逐条映射）。
+4. **幂等键沉淀到 submit/claim**：现在只在事件流命令上，PR 级写路径也该带。
+
+⛔ 别做的：不要 fork 换心脏；不要给 `cards.meta` 塞 append 数据（D-033）；不要重跑 T0（已 52/52）。
 
 ### 0.5 待拍板（D-031）
 
