@@ -572,15 +572,22 @@
   - 可直接映射到内核现有命令：**4 处（7.7%）**；部分映射 8 处；**缺口 40 处（76.9%）**。
   - 「只改三个文件」**彻底证伪**；实际需改 6 个文件 + 内核新增 22 类能力。
   - 缺口分三类：A 类新增命令 10 类、B 类承载位 6 类、**C 类红线 2 类**。
-- **红线 C1（最高优先级）**：`session-sync.ts:370/477/650` 与 `execution.ts:831` 共 **4 处**在**无认领、无租约、无 epoch** 的情况下直接置 `in_progress` 并写 `claimedBy`。
-  若面板照搬，任何会话发一条消息即可抢走别人持有的卡 —— **租约红线在 DSH 面完全失效**。
-  ⇒ P2 闸门必须挡，断言：`agent 面无租约写 in_progress 被拒，拒绝计数 ≥4`。
-- **承载决议（待拍板，二选一）**：
-  - **甲（推荐）**：comments / executions / checklist / branches 全挂 `cards.meta` JSON —— 零迁移、可逆、立即可开工；代价是 meta 变大后 SQL 不可查。
-  - 乙：每类拆独立表 —— 查询快，但 P0 至少多 1 周（5 张表 + 迁移 + 回滚）。
-- **调度五语义（P1 必做，非可选）**：删 `scheduler.ts` 的 10 处前，内核 `tick` 必须先实现：
-  ①一次性消费后归一 `mode=claim` ②错过窗口留系统评论 ③死 cron 自动停用 ④依赖未满足窗口作废 ⑤派发被拒还回队列。
-- **其他决定**：`external-sync` 整块摘除（摘除前须导出 `externalSync.links`，否则「哪些卡来自外部」这一事实丢失）。
-- 依据：`docs/design/20261119-integration-absorb/10–14`；复跑 `grep -rho 'store.mutate(' *.ts | wc -l` = 52。
-- 影响面：`contracts/`（需加 version/if_version、meta 子结构）、P1 内核、P2 适配器。
-- 状态：**待拍板**（承载决议甲/乙）。
+
+## D-033 · 承载决议改判：用事件流，不用 meta（**已定** 2026-11-19）
+
+- 议题：comments / executions / checklist 等 append 型数据存哪里。
+- **推翻 D-032 的甲/乙二选一**，理由（盘上核实）：
+  - `storage.py:245-271` 的 `cards.meta` 是**整块 JSON 读改写** ⇒ 并发追加会互相覆盖。用 meta 存评论＝拿「最后写入者赢」存日志，是设计错误而非性能取舍。
+  - 拆 5 张表要迁移+回滚，P0 多 1 周。
+  - **内核已有 `events` 表**：append-only（`append_event` 只 INSERT）、`(card_id, seq)` 索引、哈希链、`data` 自由 JSON。四项正好对上四类需求，**迁移成本 0**。
+- 结论：**丙案** —— 全部 append 型数据走事件流，按类型折叠（`comment`/`execution-*`/`checklist-*`/`trash`）。
+- **AI 友好的四条硬要求**（同时定）：
+  1. 结构化错误 `{ok:false,error:{code,message,hint,retryable}}`，code 闭集 8 个；
+  2. `--json` 全覆盖（现状仅 6 处），失败也输出 JSON 不 die；
+  3. 写命令固定带 `next` 提示下一步；
+  4. `board schema --json` 自描述，agent 可自举。
+- **双游标**：`version` 管字段并发（`if_version`），`seq` 管事件流位置（`?since=seq`）。
+- 依据：`docs/design/20261119-integration-absorb/15_AI友好性与承载决议丙案__发牌席__.md`；
+  `contracts/conformance.py` 14 条断言 **13 过 1 失败**，失败项即 P1 待办（内核无幂等键）。
+- 影响面：`contracts/*.schema.json` 已按丙案回改；P1 需补 `events` 幂等唯一索引 + 事件折叠。
+- 状态：**已定**（用户 2026-11-19 授权「AI 最友好、最高效」；丙案是三条里唯一同时满足并发安全+零迁移+可审计的）。

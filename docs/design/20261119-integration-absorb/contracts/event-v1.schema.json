@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aII-work-together/contracts/event-v1.schema.json",
   "title": "Event v1",
-  "description": "append-only 事件。哈希链校验：hash = sha256(canonical(除 hash 外的全部字段))，prev_hash 指向同卡上一条。",
+  "description": "append-only 事件。这是账本的唯一真相：卡片状态、comments、executions、checklist、软删除全部由事件折叠得出。hash = sha256(prev + canonical(data))[:16]，prev 指向同卡上一条。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
     "seq": {
       "type": "integer",
       "minimum": 1,
-      "description": "同卡内单调递增"
+      "description": "同卡内单调递增（AUTOINCREMENT）。增量拉取的游标：?since=seq。"
     },
     "task_id": {
       "type": "string"
@@ -40,8 +40,21 @@
         "retry_grant",
         "budget_set",
         "edit",
+        "adopt",
         "comment",
-        "adopt"
+        "comment-delivered",
+        "execution-open",
+        "execution-activity",
+        "execution-close",
+        "checklist-add",
+        "checklist-check",
+        "checklist-uncheck",
+        "branch-set",
+        "trash",
+        "restore",
+        "schedule-queued",
+        "schedule-consumed",
+        "schedule-skipped"
       ]
     },
     "at": {
@@ -77,10 +90,11 @@
         "string",
         "null"
       ],
-      "description": "全局唯一索引；重放同 key 必须被拒或返回原结果"
+      "description": "写路径幂等键。同 (card_id, key) 重放必须返回原事件。实现：唯一索引 + INSERT OR IGNORE 后回读。"
     },
     "payload": {
-      "type": "object"
+      "type": "object",
+      "description": "事件体。按 type 各有形状：execution-close 带 outcome/error/report；checklist-check 带 item_id/note；comment 带 body/thread_id。"
     },
     "prev_hash": {
       "type": [
@@ -91,7 +105,26 @@
     },
     "hash": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "sha256(prev + json.dumps(data, sort_keys=True))[:16]，与 storage.py::_hash 一致。"
     }
+  },
+  "example": {
+    "seq": 42,
+    "task_id": "C1019-cd02",
+    "type": "execution-open",
+    "at": "2026-11-19T20:00:00+08:00",
+    "at_ms": 1795000000000,
+    "actor": "agent",
+    "seat": "w1",
+    "epoch": 3,
+    "idempotency_key": "exec-open:C1019-cd02:1",
+    "payload": {
+      "execution_id": "e-001",
+      "session_id": "ses_x",
+      "trigger": "manual"
+    },
+    "prev_hash": "a1b2c3d4e5f60718",
+    "hash": "0f1e2d3c4b5a6978"
   }
 }

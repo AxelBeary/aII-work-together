@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aII-work-together/contracts/task-envelope-v1.schema.json",
   "title": "TaskEnvelope v1",
-  "description": "内核唯一账本的任务外壳。其余系统（DSH 面板 / CLI / MCP / 对端机器）只交换这个形状。",
+  "description": "内核唯一账本的任务外壳。其余系统（DSH 面板 / CLI / MCP / 对端机器）只交换这个形状。核心事实（comments/executions/checklist）不在这里——它们在事件流里，用 ?since=seq 拉取。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -47,39 +47,6 @@
       },
       "description": "工作区相对路径或通配；绝对路径与 .. 一律拒"
     },
-    "acceptance": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "text",
-          "checked"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "checked": {
-            "type": "boolean"
-          },
-          "evidence": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/evidence"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        }
-      }
-    },
     "state": {
       "enum": [
         "todo",
@@ -90,7 +57,8 @@
         "blocked",
         "rework",
         "done",
-        "canceled"
+        "canceled",
+        "trashed"
       ]
     },
     "assignee": {
@@ -208,7 +176,7 @@
     },
     "meta": {
       "type": "object",
-      "description": "唯一扩展位：comments / executions / checklist / settings 在 P0 阶段挂这里"
+      "description": "不透明扩展位，仅供插件私有字段。⛔ 禁止用于 comments / executions / checklist / 软删除 —— 那些是 append 型数据，必须写事件流（见 15 稿丙案）。"
     },
     "created_at": {
       "type": "string",
@@ -221,7 +189,61 @@
     "version": {
       "type": "integer",
       "minimum": 1,
-      "description": "乐观并发；写路径可带 if_version"
+      "description": "卡字段版本。写路径可带 if_version 做乐观并发（对应 taskboard 的 versionGuard）。"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "该卡最新事件 seq。作增量同步游标（GET /api/card/events?id=..&since=seq），与 version 分工：version 管字段并发，seq 管事件流位置。"
+    },
+    "trashed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "软删除时刻；由 trash 事件折叠而来，不是独立字段存储。"
+    },
+    "idempotency_key": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "写路径幂等键；同 (card_id, key) 重放必须返回原事件，不产生第二条。"
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "checked"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "checked": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/evidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "description": "验收清单的只读投影；真身是 events 里的 checklist-* 事件，由内核折叠得出。⛔ 不可直接 PATCH 此字段。"
     }
   },
   "$defs": {
