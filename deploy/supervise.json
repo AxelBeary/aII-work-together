@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "note": "提案格式：交 sentinel-dock 读取。五项最小契约 cmd/cwd/health/restart/schedule。",
+  "services": [
+    {
+      "id": "board-server",
+      "cmd": [
+        "python",
+        "tools/server.py",
+        "--port",
+        "8790"
+      ],
+      "cwd": ".",
+      "health": "http://127.0.0.1:8790/api/state",
+      "restart": "on-failure",
+      "maxRestarts": 5
+    },
+    {
+      "id": "board-tick",
+      "cmd": [
+        "python",
+        "tools/board.py",
+        "tick"
+      ],
+      "cwd": ".",
+      "schedule": "*/30 * * * *",
+      "restart": "never"
+    }
+  ]
+}

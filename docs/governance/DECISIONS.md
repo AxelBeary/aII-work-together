@@ -669,3 +669,15 @@
 - **限制**：diff/worktree/模板/外部同步/定时 UI 未接；「完成」仍在内核 review/human 闸，面板不能直接 done。
 - **备份**：`package.json.bak3-20261120-030506`、`cordis.patch.yml.bak3-20261120-030506`、上游包 `dsh-taskboard.upstream-20261120-030053`。
 - 状态：**已定**，待重启验收。
+
+
+## D-042 · 组件边界：哨兵坞/信箱独立，子代理编排只调用不插入（**已定** 2026-11-20）
+
+- 议题：sentinel-dock（哨兵坞）、waypost（信箱后台）、子代理编排插件，是否并入本仓/本看板。
+- **结论**：
+  - **dock / waypost 独立组件**：不同失败域、不同权限、不同生命周期（waypost 在别的机器）。本仓只给契约：`deploy/supervise.json` + 三条 HTTP/文件契约。
+  - **子代理编排：调用，不插入**。看板不决定派谁（那是 BBFF Lead，D-039）；编排通过 `board ready/claim/beat/submit/msg` 或 HTTP 驱动看板，看板不回调用编排。界面可挂入口按钮，但不内联执行。
+  - **调度留在内核**（D-037）：错过窗口留痕属于账本语义，不挪出去。
+- **理由**：无头可用、失败隔离、可替换、21 道闸不依赖 Node 生态。
+- **允许的耦合**：卡的 `source.ref` 指回编排会话、`assignee.role` 保留原角色 id（数据字段，非代码依赖）。
+- 全文：`docs/design/20261119-integration-absorb/17_组件边界与分离__发牌席__.md`
