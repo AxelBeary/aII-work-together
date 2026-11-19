@@ -29,6 +29,8 @@ PASS, FAIL = [], []
 
 def ck(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
+    # detail 一律转字符串：调用方传 dict/list 时不该让测试自己崩（2026-11-19 踩过）
+    detail = str(detail) if detail != "" else ""
     print(("  PASS " if cond else "  FAIL ") + name + ((" ｜ " + detail) if detail else ""))
 
 
@@ -303,6 +305,93 @@ def t_cli_json_error():
     ck("失败退出码非 0", r.returncode != 0, "code=%s" % r.returncode)
 
 
+
+# ---------------------------------------------------------------- 编辑/移动/回退
+#
+# 这几条走**真 CLI 子进程**：内核的 set_root 会改全局状态，同进程里连测会互相污染。
+# 子进程还顺带验证了「用户真敲这条命令能不能用」。
+
+def _mkcard(d, title="测试"):
+    r = _board(["add", "--title", title, "--json"], d)
+    return json.loads(r.stdout)["value"]["id"]
+
+
+def t_edit_version_guard():
+    """反例：带旧 version 编辑必须被拒（乐观锁）。"""
+    d = tempfile.mkdtemp(prefix="ed-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    r = _board(["edit", cid, "--title", "新标题", "--json"], d)
+    v = json.loads(r.stdout)["value"]["version"]
+    ck("edit 正常递增 version", v == 2, "version=%s" % v)
+    r = _board(["edit", cid, "--title", "再改", "--if-version", "1", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("edit 旧 version 被拒", o["ok"] is False and o["error"]["code"] == "version_conflict",
+       o.get("error", {}).get("code"))
+    ck("版本冲突可重试", o["error"]["retryable"] is True)
+
+
+def t_edit_no_fields():
+    """反例：不给任何字段必须被拒（不是静默成功）。"""
+    d = tempfile.mkdtemp(prefix="ed2-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    r = _board(["edit", cid, "--json"], d)
+    o = json.loads(r.stdout)
+    ck("edit 无字段被拒", o["ok"] is False and o["error"]["code"] == "invalid_input")
+
+
+def t_move_guard():
+    """反例：非法转移拒绝；合法转移生效；同状态 no-op。"""
+    d = tempfile.mkdtemp(prefix="mv-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    r = _board(["move", cid, "--to", "完成", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("move 非法转移被拒",
+       o["ok"] is False and o["error"]["code"] == "invalid_transition",
+       o.get("error", {}).get("code"))
+    r = _board(["move", cid, "--to", "已取消", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("move 到已取消", o["ok"] and o["value"]["to"] == "已取消")
+    r = _board(["move", cid, "--to", "已取消", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("move 同状态 no-op", o["ok"] and o["value"].get("noop") is True)
+
+
+def t_revert_only_in_progress():
+    """反例：非「进行中」不能 revert；进行中可退且释放租约。"""
+    d = tempfile.mkdtemp(prefix="rv-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    r = _board(["revert", cid, "--reason", "x", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("revert 非进行中被拒", o["ok"] is False, o.get("error", {}).get("code"))
+    _board(["claim", cid, "--seat", "w1", "--engine", "opencode"], d)
+    r = _board(["revert", cid, "--reason", "引擎崩了", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("revert 进行中→待返工", o["ok"] and o["value"]["to"] == "待返工", str(o.get("value")))
+    r = _board(["show", cid], d)
+    holds = [l for l in r.stdout.splitlines() if "持有" in l]
+    ck("revert 后不再显示持有者", any(("持有    -" in l) or ("持有    None" in l) for l in holds),
+       str(holds))
+    r = _board(["revert", cid, "--reason", "再来", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("revert 二次被拒", o["ok"] is False)
+
+
+def t_json_purity():
+    """反例：--json 输出必须能直接被 json.loads（混人话会崩）。"""
+    d = tempfile.mkdtemp(prefix="js-")
+    _board(["init"], d)
+    r = _board(["add", "--title", "纯JSON", "--json"], d)
+    try:
+        json.loads(r.stdout)
+        ck("add --json 输出纯净", True)
+    except Exception as e:
+        ck("add --json 输出纯净", False, "%s" % type(e).__name__)
+
+
 def main():
     print("=" * 70)
     print("事件流闸（第 21 道）")
@@ -324,6 +413,11 @@ def main():
         ("迁移：老库升级（反例）", t_old_db_migration),
         ("CLI：端到端", t_cli_e2e),
         ("CLI：结构化错误（反例）", t_cli_json_error),
+        ("编辑：版本乐观锁（反例）", t_edit_version_guard),
+        ("编辑：无字段被拒（反例）", t_edit_no_fields),
+        ("移动：转移守卫（反例）", t_move_guard),
+        ("回退：只在进行中（反例）", t_revert_only_in_progress),
+        ("CLI：--json 输出纯净（反例）", t_json_purity),
     ]
     for name, fn in cases:
         try:

@@ -2036,6 +2036,81 @@ def _need_card(cid, as_json):
     return True
 
 
+
+def cmd_edit(a):
+    """改卡字段（白名单 + if_version 乐观锁）。"""
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    fields = {}
+    for k in ("title", "goal", "engine", "model", "effort", "human_gate",
+              "check_cmd", "source_card"):
+        v = getattr(a, k, None)
+        if v is not None:
+            fields[k] = v
+    for k in ("territory", "deliverable", "accept", "blocked_by"):
+        v = getattr(a, k, None)
+        if v is not None:
+            fields[{"deliverable": "deliverables", "accept": "accept_patterns"}.get(k, k)] = v
+    if getattr(a, "max_cost", None) is not None:
+        fields["max_cost_usd"] = None if a.max_cost == "none" else float(a.max_cost)
+    if getattr(a, "max_minutes", None) is not None:
+        fields["max_minutes"] = None if a.max_minutes == "none" else int(a.max_minutes)
+    if getattr(a, "irreversible", False):
+        fields["irreversible"] = True
+    if not fields:
+        _jout(_err("invalid_input", "没有要改的字段",
+                   hint="board edit <id> --title 新标题 [--if-version N]"), a.json)
+        return 1
+    try:
+        card, changed = B.edit_card(cid, fields, if_version=getattr(a, "if_version", None),
+                                    actor=a.as_actor or "human")
+    except ValueError as e:
+        msg = str(e)
+        code = "version_conflict" if "版本冲突" in msg else "invalid_input"
+        _jout(_err(code, msg, retryable=(code == "version_conflict"),
+                   hint=("board show %s 取最新 version" % cid) if code == "version_conflict" else None),
+              a.json)
+        return 1
+    _jout(_ok({"id": cid, "version": card.get("version"),
+               "changed": list(changed)}, nexts=["board show %s" % cid]), a.json)
+    return 0
+
+
+def cmd_move(a):
+    """移动卡状态（人类/复核席；agent 常规路径走 claim/submit）。"""
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    try:
+        r = B.move_card(cid, a.to, actor=a.as_actor or "human",
+                        reason=a.reason, if_version=getattr(a, "if_version", None))
+    except ValueError as e:
+        msg = str(e)
+        code = ("version_conflict" if "版本冲突" in msg else
+                "invalid_transition" if ("状态转移" in msg or "越权" in msg) else "invalid_input")
+        _jout(_err(code, msg, retryable=(code == "version_conflict")), a.json)
+        return 1
+    _jout(_ok(r, nexts=["board show %s" % cid]), a.json)
+    return 0
+
+
+def cmd_revert(a):
+    """执行失败/中断 → 退回待返工（不计返工次数）。"""
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    try:
+        r = B.revert_card(cid, a.reason or "执行失败", actor=a.as_actor or "system",
+                          seat=a.seat)
+    except ValueError as e:
+        msg = str(e)
+        code = "invalid_transition" if "状态转移" in msg else "invalid_input"
+        _jout(_err(code, msg), a.json)
+        return 1
+    _jout(_ok(r, nexts=["board ls", "board show %s" % cid]), a.json)
+    return 0
+
 def cmd_comment(a):
     cid = a.id
     if not _need_card(cid, a.json):
@@ -2177,7 +2252,8 @@ _SCHEMA_CMDS = ["init", "project", "stats", "rm", "cost", "open", "do", "retry",
                 "show", "claim", "budget", "beat", "block", "submit", "verify",
                 "consult", "review", "human", "token", "reclaim", "audit",
                 "doctor", "html", "overview", "inbox", "all", "msg",
-                "comment", "checklist", "exec", "events", "trash", "schema"]
+                "comment", "checklist", "exec", "events", "trash", "schema",
+                "edit", "move", "revert"]
 
 
 def cmd_schema(a):
@@ -2499,6 +2575,49 @@ def main():
     s.set_defaults(f=cmd_all)
 
     # ---------- 事件流命令（2026-11-19，D-033）----------
+
+    s = sub.add_parser("edit", help="✏️ 改卡字段（白名单 + --if-version 乐观锁）")
+    s.add_argument("id")
+    s.add_argument("--title")
+    s.add_argument("--goal")
+    s.add_argument("--engine")
+    s.add_argument("--model")
+    s.add_argument("--effort")
+    s.add_argument("--human-gate", dest="human_gate",
+                   choices=["none", "before_done", "both"])
+    s.add_argument("--check-cmd", dest="check_cmd")
+    s.add_argument("--territory", nargs="*")
+    s.add_argument("--deliverable", nargs="*")
+    s.add_argument("--accept", nargs="*")
+    s.add_argument("--blocked-by", dest="blocked_by", nargs="*")
+    s.add_argument("--max-cost", dest="max_cost", type=str)
+    s.add_argument("--max-minutes", dest="max_minutes", type=str)
+    s.add_argument("--irreversible", action="store_true")
+    s.add_argument("--if-version", dest="if_version", type=int,
+                   help="乐观锁：与当前 version 不符则拒绝")
+    s.add_argument("--as", dest="as_actor", default="human")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_edit)
+
+    s = sub.add_parser("move", help="➡️ 移动卡状态（人/复核席）")
+    s.add_argument("id")
+    s.add_argument("--to", required=True,
+                   choices=["待认领", "进行中", "待返工", "阻塞", "待验收",
+                            "核验中", "拍板中", "完成", "已取消"])
+    s.add_argument("--reason")
+    s.add_argument("--if-version", dest="if_version", type=int)
+    s.add_argument("--as", dest="as_actor", default="human",
+                   choices=["human", "review", "agent", "system"])
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_move)
+
+    s = sub.add_parser("revert", help="↩️ 执行失败退回待返工（不计返工次数）")
+    s.add_argument("id")
+    s.add_argument("--reason")
+    s.add_argument("--seat")
+    s.add_argument("--as", dest="as_actor", default="system")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_revert)
 
     s = sub.add_parser("comment", help="💬 卡片评论（列出 / 追加一条）")
     s.add_argument("id")

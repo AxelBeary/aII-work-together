@@ -375,6 +375,182 @@ def api_card_events(q):
             "events": [_event_wire(e) for e in evs]}
 
 
+
+
+# ---------- 事件流写接口（2026-11-19，D-036）----------
+#
+# 面板需要能改卡、移卡、回退，但内核命令只有 CLI。这里补 HTTP 写面。
+# 安全边界与既有写接口一致：Host 校验 + 页面令牌（do_POST 统一做）。
+# ⛔ 人闸相关动作（human 拍板）仍走 /api/human，不在本组。
+
+
+class ApiError(Exception):
+    """结构化 API 错误（2026-11-19，D-036）：给 AI 用的闭集错误码。
+
+    ⛔ 不改变既有接口的 {"error": "..."} 形状（老界面依赖它）；
+    只有新的事件流写接口用这个，避免一次改坏全部前端。
+    """
+
+    def __init__(self, code, message, hint=None, retryable=False, status=400):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.retryable = retryable
+        self.status = status
+
+    def to_dict(self):
+        return {"code": self.code, "message": self.message,
+                "hint": self.hint, "retryable": self.retryable}
+
+
+def _structured(fn):
+    """把内核的 ValueError 翻成结构化错误码（按消息特征判，不猜）。"""
+    def wrapper(body):
+        try:
+            return fn(body)
+        except ApiError:
+            raise
+        except ValueError as e:
+            msg = str(e)
+            if "版本冲突" in msg:
+                raise ApiError("version_conflict", msg, retryable=True,
+                               hint="重新读取后再试")
+            if "状态转移" in msg or "越权" in msg:
+                raise ApiError("invalid_transition", msg,
+                               hint="看 board schema --json 的 transitions")
+            if "不存在" in msg:
+                raise ApiError("not_found", msg, hint="board ls 看现有卡号")
+            if "已有正在执行" in msg:
+                raise ApiError("busy", msg, hint="先 exec close 再开新的")
+            raise ApiError("invalid_input", msg)
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+@_structured
+def api_card_edit(body):
+    """POST /api/card/edit  改卡字段（白名单 + if_version）。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        raise ValueError("缺 id")
+    fields = body.get("fields") or {}
+    if not isinstance(fields, dict):
+        raise ValueError("fields 必须是对象")
+    if_version = body.get("ifVersion")
+    card, changed = B.edit_card(cid, fields,
+                                if_version=int(if_version) if if_version is not None else None,
+                                actor=str(body.get("actor") or "human"))
+    return {"ok": True, "id": cid, "version": card.get("version"),
+            "changed": list(changed)}
+
+
+@_structured
+def api_card_move(body):
+    """POST /api/card/move  移动卡状态（人/复核席）。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    to_state = str(body.get("to") or "").strip()
+    if not cid or not to_state:
+        raise ValueError("缺 id 或 to")
+    if_version = body.get("ifVersion")
+    r = B.move_card(cid, to_state,
+                    actor=str(body.get("actor") or "human"),
+                    reason=body.get("reason"),
+                    if_version=int(if_version) if if_version is not None else None)
+    return {"ok": True, **r}
+
+
+@_structured
+def api_card_revert(body):
+    """POST /api/card/revert  执行失败退回待返工（不计返工次数）。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        raise ValueError("缺 id")
+    r = B.revert_card(cid, body.get("reason") or "执行失败",
+                      actor=str(body.get("actor") or "system"),
+                      seat=body.get("seat"))
+    return {"ok": True, **r}
+
+
+@_structured
+def api_card_comment(body):
+    """POST /api/card/comment  追加评论（幂等）。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    text = str(body.get("body") or "").strip()
+    if not cid or not text:
+        raise ValueError("缺 id 或 body")
+    ev = B.add_comment(cid, text, actor=str(body.get("actor") or "human"),
+                       seat=body.get("seat"), thread_id=body.get("thread"),
+                       idempotency_key=body.get("idempotencyKey"))
+    return {"ok": True, "id": cid, "seq": ev.get("seq"),
+            "replayed": bool(ev.get("replayed"))}
+
+
+@_structured
+def api_card_checklist(body):
+    """POST /api/card/checklist  清单 add/check/uncheck。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    action = str(body.get("action") or "").strip()
+    if not cid or action not in ("add", "check", "uncheck"):
+        raise ValueError("缺 id 或 action 不在 add/check/uncheck")
+    if action == "add":
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise ValueError("add 需要 text")
+        kid = B.add_checklist(cid, text, seat=body.get("seat"))
+        return {"ok": True, "id": cid, "item": kid}
+    item = str(body.get("item") or "").strip()
+    if not item:
+        raise ValueError("%s 需要 item" % action)
+    B.check_item(cid, item, checked=(action == "check"),
+                 note=body.get("note"), seat=body.get("seat"))
+    return {"ok": True, "id": cid, "item": item, "checked": action == "check"}
+
+
+@_structured
+def api_card_exec(body):
+    """POST /api/card/exec  执行记录 open/close/report。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    action = str(body.get("action") or "").strip()
+    if not cid or action not in ("open", "close", "report"):
+        raise ValueError("缺 id 或 action 不在 open/close/report")
+    if action == "open":
+        eid = B.open_execution(cid, seat=body.get("seat"),
+                               session_id=body.get("session"),
+                               trigger=body.get("trigger") or "manual")
+        return {"ok": True, "id": cid, "execution": eid}
+    eid = str(body.get("execution") or "").strip()
+    if not eid:
+        raise ValueError("%s 需要 execution" % action)
+    if action == "close":
+        B.close_execution(cid, eid, outcome=body.get("outcome") or "succeeded",
+                          error=body.get("error"))
+        return {"ok": True, "id": cid, "execution": eid,
+                "outcome": body.get("outcome") or "succeeded"}
+    B.attach_report(cid, eid, body.get("report") or {})
+    return {"ok": True, "id": cid, "execution": eid}
+
+
+@_structured
+def api_card_trash(body):
+    """POST /api/card/trash  软删除 / 恢复。⛔ 不物理删除。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        raise ValueError("缺 id")
+    if body.get("restore"):
+        B.restore_card(cid, actor=str(body.get("actor") or "human"))
+        return {"ok": True, "id": cid, "restored": True}
+    r = B.trash_card(cid, actor=str(body.get("actor") or "human"),
+                     reason=body.get("reason"))
+    return {"ok": True, "id": cid, "trashed": True, "already": r.get("already", False)}
+
 def api_cost(q):
     _switch(q.get("project", [None])[0])
     total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
@@ -851,6 +1027,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._json({"error": "请求体不是 JSON"}, 400)
         routes = {"/api/card": api_create, "/api/human": api_human,
+                 "/api/card/edit": api_card_edit,
+                 "/api/card/move": api_card_move,
+                 "/api/card/revert": api_card_revert,
+                 "/api/card/comment": api_card_comment,
+                 "/api/card/checklist": api_card_checklist,
+                 "/api/card/exec": api_card_exec,
+                 "/api/card/trash": api_card_trash,
                   "/api/run": api_run, "/api/bulk": api_bulk,
                   "/api/messages": api_message_send,
                   "/api/messages/ack": api_message_ack,
@@ -862,6 +1045,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with _BOARD_LOCK:
                 self._json(fn(body))
+        except ApiError as e:
+            self._json({"ok": False, "error": e.to_dict()}, e.status)
         except PermissionError as e:
             self._json({"error": _safe_msg(e)}, 403)
         except SystemExit:

@@ -39,41 +39,48 @@
 5. P2 闸门扩展：agent 面任何非 add/claim/submit 写必须拒；拒绝数 ≥3。
 6. **不做 subtree 合并**；MCP 别名与 BBFF role→seat 推迟。
 
-### 0.4 当前进度与下一步（2026-11-19 晚·P1 实装完成）
+### 0.4 当前进度与下一步（2026-11-19 晚·P1 第二批完成）
 
-**T0 + P1 第一批已完成，代码可用。**
+**T0 + P1 两批已完成，面板所需内核命令齐全。**
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
-| T0 52 处写点清点 | ✅ | `10`–`14` 五份，缺口 22 类 |
+| T0 52 处写点清点 | ✅ | `10`–`14`，缺口 22 类 |
 | 承载决议（丙案=事件流） | ✅ D-033 | `15_AI友好性与承载决议丙案` |
-| 契约 + 一致性套件 | ✅ | `contracts/`，14/14 全绿 |
-| **P1 事件流实装** | ✅ D-034 | `tools/fold.py` 新增；`storage/board/cli/server` 改造 |
-| 第 21 道闸 | ✅ | `tests/test_event_stream.py`，35 条断言 |
+| P1-1 事件流实装 | ✅ D-034 | 幂等键/折叠/6 命令/HTTP 增量 |
+| **P1-2 改卡/移卡/回退 + HTTP 写面** | ✅ D-036 | `edit`/`move`/`revert` + 7 个 POST |
+| 第 21 道闸 | ✅ | 47 条断言（含 10 组反例） |
 | 全量自检 | ✅ | **21 道闸全绿** |
+| 契约套件 | ✅ | 14/14 |
 
-**现在能用了（见 `docs/usage-events.md`）**：
+**现在能用了（`docs/usage-events.md`）**：
 
 ```bash
-board add --title "任务" --json          # {ok, value:{id}, next:[...]}
-board comment <卡号> "评论" --as agent    # 同句重发只 1 条（幂等）
+board add --title "任务" --json
+board edit <卡号> --title "新标题" --if-version 2 --json
+board move <卡号> --to 已取消 --reason "重复" --json
+board revert <卡号> --reason "引擎崩了" --json
+board comment <卡号> "评论" --as agent --json
 board checklist <卡号> add --text "能跑" --json
-board exec <卡号> open --json            # 执行记录
-board events <卡号> --since 42 --json    # 增量拉取
-board trash <卡号> / --restore           # 软删除
-board schema --json                      # 能力自描述
+board exec <卡号> open --json
+board events <卡号> --since 42 --json
+board trash <卡号> / --restore
+board schema --json
 ```
 
-HTTP：`GET /api/card/events?id=<卡号>&since=42`
+HTTP 写面：`POST /api/card/{edit,move,revert,comment,checklist,exec,trash}`（要 `X-Board-Token`），
+读面 `GET /api/card/events?id=&since=`。
 
 **下一步（按价值排序）**：
 
-1. **A 类剩余命令**：`board edit --if-version`（改卡字段）、`board move --by human`（人类移动）、`board revert`（执行失败退回）。这三条解锁面板 5 处写点。
-2. **调度五语义**（`14` §3）：删 `scheduler.ts` 的前置条件，P1 必做。
-3. **KernelStore 适配器**：52 处写点收敛（T0 已给逐条映射）。
-4. **幂等键沉淀到 submit/claim**：现在只在事件流命令上，PR 级写路径也该带。
+1. **调度五语义**（`14` §3）：删 `scheduler.ts` 的前置条件，P1 必做。
+2. **KernelStore 适配器**：52 处写点收敛（T0 已给逐条映射）。
+3. **submit/claim 带幂等键**：现在幂等只在事件流命令上。
+4. **面板 UI**：内核侧已齐，可以开始接。
 
-⛔ 别做的：不要 fork 换心脏；不要给 `cards.meta` 塞 append 数据（D-033）；不要重跑 T0（已 52/52）。
+⛔ 别做的：不 fork 换心脏；不给 `cards.meta` 塞 append 数据（D-033）；不重跑 T0。
+
+**⚠️ 工具坑（E-46）**：`read` 默认 2000 行，大文件必须用 fs 读全量，否则写回静默截断（已踩过一次，git stash 恢复）。
 
 ### 0.5 待拍板（D-031）
 

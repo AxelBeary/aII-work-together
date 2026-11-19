@@ -682,3 +682,17 @@ TTL 只看它；墙钟 `at_ms` 只给人读。老行没有 `at_mono` 时回落�
 - 根因：`cmd_new` 先 `B.ok("✓ 人建 …")` 再打 JSON，输出混排。
 - 修法：`--json` 时跳过 `B.ok`。任何新命令照此办理。
 - 复跑：`board add --title x --json 2>/dev/null | python -c "import json,sys;json.load(sys.stdin)"` 必须成功。
+
+
+## E-46 · read 工具默认 2000 行，读全量再写回会静默截断（2026-11-19 实测）
+
+- 现象：改 `tools/cli.py` 后文件从 2285 行变 1162 行，后半截丢失；报错不是「文件坏了」，
+  而是后续命令「锚点缺失」。
+- 根因：`tools.read` 默认 `limit=2000`。用它读全文件 → 字符串拼接 → `write` 写回，
+  超过 2000 行的部分**不在返回值里**，写回即截断。且 `read` 的 limit 上限也是 2000。
+- 修法：大文件改动用 Node `fs.readFileSync` / Python 读取全量；或分段读并在写前断言
+  「关键锚点数量 == 预期」。
+- 恢复：本会话用 `git stash push tools/cli.py` 保住损坏版本、工作区回到 HEAD，再重做；
+  ⛔ 不要用 `git checkout --`（被安全网拦，且确实更容易丢未提交改动）。
+- 复跑：`python -c "print(len(open('tools/cli.py',encoding='utf-8').read().splitlines()))"`
+  —— 改动前后对比行数，少了就是截断。

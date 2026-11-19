@@ -119,3 +119,66 @@ board trash C1119-xxxx --restore --json       # 恢复
 python tests/test_event_stream.py     # 35 条断言，含反例闸
 python tools/check.py --quick         # 21 道闸全绿
 ```
+
+---
+
+## 改卡 / 移卡 / 回退（2026-11-19 新增）
+
+### 改卡字段（带乐观锁）
+
+```bash
+board edit <卡号> --title "新标题" --json
+board edit <卡号> --goal "新目标" --engine opencode --if-version 2 --json
+```
+
+- **白名单**：title / goal / territory / deliverables / accept_patterns /
+  human_gate / engine / model / effort / irreversible / check_cmd /
+  max_cost_usd / max_minutes / blocked_by / source_card。改别的字段直接拒。
+- **`--if-version N`**：与当前 version 不符 → `version_conflict`（retryable）。
+  面板并发编辑靠它防止互相覆盖。
+
+### 移动状态（人/复核席）
+
+```bash
+board move <卡号> --to 已取消 --reason "重复建卡" --json
+board move <卡号> --to 待返工 --json
+```
+
+只走状态机白名单。**新增的三条人类边**：
+
+| 从 | 到 | 用途 |
+|---|---|---|
+| 阻塞 | 待认领 | 清理僵尸阻塞，放回池子 |
+| 待返工 | 待认领 | 人决定重排 |
+| 待验收 | 待返工 | 人不等复核，直接打回 |
+
+同状态移动 = no-op（不写事件）。
+
+### 执行失败回退
+
+```bash
+board revert <卡号> --reason "引擎崩了" --json
+```
+
+- **只接受「进行中」**的卡（⛔ 不是任何状态都能退）。
+- 退到「待返工」并**释放租约**，但**不计返工次数**（它不是 review）。
+
+---
+
+## HTTP 写接口（面板用）
+
+全部需要 `X-Board-Token`（页面注入的会话令牌）。
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/api/card/events?id=&since=` | 增量事件流 |
+| POST | `/api/card/edit` | 改卡（`{id, fields, ifVersion}`） |
+| POST | `/api/card/move` | 移卡（`{id, to, reason, ifVersion}`） |
+| POST | `/api/card/revert` | 回退（`{id, reason}`） |
+| POST | `/api/card/comment` | 评论（`{id, body}`，幂等） |
+| POST | `/api/card/checklist` | 清单（`{id, action, text/item}`） |
+| POST | `/api/card/exec` | 执行（`{id, action: open/close/report}`） |
+| POST | `/api/card/trash` | 软删除/恢复（`{id, restore}`） |
+
+**结构化错误**（新接口）：`{"ok":false,"error":{"code","message","hint","retryable"}}`，
+code 闭集与 CLI 一致。老接口仍是 `{"error":"..."}`（不破坏既有前端）。

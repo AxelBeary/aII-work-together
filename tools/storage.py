@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS cards (
   -- 卡间依赖：这些卡没完成之前，编排器不许接（跳过，不消耗尝试）
   blocked_by     TEXT DEFAULT '[]',
   meta           TEXT DEFAULT '{}',
+  -- 卡字段版本（2026-11-19，D-036）：面板编辑用 if_version 做乐观并发。
+  -- 与 events.seq 分工：version 管字段，seq 管事件流位置。
+  version        INTEGER DEFAULT 1,
   created_at     TEXT,
   created_by     TEXT,
   created_kind   TEXT DEFAULT 'human'
@@ -208,6 +211,9 @@ class Store:
         lcols = {r[1] for r in c.execute("PRAGMA table_info(leases)")}
         if "at_mono" not in lcols:
             c.execute("ALTER TABLE leases ADD COLUMN at_mono INTEGER")
+        # 2026-11-19（D-036）：卡字段版本。老库补列，默认 1，⛔ 不重建表
+        if "version" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN version INTEGER DEFAULT 1")
         # 2026-11-19（D-033）：事件幂等键。老库补列 + 建部分唯一索引，⛔ 不重建表
         ecols = {r[1] for r in c.execute("PRAGMA table_info(events)")}
         if "idem_key" not in ecols:
@@ -251,7 +257,7 @@ class Store:
                 "accept_patterns", "human_gate", "engine", "model", "effort",
                 "irreversible", "allow_no_numbers", "source_card",
                 "max_cost_usd", "max_minutes", "blocked_by", "meta",
-                "created_at", "created_by", "created_kind")
+                "version", "created_at", "created_by", "created_kind")
         # 卡片上任何「不在固定列里」的字段都进 meta。
         # ⚠️ 以前这些字段是被**静默丢弃**的：卡上写了 consult_files，
         # 存完就没了，程序照常跑，只是评审席永远看不到源文。静默丢数据比报错坏得多。
@@ -279,6 +285,8 @@ class Store:
                     v = []
                 elif c == "meta":
                     v = {}
+                elif c == "version":
+                    v = 1
             if c in ("territory", "deliverables", "accept_patterns", "blocked_by"):
                 v = json.dumps(v or [], ensure_ascii=False)
             elif c == "meta":

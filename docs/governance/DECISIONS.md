@@ -582,3 +582,25 @@
 - **E-45a**：SQLite 部分唯一索引若依赖的列在老库里不存在，写进 `SCHEMA` 会**启动即崩**。必须建在补列之后。
 - **E-45b**：给事件表加「索引元数据列」时，`verify_chain` 的哈希源必须排除它，否则**所有带该列的事件误报哈希不符**。
 - **E-45c**：CLI 加 `--json` 时，成功路径的人话（`✓ …`）必须一并关掉，否则 JSON 混排导致解析崩。
+
+
+## D-036 · P1 第二批：改卡/移卡/回退 + HTTP 写面（**已定** 2026-11-19）
+
+- 议题：补齐 DSH 面板可用的最后三块拼图（T0 缺口 A1/A2/A6）。
+- **已实装**：
+  1. `cards.version` 列（老库 ALTER，默认 1）——面板 `if_version` 乐观并发的基础。
+  2. `board edit`：15 个白名单字段 + `--if-version`；越界字段直接拒。
+  3. `board move`：走状态机白名单；新增三条人类边（阻塞→待认领、待返工→待认领、待验收→待返工）；同状态 no-op。
+  4. `board revert`：**只接受「进行中」**，退到待返工并释放租约，不计返工次数。
+  5. HTTP 写面 7 个：`/api/card/{edit,move,revert,comment,checklist,exec,trash}`，全部要 `X-Board-Token`。
+  6. 新接口的结构化错误 `{ok:false,error:{code,message,hint,retryable}}`；老接口形状不变（不破坏既有前端）。
+- **实测**：
+  - CLI：edit version 1→2、旧 version 拒（`version_conflict` retryable）、无字段拒；move 非法转移拒、到已取消成功、同状态 no-op；revert 非进行中拒、进行中→待返工且租约释放、二次拒。
+  - HTTP：无令牌 403；带令牌 edit/move/comment/checklist 全部成功；版本冲突与非法转移返回结构化 code。
+  - 闸门：**21 道全绿**；事件流闸从 35 → **47 条断言**（新增 5 组反例）。
+- **踩到的两个逻辑洞（已修）**：
+  1. `revert` 曾因 `_check_transition` 对同状态返回 no-op，导致「待返工」上能再回退一次；现在显式要求「进行中」。
+  2. `move` 同状态会多写一条事件；现在 no-op 直接返回。
+- **工程教训（写进 E-46）**：`tools.read` 默认只读 2000 行，大文件必须用 fs 或分段读；
+  用它读全量再写回会**静默截断**（本会话把 `cli.py` 从 2285 行截成 1162 行，已用 git stash 恢复）。
+- 状态：**已定**。未做：调度五语义、KernelStore 适配器、submit/claim 的幂等键。

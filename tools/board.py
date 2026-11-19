@@ -123,6 +123,12 @@ TRANSITIONS = {
     ("进行中", "已取消"):   {"actor": {"human"}},
     ("待返工", "已取消"):   {"actor": {"human"}},
     ("待验收", "已取消"):   {"actor": {"human"}},
+    # 2026-11-19（D-036）面板要用的三条人类边：
+    ("阻塞", "待认领"):     {"actor": {"human"}},   # 清僵尸阻塞，放回池子
+    ("待返工", "待认领"):   {"actor": {"human"}},   # 人决定重排
+    ("待验收", "待返工"):   {"actor": {"human"}},   # 人不等复核，直接打回
+    # 执行失败回退（A6）：不是 review，不计返工次数
+    ("进行中", "待返工"):   {"actor": {"agent", "system"}},
 }
 
 
@@ -436,6 +442,16 @@ def replay(cid: str, events=None):
             st.update(state="待认领", holder=None, lease_dir=None)
         elif k == "cancel":
             st["state"] = "已取消"
+        elif k == "edit":
+            st["edit"] = ev
+            st["version"] = ev.get("version")
+        elif k == "move":
+            st["state"] = ev.get("to") or st["state"]
+        elif k == "revert":
+            st["state"] = "待返工"
+            st["revert"] = ev
+            st["holder"] = None
+            st["lease_dir"] = None
     return st
 
 
@@ -907,6 +923,119 @@ def _match_miss(card: dict, engine, model, effort) -> list:
 
 
 
+
+# ---------- 卡字段编辑 / 人类移动 / 执行回退（2026-11-19，D-036）----------
+#
+# 这三条是 DSH 面板可用的最后三块拼图（T0 缺口 A1/A2/A6）。
+# 共同约束：
+#   · 都走事件流（edit / move / revert），⛔ 不直接改状态列
+#   · 都支持 if_version 乐观并发（version 在 cards 表，随每次编辑 +1）
+#   · 都只改白名单字段，⛔ 不允许任意 key 落库
+
+EDITABLE_FIELDS = (
+    "title", "goal", "territory", "deliverables", "accept_patterns",
+    "human_gate", "engine", "model", "effort", "irreversible",
+    "allow_no_numbers", "check_cmd", "max_cost_usd", "max_minutes",
+    "blocked_by", "source_card",
+)
+
+
+def _check_transition(frm, to, actor):
+    """状态转移守卫（内核版）。⛔ 不用 die，抛 ValueError 让调用方决定输出形态。"""
+    if frm == to:
+        return True, "no-op"
+    rule = TRANSITIONS.get((frm, to))
+    if rule is None:
+        outs = [t for (f, t) in TRANSITIONS if f == frm]
+        raise ValueError("非法状态转移：「%s」→「%s」（合法去向：%s）"
+                         % (frm, to, "、".join(outs) if outs else "无，是终态"))
+    if actor not in rule["actor"]:
+        raise ValueError("越权：%s 不能把卡从「%s」推进到「%s」（只允许 %s）"
+                         % (actor, frm, to, "/".join(sorted(rule["actor"]))))
+    return True, "ok"
+
+
+def edit_card(cid, fields, if_version=None, actor="human"):
+    """改卡字段（白名单）。返回 (card, changed)。
+
+    `if_version` 给了就必须与当前 version 相等，否则抛 ValueError——
+    这是面板并发编辑的乐观锁（对应 taskboard 的 versionGuard）。
+    """
+    card = require_card(cid)
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError("没有要改的字段")
+    unknown = [k for k in fields if k not in EDITABLE_FIELDS]
+    if unknown:
+        raise ValueError("不允许改这些字段：%s（可改：%s）"
+                         % ("、".join(unknown), "、".join(EDITABLE_FIELDS)))
+    cur_ver = int(card.get("version") or 1)
+    if if_version is not None and int(if_version) != cur_ver:
+        raise ValueError("版本冲突：当前 version=%s，你带的是 %s（先 board show 重读）"
+                         % (cur_ver, if_version))
+    changed = {}
+    for k, v in fields.items():
+        if card.get(k) != v:
+            changed[k] = {"from": card.get(k), "to": v}
+            card[k] = v
+    if not changed:
+        return card, {}
+    card["version"] = cur_ver + 1
+    _store().save_card(card)
+    append_event(cid, {"type": "edit", "actor": actor,
+                       "version": card["version"], "changed": changed,
+                       "idempotency_key": _idem("edit", cid, cur_ver,
+                                                json.dumps(changed, sort_keys=True,
+                                                           ensure_ascii=False))})
+    return card, changed
+
+
+def move_card(cid, to_state, actor="human", reason=None, if_version=None):
+    """移动卡状态（人类/复核席）。`agent` 的常规路径仍走 claim/submit。
+
+    为什么要单开一条命令：面板上人可以直接把卡拖到「已取消」「待返工」，
+    这些边状态机允许，但没有一条 CLI 命令能触发（以前只能靠手改库）。
+    """
+    card = require_card(cid)
+    st = replay(cid)
+    if st["state"] == to_state:      # 同状态：幂等返回，⛔ 不写事件
+        return {"id": cid, "from": st["state"], "to": to_state, "noop": True}
+    _check_transition(st["state"], to_state, actor)
+    if if_version is not None and int(if_version) != int(card.get("version") or 1):
+        raise ValueError("版本冲突：当前 version=%s，你带的是 %s"
+                         % (card.get("version"), if_version))
+    ev = {"type": "move", "actor": actor, "to": to_state,
+          "idempotency_key": _idem("move", cid, st["state"], to_state, reason or "")}
+    if reason:
+        ev["reason"] = str(reason)[:300]
+    append_event(cid, ev)
+    # 取消＝同时放掉租约，别留僵尸占卡（与 api_bulk 的 cancel 行为一致）
+    if to_state == "已取消":
+        release(cid)
+    return {"id": cid, "from": st["state"], "to": to_state}
+
+
+def revert_card(cid, reason, actor="system", seat=None):
+    """执行失败/中断时把卡退回「待返工」。对应 T0 缺口 A6。
+
+    ⛔ 这不是 review：不计返工次数、不需要复核凭据。
+    它只是把卡从「进行中」放回池子，并释放租约。
+    """
+    card = require_card(cid)
+    st = replay(cid)
+    # ⚠️ 必须显式要求「进行中」：`_check_transition` 对同状态返回 no-op，
+    #    于是「待返工」上再 revert 一次会被静默放行（2026-11-19 实测踩到）。
+    if st["state"] != "进行中":
+        raise ValueError("只有「进行中」的卡能回退，当前是「%s」" % st["state"])
+    ev = {"type": "revert", "actor": actor,
+          "reason": str(reason or "")[:500],
+          "idempotency_key": _idem("revert", cid, st["state"], reason or "")}
+    if seat:
+        ev["seat"] = seat
+    append_event(cid, ev)
+    release(cid)
+    return {"id": cid, "from": st["state"], "to": "待返工"}
+
+
 # ---------- 事件流写入命令（2026-11-19，D-033）----------
 #
 # 这些是**内核的正式写命令**：把 comments / executions / checklist / 软删除
@@ -1093,6 +1222,7 @@ def card_view(cid, since=None):
         "holder": st["holder"],
         "epoch": st["epoch"],
         "seq": evs[-1]["seq"] if evs else 0,
+        "version": int(card.get("version") or 1),
         "events": len(evs),
         "card": card,
     }
