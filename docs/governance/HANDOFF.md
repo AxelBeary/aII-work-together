@@ -39,14 +39,25 @@
 5. P2 闸门扩展：agent 面任何非 add/claim/submit 写必须拒；拒绝数 ≥3。
 6. **不做 subtree 合并**；MCP 别名与 BBFF role→seat 推迟。
 
-### 0.4 明天开工顺序
+### 0.4 当前进度与下一步（2026-11-19 晚更新）
 
-1. 读 `docs/design/20261119-integration-absorb/README.md` → 00 → 05 → 06（约 15 分钟）。
-2. `python tools/check.py --quick`（期望 20 道闸全绿；这是基线，不是本次产物）。
-3. **开 T0**：52 处调用点四列表（kind → 内核 API → 内核侧校验 → 命令缺口），1 天。
-4. T0 出缺口报告后，才拍板：TaskEnvelope 冻结、comments/executions/checklist/settings 承载（建议先 `cards.meta`）、是否补 HTTP 写面（claim/submit/heartbeat/release/review）。
+**T0 已完成**（`10`–`14` 五份，52/52 逐条清点）：
 
-⛔ T0 前不写 KernelStore；⛔ 不先改 taskboard 源码；⛔ 不双账本/双向同步。
+- 可直接映射内核命令 **4 处（7.7%）**；部分映射 8；**缺口 40 处（76.9%）**。
+- **红线 C1**：4 处无租约置 `in_progress`（session-sync:370/477/650、execution:831）。
+- 「只改三个文件」证伪；P2 维持 **4–6 周**。
+
+**下一步（按顺序）**：
+
+1. **拍板承载决议**（`14` §2：甲 = 全挂 `cards.meta`，推荐；乙 = 拆表，多 1 周）。
+2. 按 `14` §4 回改 `contracts/task-envelope-v1.schema.json`（加 `version`/`if_version`/`meta` 子结构）——约 1 小时。
+3. 写 `contracts/conformance.py`（T3）：坏卡被拒 + 重放幂等 + 跨项目拒。
+4. 进 P1：内核长能力（A1–A10 命令 + B1–B5 承载 + 调度五语义）。
+
+⛔ 未拍板承载决议前不写 KernelStore；⛔ 不改 taskboard 源码；⛔ 不双账本。
+
+**⚠️ 子代理通道故障**：`t0-routes`/`t0-exec`/`t0-tools`/`t0-exec2`/`t0-tools2` 五次派工 + 探针 `probe-min` 全部零产出且无收尾消息。
+判定为宿主子代理通道问题，非派工书问题。新会话若要派分席，**先跑一个最小探针**确认通道可用。
 
 ### 0.5 待拍板（D-031）
 
