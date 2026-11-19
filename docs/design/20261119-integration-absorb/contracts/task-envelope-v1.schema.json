@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aII-work-together/contracts/task-envelope-v1.schema.json",
+  "title": "TaskEnvelope v1",
+  "description": "内核唯一账本的任务外壳。其余系统（DSH 面板 / CLI / MCP / 对端机器）只交换这个形状。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "project_id",
+    "title",
+    "state",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "新卡为 ULID；旧卡原样保留并写 legacy_id"
+    },
+    "legacy_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "迁移前的原 id（taskboard t-xxxxx 或旧卡号）"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^prj_[0-9a-f]{16}$",
+      "description": "sha256(realpath 规范化)[:16]"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "goal": {
+      "type": "string",
+      "description": "什么样算做完；空串表示未声明"
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "工作区相对路径或通配；绝对路径与 .. 一律拒"
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "checked"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "checked": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/evidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "state": {
+      "enum": [
+        "todo",
+        "claimed",
+        "in_progress",
+        "verify",
+        "review",
+        "blocked",
+        "rework",
+        "done",
+        "canceled"
+      ]
+    },
+    "assignee": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "seat": {
+              "type": "string"
+            },
+            "role": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "engine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "lease": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seat",
+            "epoch"
+          ],
+          "properties": {
+            "seat": {
+              "type": "string"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "栅栏令牌；每次认领 +1，写路径必须带"
+            },
+            "ttl_s": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "heartbeat_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      ]
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retry_limit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "blocked_by": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_tier": {
+      "enum": [
+        "VERIFIED",
+        "AUDITED-UNGROUNDED",
+        null
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent",
+            "peer",
+            "schedule",
+            "zentao",
+            "tapd"
+          ]
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "description": "唯一扩展位：comments / executions / checklist / settings 在 P0 阶段挂这里"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "乐观并发；写路径可带 if_version"
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "file",
+            "cmd",
+            "diff",
+            "hash",
+            "test"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "description": "sha256:... 或 exit:0"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verifier": {
+          "enum": [
+            "machine",
+            "seat"
+          ]
+        },
+        "tier": {
+          "enum": [
+            "VERIFIED",
+            "AUDITED-UNGROUNDED"
+          ]
+        }
+      }
+    }
+  }
+}

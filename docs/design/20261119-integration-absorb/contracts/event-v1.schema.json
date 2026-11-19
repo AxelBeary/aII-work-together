@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aII-work-together/contracts/event-v1.schema.json",
+  "title": "Event v1",
+  "description": "append-only 事件。哈希链校验：hash = sha256(canonical(除 hash 外的全部字段))，prev_hash 指向同卡上一条。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "seq",
+    "task_id",
+    "type",
+    "at",
+    "actor",
+    "payload",
+    "prev_hash",
+    "hash"
+  ],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "同卡内单调递增"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "created",
+        "claim",
+        "heartbeat",
+        "release",
+        "block",
+        "cancel",
+        "submit",
+        "verify",
+        "review",
+        "human",
+        "reclaim",
+        "retry_grant",
+        "budget_set",
+        "edit",
+        "comment",
+        "adopt"
+      ]
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "at_ms": {
+      "type": "integer"
+    },
+    "actor": {
+      "enum": [
+        "agent",
+        "review",
+        "human",
+        "system"
+      ]
+    },
+    "seat": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "epoch": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "写路径必须带；旧事件为 null（不回填）"
+    },
+    "idempotency_key": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "全局唯一索引；重放同 key 必须被拒或返回原结果"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "prev_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "同卡上一条的 hash；首条为 null"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
