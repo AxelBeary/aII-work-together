@@ -364,7 +364,9 @@ def cmd_new(a):
                        "effort": card["effort"], "human_gate": a.human_gate,
                        "from_card": card["source_card"]})
     who = "AI 发布" if card["created_kind"] == "agent" else "人建"
-    B.ok(f"{who} {cid}：{a.title}")
+    # --json 时⛔ 不打人话：混排会让 json.loads 直接崩（2026-11-19 实测踩过）
+    if not getattr(a, "json", False):
+        B.ok(f"{who} {cid}：{a.title}")
     spec = []
     if card["engine"] != "any":
         spec.append(f"引擎={card['engine']}")
@@ -383,6 +385,14 @@ def cmd_new(a):
         print(f"  预算：{' / '.join(lim)}（超了会停下转阻塞）")
     if card["blocked_by"]:
         print(f"  依赖：{'、'.join(card['blocked_by'])}（没完成就不接）")
+    # --json（2026-11-19，D-033）：给 AI 用。成功/失败都输出 JSON，方便脚本接。
+    if getattr(a, "json", False):
+        print(json.dumps({"ok": True,
+                          "value": {"id": cid, "title": card["title"],
+                                    "state": "待认领"},
+                          "next": ["board show %s" % cid,
+                                   "board claim %s --seat <你的席号> --engine <引擎>" % cid]},
+                         ensure_ascii=False, indent=2))
 
 
 def cmd_publish(a):
@@ -530,6 +540,28 @@ def cmd_show(a):
             left = f"{bf['bytes']}B" if bf.get("exists") else "-"
             right = f"{af['bytes']}B" if af.get("exists") else "-"
             print(f"    {d['status']:<3} {d['path']}  {left} → {right}")
+    # 事件流投影（2026-11-19，D-033）：comments/executions/checklist/软删除
+    try:
+        fv = B.fold.fold_all(B.load_journal(a.id))
+        if fv["trashed_at"]:
+            print(f"  回收站  已在回收站（{fv['trashed_at']}）；board trash {a.id} --restore 可恢复")
+        if fv["comments"]:
+            print(f"  评论    {len(fv['comments'])} 条")
+            for c in fv["comments"][-3:]:
+                print(f"     [{c['author']}] {c['body'][:60]}")
+        if fv["checklist"]:
+            done = sum(1 for i in fv["checklist"] if i["checked"])
+            print(f"  清单    {done}/{len(fv['checklist'])}")
+            for i in fv["checklist"][:5]:
+                print(f"     {'[x]' if i['checked'] else '[ ]'} {i['text'][:60]}")
+        if fv["executions"]:
+            last = fv["executions"][-1]
+            print(f"  执行    {len(fv['executions'])} 条，最近 {last['outcome']}"
+                  f"（{last.get('trigger')}）")
+        if fv["branches"]:
+            print(f"  分支    {', '.join('%s=%s' % (k or 'root', v) for k, v in fv['branches'].items())}")
+    except Exception:
+        pass
     print(f"  事件    {st['events']} 条")
     if a.events:
         print("\n  事件流：")
@@ -1946,6 +1978,239 @@ def cmd_msg(a):
     B.die(f"未知动作：{act}")
 
 
+# ---------- 事件流命令（2026-11-19，D-033）----------
+#
+# 统一约定（给 AI 用）：
+#   · 每个命令都支持 --json，失败也输出 JSON（不 die 打断脚本）
+#   · 成功的 JSON 固定带 next：下一步该敲什么，agent 不用读文档猜
+#   · 错误码是闭集，见 ERR_CODES
+
+ERR_CODES = ("invalid_input", "not_found", "version_conflict",
+             "invalid_transition", "forbidden", "busy", "blocked", "internal")
+
+
+def _jout(obj, as_json):
+    """输出：--json 走 JSON，否则人话。失败也走这里，不 die 打断脚本。"""
+    if as_json:
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
+        return
+    if obj.get("ok"):
+        v = obj.get("value")
+        if isinstance(v, dict):
+            for k, val in v.items():
+                print("  %-14s %s" % (k, val))
+        elif v is not None:
+            print("  %s" % v)
+        for n in (obj.get("next") or []):
+            print("  → %s" % n)
+    else:
+        e = obj.get("error") or {}
+        print("✗ [%s] %s" % (e.get("code", "internal"), e.get("message", "")))
+        if e.get("hint"):
+            print("  %s" % e["hint"])
+
+
+def _err(code, message, hint=None, retryable=False, nexts=None):
+    if code not in ERR_CODES:
+        code = "internal"
+    out = {"ok": False, "error": {"code": code, "message": message,
+                                  "hint": hint, "retryable": retryable}}
+    if nexts:
+        out["next"] = nexts
+    return out
+
+
+def _ok(value=None, nexts=None):
+    out = {"ok": True}
+    if value is not None:
+        out["value"] = value
+    if nexts:
+        out["next"] = nexts
+    return out
+
+
+def _need_card(cid, as_json):
+    if not B.get_card(cid):
+        _jout(_err("not_found", "卡片不存在：%s" % cid, hint="board ls 看现有卡号"), as_json)
+        return False
+    return True
+
+
+def cmd_comment(a):
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    if not a.body:
+        cs = B.fold.fold_comments(B.load_journal(cid))
+        if a.json:
+            _jout(_ok({"count": len(cs), "comments": cs}), True)
+        else:
+            if not cs:
+                print("  （还没有评论）")
+            for c in cs:
+                print("  %s [%s] %s" % ("V" if c.get("delivered_at") else " ", c.get("author"), c.get("body")))
+        return 0
+    try:
+        ev = B.add_comment(cid, a.body, actor=a.as_actor or "human",
+                           seat=a.seat, thread_id=a.thread)
+    except ValueError as e:
+        _jout(_err("invalid_input", str(e)), a.json)
+        return 1
+    _jout(_ok({"id": cid, "seq": ev.get("seq"), "replayed": bool(ev.get("replayed"))},
+              nexts=["board show %s" % cid]), a.json)
+    return 0
+
+
+def cmd_checklist(a):
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    if a.action == "ls":
+        items = B.fold.fold_checklist(B.load_journal(cid))
+        done = sum(1 for i in items if i["checked"])
+        if a.json:
+            _jout(_ok({"total": len(items), "done": done, "items": items}), True)
+        else:
+            print("  验收清单 %d/%d" % (done, len(items)))
+            for i in items:
+                print("  %s %s  %s" % ("[x]" if i["checked"] else "[ ]", i["id"], i["text"]))
+        return 0
+    try:
+        if a.action == "add":
+            if not a.text:
+                _jout(_err("invalid_input", "add 需要 --text"), a.json)
+                return 1
+            kid = B.add_checklist(cid, a.text, seat=a.seat)
+            _jout(_ok({"id": cid, "item": kid}), a.json)
+        else:
+            if not a.item:
+                _jout(_err("invalid_input", "%s 需要 --item" % a.action), a.json)
+                return 1
+            B.check_item(cid, a.item, checked=(a.action == "check"),
+                         note=a.note, seat=a.seat)
+            _jout(_ok({"id": cid, "item": a.item, "checked": a.action == "check"}), a.json)
+        return 0
+    except ValueError as e:
+        _jout(_err("invalid_input", str(e)), a.json)
+        return 1
+
+
+def cmd_exec(a):
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    try:
+        if a.action == "ls":
+            items = B.fold.fold_executions(B.load_journal(cid))
+            if a.json:
+                _jout(_ok({"count": len(items), "executions": items}), True)
+            else:
+                for e in items:
+                    print("  %s %-10s %s" % (e["id"], e["outcome"], e.get("trigger")))
+                if not items:
+                    print("  （没有执行记录）")
+            return 0
+        if a.action == "open":
+            eid = B.open_execution(cid, seat=a.seat, session_id=a.session,
+                                   trigger=a.trigger or "manual")
+            _jout(_ok({"id": cid, "execution": eid},
+                      nexts=["board exec %s close --execution %s" % (cid, eid)]), a.json)
+            return 0
+        if a.action == "close":
+            if not a.execution:
+                _jout(_err("invalid_input", "close 需要 --execution"), a.json)
+                return 1
+            B.close_execution(cid, a.execution, outcome=a.outcome or "succeeded",
+                              error=a.error)
+            _jout(_ok({"id": cid, "execution": a.execution, "outcome": a.outcome}), a.json)
+            return 0
+        if a.action == "report":
+            if not a.execution:
+                _jout(_err("invalid_input", "report 需要 --execution"), a.json)
+                return 1
+            try:
+                rep = json.loads(a.body) if a.body else {}
+            except Exception:
+                rep = {"summary": a.body}
+            B.attach_report(cid, a.execution, rep)
+            _jout(_ok({"id": cid, "execution": a.execution}), a.json)
+            return 0
+    except ValueError as e:
+        _jout(_err("invalid_input", str(e)), a.json)
+        return 1
+    return 0
+
+
+def cmd_events(a):
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    since = getattr(a, "since", None)
+    evs = B._store().events(cid, since=since) if since is not None else B.load_journal(cid)
+    if a.json:
+        _jout(_ok({"id": cid, "count": len(evs),
+                   "last_seq": evs[-1]["seq"] if evs else 0, "events": evs}), True)
+    else:
+        for e in evs:
+            print("  #%-5s %-18s %s" % (e.get("seq"), e.get("type"),
+                                        (e.get("body") or e.get("reason") or "")))
+        print("  共 %d 条，最后 seq=%s" % (len(evs), evs[-1]["seq"] if evs else 0))
+    return 0
+
+
+def cmd_trash(a):
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    if a.restore:
+        B.restore_card(cid, actor=a.as_actor or "human")
+        _jout(_ok({"id": cid, "restored": True}), a.json)
+        return 0
+    r = B.trash_card(cid, actor=a.as_actor or "human", reason=a.reason)
+    _jout(_ok({"id": cid, "trashed": True, "already": r.get("already", False)},
+              nexts=["board trash %s --restore" % cid]), a.json)
+    return 0
+
+
+_SCHEMA_CMDS = ["init", "project", "stats", "rm", "cost", "open", "do", "retry",
+                "add-batch", "tl-plan", "add", "new", "publish", "ready", "ls",
+                "show", "claim", "budget", "beat", "block", "submit", "verify",
+                "consult", "review", "human", "token", "reclaim", "audit",
+                "doctor", "html", "overview", "inbox", "all", "msg",
+                "comment", "checklist", "exec", "events", "trash", "schema"]
+
+
+def cmd_schema(a):
+    """能力自描述：命令、状态机、错误码、JSON 约定。agent 据此自举。"""
+    info = {
+        "commands": sorted(_SCHEMA_CMDS),
+        "states": B.STATES,
+        "transitions": {"%s->%s" % k: sorted(v.get("actor", []))
+                        for k, v in B.TRANSITIONS.items()},
+        "error_codes": list(ERR_CODES),
+        "event_types": ["comment", "comment-delivered", "execution-open",
+                        "execution-activity", "execution-close", "execution-report",
+                        "checklist-add", "checklist-check", "checklist-uncheck",
+                        "branch-set", "trash", "restore",
+                        "created", "claim", "heartbeat", "release", "block",
+                        "submit", "verify", "review", "human", "reclaim", "cancel"],
+        "json_convention": {
+            "success": {"ok": True, "value": {}, "next": []},
+            "failure": {"ok": False, "error": {"code": "", "message": "",
+                                               "hint": "", "retryable": False}},
+        },
+        "cursor": {"seq": "事件流增量游标（board events --since N）",
+                   "epoch": "租约栅栏（claim/beat/submit 带 --epoch）"},
+    }
+    if a.json:
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+    else:
+        print("命令 %d 个：%s" % (len(info["commands"]), "、".join(info["commands"])))
+        print("状态：%s" % "、".join(info["states"]))
+        print("错误码：%s" % "、".join(info["error_codes"]))
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(
         prog="board",
@@ -2032,6 +2297,7 @@ def main():
 
     s = sub.add_parser("add", help="建卡（人建，等价于 new）")
     s.add_argument("--title", required=True)
+    s.add_argument("--json", action="store_true", help="机器可读输出（给 AI 用）")
     s.add_argument("--goal")
     s.add_argument("--territory", nargs="*", help="可写领地（路径）")
     s.add_argument("--deliverable", nargs="*", help="交付物路径")
@@ -2063,6 +2329,7 @@ def main():
     # new 是 add 的别名（保持旧脚本可用）
     s = sub.add_parser("new", help="建卡（add 的别名）")
     s.add_argument("--title", required=True)
+    s.add_argument("--json", action="store_true", help="机器可读输出（给 AI 用）")
     s.add_argument("--goal")
     s.add_argument("--territory", nargs="*")
     s.add_argument("--deliverable", nargs="*")
@@ -2230,6 +2497,60 @@ def main():
     s = sub.add_parser("all", help="🌐 跨项目总览（团队视角）")
     s.add_argument("--refresh", action="store_true", help="跳过缓存重新扫描")
     s.set_defaults(f=cmd_all)
+
+    # ---------- 事件流命令（2026-11-19，D-033）----------
+
+    s = sub.add_parser("comment", help="💬 卡片评论（列出 / 追加一条）")
+    s.add_argument("id")
+    s.add_argument("body", nargs="?", help="不给就列出全部评论")
+    s.add_argument("--seat")
+    s.add_argument("--thread")
+    s.add_argument("--as", dest="as_actor", default="human",
+                   choices=["human", "agent", "review", "system"])
+    s.add_argument("--json", action="store_true", help="机器可读输出")
+    s.set_defaults(f=cmd_comment)
+
+    s = sub.add_parser("checklist", help="✅ 验收清单（ls / add / check / uncheck）")
+    s.add_argument("id")
+    s.add_argument("action", choices=["ls", "add", "check", "uncheck"])
+    s.add_argument("--text", help="add 时的清单项内容")
+    s.add_argument("--item", help="check/uncheck 的项 id")
+    s.add_argument("--note", help="勾选时附证据说明")
+    s.add_argument("--seat")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_checklist)
+
+    s = sub.add_parser("exec", help="🏃 执行记录（ls / open / close / report）")
+    s.add_argument("id")
+    s.add_argument("action", choices=["ls", "open", "close", "report"])
+    s.add_argument("--execution", help="执行记录 id")
+    s.add_argument("--outcome", default="succeeded",
+                   choices=["succeeded", "failed", "cancelled"])
+    s.add_argument("--error")
+    s.add_argument("--body", help="report 的 JSON（或一句话摘要）")
+    s.add_argument("--session", help="关联会话 id")
+    s.add_argument("--trigger", default="manual")
+    s.add_argument("--seat")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_exec)
+
+    s = sub.add_parser("events", help="📜 读事件流（唯一真相；--since 增量）")
+    s.add_argument("id")
+    s.add_argument("--since", type=int, default=None, help="只回 seq > N 的事件")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_events)
+
+    s = sub.add_parser("trash", help="🗑 软删除 / 恢复（不物理删）")
+    s.add_argument("id")
+    s.add_argument("--restore", action="store_true", help="从回收站恢复")
+    s.add_argument("--reason")
+    s.add_argument("--as", dest="as_actor", default="human")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_trash)
+
+    s = sub.add_parser("schema", help="🧭 能力自描述（命令/状态机/错误码）")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_schema)
 
     s = sub.add_parser("msg", help="💬 跨会话留言（send/ls/inbox/ack/thread/wake）")
     s.add_argument("action", choices=["send", "ls", "inbox", "ack", "thread",

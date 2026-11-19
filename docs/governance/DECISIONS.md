@@ -573,21 +573,25 @@
   - 「只改三个文件」**彻底证伪**；实际需改 6 个文件 + 内核新增 22 类能力。
   - 缺口分三类：A 类新增命令 10 类、B 类承载位 6 类、**C 类红线 2 类**。
 
-## D-033 · 承载决议改判：用事件流，不用 meta（**已定** 2026-11-19）
 
-- 议题：comments / executions / checklist 等 append 型数据存哪里。
-- **推翻 D-032 的甲/乙二选一**，理由（盘上核实）：
-  - `storage.py:245-271` 的 `cards.meta` 是**整块 JSON 读改写** ⇒ 并发追加会互相覆盖。用 meta 存评论＝拿「最后写入者赢」存日志，是设计错误而非性能取舍。
-  - 拆 5 张表要迁移+回滚，P0 多 1 周。
-  - **内核已有 `events` 表**：append-only（`append_event` 只 INSERT）、`(card_id, seq)` 索引、哈希链、`data` 自由 JSON。四项正好对上四类需求，**迁移成本 0**。
-- 结论：**丙案** —— 全部 append 型数据走事件流，按类型折叠（`comment`/`execution-*`/`checklist-*`/`trash`）。
-- **AI 友好的四条硬要求**（同时定）：
-  1. 结构化错误 `{ok:false,error:{code,message,hint,retryable}}`，code 闭集 8 个；
-  2. `--json` 全覆盖（现状仅 6 处），失败也输出 JSON 不 die；
-  3. 写命令固定带 `next` 提示下一步；
-  4. `board schema --json` 自描述，agent 可自举。
-- **双游标**：`version` 管字段并发（`if_version`），`seq` 管事件流位置（`?since=seq`）。
-- 依据：`docs/design/20261119-integration-absorb/15_AI友好性与承载决议丙案__发牌席__.md`；
-  `contracts/conformance.py` 14 条断言 **13 过 1 失败**，失败项即 P1 待办（内核无幂等键）。
-- 影响面：`contracts/*.schema.json` 已按丙案回改；P1 需补 `events` 幂等唯一索引 + 事件折叠。
-- 状态：**已定**（用户 2026-11-19 授权「AI 最友好、最高效」；丙案是三条里唯一同时满足并发安全+零迁移+可审计的）。
+## D-034 · P1 第一批落地：事件流实装（**已定** 2026-11-19）
+
+- 议题：把 D-033 的丙案从设计变成可用的代码。
+- **已实装**（全部实测跑过）：
+  1. `storage.py`：`events` 加 `idem_key` 列 + 部分唯一索引；`append_event` 幂等（重放返回原事件、`replayed=True`）；`events(since=)` 增量；`last_seq()`。
+  2. `tools/fold.py`（新）：事件折叠 —— comments / executions / checklist / branches / 软删除。
+  3. `board.py`：10 个事件流写命令（`add_comment`/`open_execution`/`close_execution`/`add_checklist`/`check_item`/`trash_card`/`restore_card`/…）+ `card_view()`。
+  4. `cli.py`：`comment`/`checklist`/`exec`/`events`/`trash`/`schema` 六个新命令；`--json` 全覆盖；结构化错误（8 码闭集）；`next` 提示。
+  5. `server.py`：`GET /api/card/events?id=&since=` 增量接口；`/api/card` 返回折叠投影。
+  6. `tests/test_event_stream.py`（新，第 21 道闸）：35 条断言，含反例（手改被抓 / 老库迁移 / 不同 key 不被吞）。
+- **实测读数**：
+  - `check.py --quick` → **21 道闸全绿**；
+  - `conformance.py` → **14/14**（幂等那条从红转绿）；
+  - 端到端：建卡 → 同句评论 2 次 → **只 1 条**；清单勾选 1/1；执行 open→close→succeeded；`since=2` 精确返回后 4 条；软删→恢复 OK；
+  - HTTP：全量 4 条 / `since=2` 回 2 条 / `api/card` 折叠出 comments 2、checklist 1。
+- **踩坑并修掉**（写进 ENVIRONMENT E-45）：
+  1. 部分唯一索引若写在 `SCHEMA` 里，老库（无 `idem_key` 列）会**启动即崩**；必须建在补列之后。
+  2. `verify_chain` 若不排除 `idem_key`，带幂等键的事件会**全部误报哈希不符**。
+  3. `cmd_new` 在 `--json` 下多打一行人话 → JSON 解析崩；现在 `--json` 时不打人话。
+- 影响面：`tools/{storage,board,cli,server,fold}.py`、`tests/test_event_stream.py`、`tools/check.py`（21 道闸）、`docs/usage-events.md`。
+- 状态：**已定**。未做：A 类 10 个新命令（edit/move/软删已有，其余待做）、调度五语义、KernelStore 适配器。

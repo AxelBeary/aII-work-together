@@ -317,7 +317,62 @@ def api_card(q):
             "evidence": ev.get("evidence"),
         })
     v["events"] = events
+    # 事件流投影（2026-11-19，D-033）：comments/executions/checklist/软删除
+    # 都由 fold 折叠得出，⛔ 不是表里的列。面板与 MCP 共用这一份真相。
+    try:
+        v.update(B.fold.fold_all(B.load_journal(cid)))
+    except Exception as e:
+        v["fold_error"] = _safe_msg(e)
     return v
+
+
+def _event_wire(ev):
+    """事件的外部形状。只挑前端要用的，⛔ 不把内部全字段抖出去。"""
+    return {
+        "seq": ev.get("seq"),
+        "type": ev.get("type"),
+        "at": ev.get("at"),
+        "at_ms": ev.get("at_ms"),
+        "actor": ev.get("actor"),
+        "seat": ev.get("seat"),
+        "body": ev.get("body"),
+        "reason": ev.get("reason"),
+        "verdict": ev.get("verdict"),
+        "execution_id": ev.get("execution_id"),
+        "comment_id": ev.get("comment_id"),
+        "item_id": ev.get("item_id"),
+        "outcome": ev.get("outcome"),
+        "report": ev.get("report"),
+        "prev": ev.get("prev"),
+        "hash": ev.get("hash"),
+        "idem_key": ev.get("idem_key"),
+    }
+
+
+def api_card_events(q):
+    """GET /api/card/events?id=&since=
+
+    增量拉取（D-033）：`since` 是 seq 游标，只回 seq > since 的事件。
+    面板轮询 / SSE / 适配器同步共用同一个游标，⛔ 不需要全量重读。
+    """
+    _switch(q.get("project", [None])[0])
+    cid = q.get("id", [None])[0]
+    if not cid:
+        raise ValueError("缺 id")
+    if not B.get_card(cid):
+        raise ValueError(f"卡片不存在：{cid}")
+    raw_since = q.get("since", [None])[0]
+    since = None
+    if raw_since not in (None, "", "0"):
+        try:
+            since = int(raw_since)
+        except ValueError:
+            raise ValueError(f"since 必须是整数，收到：{raw_since}")
+    evs = B._store().events(cid, since=since) if since is not None else B.load_journal(cid)
+    return {"id": cid, "since": since,
+            "count": len(evs),
+            "last_seq": B._store().last_seq(cid),
+            "events": [_event_wire(e) for e in evs]}
 
 
 def api_cost(q):
@@ -759,6 +814,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/cards": api_cards,
             "/api/card": api_card,
             "/api/card/log": api_card_log,
+            "/api/card/events": api_card_events,
             "/api/cost": api_cost,
             "/api/run/log": api_run_log,
             "/api/messages": api_messages,

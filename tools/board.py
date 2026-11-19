@@ -29,6 +29,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import fold as _fold            # 事件折叠（D-033）：comments/executions/checklist 投影
+fold = _fold
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -900,6 +903,205 @@ def _match_miss(card: dict, engine, model, effort) -> list:
     if cf != "any" and effort and effort != cf:
         miss.append(f"思考强度需 {cf}")
     return miss
+
+
+
+
+# ---------- 事件流写入命令（2026-11-19，D-033）----------
+#
+# 这些是**内核的正式写命令**：把 comments / executions / checklist / 软删除
+# 这类 append 型数据写进事件流，再由 fold 折叠出来。
+#
+# 为什么不放 cli：cli 只做参数解析与人话输出；判据与写入口必须在核心里，
+# 否则服务器、MCP、面板各自实现一遍就会长出四套语义。
+
+def _idem(prefix, *parts):
+    """生成幂等键。同 (卡, 键) 重放只落一条事件。"""
+    raw = "|".join(str(p) for p in parts if p not in (None, ""))
+    return "%s:%s" % (prefix, hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16])
+
+
+def add_comment(cid, body, actor="agent", seat=None, thread_id=None,
+                comment_id=None, system_key=None, system_params=None,
+                idempotency_key=None):
+    """追加一条评论。返回事件。
+
+    幂等：不传 `idempotency_key` 时按 (卡, 作者, 正文) 生成——
+    agent 超时重试重发同一句不会出现两条。要发两条一样的话，显式给不同 key。
+    """
+    require_card(cid)
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("评论内容不能为空")
+    key = idempotency_key or _idem("comment", cid, actor, seat, body)
+    ev = {"type": "comment", "actor": actor, "body": body,
+          "thread_id": thread_id or (seat or actor),
+          "idempotency_key": key}
+    if seat:
+        ev["seat"] = seat
+    if comment_id:
+        ev["comment_id"] = comment_id
+    if system_key:
+        ev["system_key"] = system_key
+    if system_params:
+        ev["system_params"] = system_params
+    return append_event(cid, ev)
+
+
+def mark_comment_delivered(cid, comment_id, execution_id, idempotency_key=None):
+    """标记评论已投递到某个执行。"""
+    require_card(cid)
+    return append_event(cid, {
+        "type": "comment-delivered", "actor": "system",
+        "comment_id": comment_id, "execution_id": execution_id,
+        "idempotency_key": idempotency_key or _idem("cdel", cid, comment_id, execution_id),
+    })
+
+
+def open_execution(cid, seat=None, session_id=None, trigger="manual",
+                   execution_id=None, idempotency_key=None):
+    """开一条执行记录。已有在跑的同类执行时拒绝（一个会话同时只跑一件事）。"""
+    require_card(cid)
+    evs = load_journal(cid)
+    if fold.running_execution(evs) is not None:
+        raise ValueError("这张卡已有正在执行的记录；先 execution_close 再开新的")
+    eid = execution_id or ("e-%s-%s" % (now_ms(), uuid.uuid4().hex[:6]))
+    ev = {"type": "execution-open", "actor": "agent",
+          "execution_id": eid, "trigger": trigger,
+          "idempotency_key": idempotency_key or _idem("eopen", cid, eid)}
+    if seat:
+        ev["seat"] = seat
+    if session_id:
+        ev["session_id"] = session_id
+    append_event(cid, ev)
+    return eid
+
+
+def touch_execution(cid, execution_id, idempotency_key=None):
+    """记一次活动（心跳语义）。"""
+    require_card(cid)
+    return append_event(cid, {
+        "type": "execution-activity", "actor": "agent",
+        "execution_id": execution_id,
+        "idempotency_key": idempotency_key or _idem("eact", cid, execution_id, now_ms()),
+    })
+
+
+def close_execution(cid, execution_id, outcome="succeeded", error=None,
+                    report=None, idempotency_key=None):
+    """结算一条执行记录。outcome: succeeded / failed / cancelled。"""
+    require_card(cid)
+    if outcome not in ("succeeded", "failed", "cancelled"):
+        raise ValueError("outcome 只能是 succeeded / failed / cancelled，收到：%s" % outcome)
+    ev = {"type": "execution-close", "actor": "agent",
+          "execution_id": execution_id, "outcome": outcome,
+          "idempotency_key": idempotency_key or _idem("eclose", cid, execution_id)}
+    if error:
+        ev["error"] = str(error)[:500]
+    if report is not None:
+        ev["report"] = report
+    return append_event(cid, ev)
+
+
+def attach_report(cid, execution_id, report, idempotency_key=None):
+    """给执行记录附结构化报告（摘要/改动文件/自验/产物/风险）。"""
+    require_card(cid)
+    return append_event(cid, {
+        "type": "execution-report", "actor": "agent",
+        "execution_id": execution_id, "report": report,
+        "idempotency_key": idempotency_key or _idem("ereport", cid, execution_id),
+    })
+
+
+def add_checklist(cid, text, item_id=None, seat=None, idempotency_key=None):
+    """给验收清单加一项。"""
+    require_card(cid)
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("清单项内容不能为空")
+    kid = item_id or ("k-%s" % uuid.uuid4().hex[:8])
+    ev = {"type": "checklist-add", "actor": "agent", "item_id": kid, "text": text,
+          "idempotency_key": idempotency_key or _idem("kadd", cid, text)}
+    if seat:
+        ev["seat"] = seat
+    append_event(cid, ev)
+    return kid
+
+
+def check_item(cid, item_id, checked=True, note=None, seat=None,
+               idempotency_key=None):
+    """勾选/取消勾选验收项。"""
+    require_card(cid)
+    evs = load_journal(cid)
+    known = {i["id"] for i in fold.fold_checklist(evs)}
+    if item_id not in known:
+        raise ValueError("没有这一项：%s（现有 %s 项）" % (item_id, len(known)))
+    ev = {"type": "checklist-check" if checked else "checklist-uncheck",
+          "actor": "agent", "item_id": item_id,
+          "idempotency_key": idempotency_key or _idem(
+              "kchk" if checked else "kunchk", cid, item_id, seat)}
+    if note:
+        ev["note"] = str(note)[:400]
+    if seat:
+        ev["seat"] = seat
+    return append_event(cid, ev)
+
+
+def set_branch(cid, branch, repo="", idempotency_key=None):
+    """记录 worktree 分支名（repo 为空＝根仓库）。branch 为空表示清除。"""
+    require_card(cid)
+    return append_event(cid, {
+        "type": "branch-set", "actor": "agent", "repo": repo, "branch": branch,
+        "idempotency_key": idempotency_key or _idem("branch", cid, repo, branch),
+    })
+
+
+def trash_card(cid, actor="human", reason=None, idempotency_key=None):
+    """软删除（进回收站）。⛔ 不物理删除，事件流仍在。"""
+    require_card(cid)
+    evs = load_journal(cid)
+    if fold.is_trashed(evs):
+        return {"ok": True, "already": True, "trashed_at": fold.fold_trash(evs)[0]}
+    ev = {"type": "trash", "actor": actor, "idempotency_key": idempotency_key or _idem("trash", cid)}
+    if reason:
+        ev["reason"] = str(reason)[:300]
+    append_event(cid, ev)
+    return {"ok": True, "already": False}
+
+
+def restore_card(cid, actor="human", idempotency_key=None):
+    """从回收站恢复。"""
+    require_card(cid)
+    return append_event(cid, {
+        "type": "restore", "actor": actor,
+        "idempotency_key": idempotency_key or _idem("restore", cid, now_ms()),
+    })
+
+
+def card_view(cid, since=None):
+    """一张卡的完整视图：卡片字段 + 状态机 + 折叠投影 + 事件游标。
+
+    面板、MCP、CLI 都用这一个函数取详情——**只有一个真相源**。
+    `since` 给定时不返回全量投影（省带宽），只返回增量事件。
+    """
+    card = require_card(cid)
+    evs = load_journal(cid)
+    st = replay(cid, evs)
+    out = {
+        "id": cid,
+        "state": st["state"],
+        "holder": st["holder"],
+        "epoch": st["epoch"],
+        "seq": evs[-1]["seq"] if evs else 0,
+        "events": len(evs),
+        "card": card,
+    }
+    if since is None:
+        out.update(fold.fold_all(evs))
+    else:
+        out["events_delta"] = [e for e in evs if e["seq"] > int(since)]
+        out["seq"] = evs[-1]["seq"] if evs else 0
+    return out
 
 
 def __getattr__(name):

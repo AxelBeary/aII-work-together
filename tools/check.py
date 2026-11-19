@@ -179,6 +179,11 @@ def main():
     if not ok:
         fails.append("重试编排")
 
+    # 4n 事件流（2026-11-19，D-033）：幂等键 / seq 游标 / 折叠 / 哈希链 / 老库迁移 / CLI 端到端
+    ok, _ = run("事件流", [PY, "tests/test_event_stream.py"])
+    if not ok:
+        fails.append("事件流")
+
     # 5 体检 + 审计
     ok, out = run("审计", [PY, "tools/board.py", "audit"])
     if not ok:

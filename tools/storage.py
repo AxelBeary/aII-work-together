@@ -70,9 +70,16 @@ CREATE TABLE IF NOT EXISTS events (
   type     TEXT NOT NULL,
   data     TEXT NOT NULL,
   prev     TEXT,
-  hash     TEXT
+  hash     TEXT,
+  -- 幂等键（2026-11-19，D-033）：同一张卡上同一个 key 只允许一条事件。
+  -- agent 超时重试、宿主重启重放都不会写出第二条 —— 这是「结构上不可能重复」，
+  -- 不是「请大家小心别重复」的纪律。
+  idem_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_card ON events(card_id, seq);
+-- ⚠️ idx_events_idem（部分唯一索引）**不写在这里**：老库的 events 表还没有
+--    idem_key 列，executescript 会先撞「no such column」。它建在 _init_schema()
+--    的补列之后 —— 顺序错了就是启动即崩（2026-11-19 实测踩过）。
 
 -- ⭐ 认领的原子性就来自这里的 PRIMARY KEY(card_id)
 CREATE TABLE IF NOT EXISTS leases (
@@ -201,6 +208,12 @@ class Store:
         lcols = {r[1] for r in c.execute("PRAGMA table_info(leases)")}
         if "at_mono" not in lcols:
             c.execute("ALTER TABLE leases ADD COLUMN at_mono INTEGER")
+        # 2026-11-19（D-033）：事件幂等键。老库补列 + 建部分唯一索引，⛔ 不重建表
+        ecols = {r[1] for r in c.execute("PRAGMA table_info(events)")}
+        if "idem_key" not in ecols:
+            c.execute("ALTER TABLE events ADD COLUMN idem_key TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_idem "
+                  "ON events(card_id, idem_key) WHERE idem_key IS NOT NULL")
         c.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)",
                   (str(SCHEMA_VERSION),))
 
@@ -323,29 +336,73 @@ class Store:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
     def append_event(self, cid: str, ev: dict) -> dict:
+        """追加一条事件（唯一写入口）。
+
+        幂等（2026-11-19，D-033）：事件里带 `idempotency_key` 时，同卡同 key
+        只会存在一条。重放直接**返回原来那条**（`replayed=True`），⛔ 不写第二条。
+        并发重放由 `idx_events_idem` 部分唯一索引兜底：靠 SQL 判定，不是先查后写。
+        """
+        idem = ev.get("idempotency_key") or ev.get("idem_key")
+        idem = str(idem) if idem else None
         with self.write() as c:
+            if idem is not None:
+                hit = c.execute(
+                    "SELECT * FROM events WHERE card_id=? AND idem_key=?",
+                    (cid, idem)).fetchone()
+                if hit is not None:      # 重放：原样返回，不写
+                    out = {"seq": hit["seq"], "at": hit["at"], "at_ms": hit["at_ms"],
+                           "prev": hit["prev"], "hash": hit["hash"],
+                           "replayed": True}
+                    try:
+                        out.update(json.loads(hit["data"]))
+                    except Exception:
+                        pass
+                    return out
             row = c.execute(
                 "SELECT hash FROM events WHERE card_id=? ORDER BY seq DESC LIMIT 1",
                 (cid,)).fetchone()
             prev = (row["hash"] if row else "") or ""
             data = {k: v for k, v in ev.items()
-                    if k not in ("seq", "at", "at_ms", "prev", "hash")}
+                    if k not in ("seq", "at", "at_ms", "prev", "hash", "idem_key")}
             obj = {"at": _ts(), "at_ms": _now_ms(), **data}
             h = self._hash(prev, obj)
-            cur = c.execute(
-                "INSERT INTO events(card_id,at,at_ms,type,data,prev,hash) "
-                "VALUES(?,?,?,?,?,?,?)",
-                (cid, obj["at"], obj["at_ms"], obj.get("type", "?"),
-                 json.dumps(data, ensure_ascii=False), prev, h))
+            try:
+                cur = c.execute(
+                    "INSERT INTO events(card_id,at,at_ms,type,data,prev,hash,idem_key) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (cid, obj["at"], obj["at_ms"], obj.get("type", "?"),
+                     json.dumps(data, ensure_ascii=False), prev, h, idem))
+            except sqlite3.IntegrityError:
+                # 并发重放：另一个写者刚插了同 key —— 回读它那条，⛔ 不重试写
+                hit = c.execute(
+                    "SELECT * FROM events WHERE card_id=? AND idem_key=?",
+                    (cid, idem)).fetchone()
+                if hit is None:
+                    raise
+                out = {"seq": hit["seq"], "at": hit["at"], "at_ms": hit["at_ms"],
+                       "prev": hit["prev"], "hash": hit["hash"], "replayed": True}
+                try:
+                    out.update(json.loads(hit["data"]))
+                except Exception:
+                    pass
+                return out
             obj["seq"] = cur.lastrowid
             obj["prev"] = prev
             obj["hash"] = h
             return obj
 
-    def events(self, cid: str):
-        rows = self._read_conn().execute(
-            "SELECT seq,at,at_ms,type,data,prev,hash FROM events "
-            "WHERE card_id=? ORDER BY seq", (cid,)).fetchall()
+    def events(self, cid: str, since: int = None):
+        """读事件流。`since` 是增量游标：只回 seq > since 的（D-033）。
+
+        游标用 seq 而不是时间戳：seq 单调且无并列，时间戳会因同毫秒并列丢事件。
+        """
+        sql = ("SELECT seq,at,at_ms,type,data,prev,hash,idem_key FROM events "
+               "WHERE card_id=?")
+        args = [cid]
+        if since is not None:
+            sql += " AND seq > ?"
+            args.append(int(since))
+        rows = self._read_conn().execute(sql + " ORDER BY seq", args).fetchall()
         out = []
         for r in rows:
             try:
@@ -354,8 +411,15 @@ class Store:
                 data = {}
             out.append({"seq": r["seq"], "at": r["at"], "at_ms": r["at_ms"],
                         "type": r["type"], **data,
-                        "prev": r["prev"], "hash": r["hash"]})
+                        "prev": r["prev"], "hash": r["hash"],
+                        "idem_key": r["idem_key"]})
         return out
+
+    def last_seq(self, cid: str) -> int:
+        """该卡当前最新事件 seq（0＝无事件）。作增量同步与乐观并发的游标。"""
+        r = self._read_conn().execute(
+            "SELECT COALESCE(MAX(seq),0) n FROM events WHERE card_id=?", (cid,)).fetchone()
+        return int(r["n"]) if r else 0
 
     def event_count(self, cid: str) -> int:
         r = self._read_conn().execute("SELECT COUNT(*) n FROM events WHERE card_id=?",
@@ -369,8 +433,10 @@ class Store:
                 return False, f"第 {i} 条无 hash"
             if ev.get("prev", "") != prev:
                 return False, f"第 {i} 条 prev 断裂"
+            # idem_key 是**索引元数据**，不参与内容哈希（2026-11-19，D-033）：
+            # 它不进 data 列，append_event 也没把它算进 _hash 的输入。
             body = {k: v for k, v in ev.items()
-                    if k not in ("seq", "at", "at_ms", "prev", "hash")}
+                    if k not in ("seq", "at", "at_ms", "prev", "hash", "idem_key")}
             obj = {"at": ev["at"], "at_ms": ev["at_ms"], **body}
             if self._hash(prev, obj) != ev["hash"]:
                 return False, f"第 {i} 条 hash 不符（内容被改过）"

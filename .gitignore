@@ -42,3 +42,5 @@ board/shots/
 .opencode/memory/
 # 跨会话插件运行态（本地）
 .cross-session/
+# 安全扫描报告：用户明确「只留本地，不必发」
+docs/research/20261021-security-scan/
