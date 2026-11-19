@@ -681,3 +681,14 @@
 - **理由**：无头可用、失败隔离、可替换、21 道闸不依赖 Node 生态。
 - **允许的耦合**：卡的 `source.ref` 指回编排会话、`assignee.role` 保留原角色 id（数据字段，非代码依赖）。
 - 全文：`docs/design/20261119-integration-absorb/17_组件边界与分离__发牌席__.md`
+
+
+## D-043 · 自动派工：独立守护 + 三种 adapter（**已定** 2026-11-20）
+
+- 用户要「自动派工，或者自动调用 BBFF 或 CLI」。
+- **实现**：`tools/autodispatch.py`（独立进程，调看板命令，不属于内核）。
+- **adapter**：`cli`（复用 orchestrator，已实测）/ `cmd`（任意命令，已实测 stub）/ `http`（webhook，代码就绪未接真实桥）。
+- **安全**：默认 dry-run；单实例锁；在飞 15 分钟跳过；失败冷却 10 分钟；`dispatch-start/end` 留痕；回收站不派。
+- **BBFF 事实**：上游无 CLI（package.json 无 bin），当前只能走 http 桥或等未来 CLI；⛔ 不伪造其派工决策。
+- **部署**：`deploy/supervise.json` 增 `board-autodispatch`（默认 `enabled:false`）。
+- 全文：`docs/design/20261119-integration-absorb/18_自动派工__发牌席__.md`

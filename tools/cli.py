@@ -374,16 +374,18 @@ def cmd_new(a):
         spec.append(f"模型={card['model']}")
     if card["effort"] != "any":
         spec.append(f"思考={card['effort']}")
+    if getattr(a, "json", False):
+        spec = []          # --json 时⛔ 不打人话（混排会让 json.loads 崩）
     if spec:
         print(f"  执行规格：{' / '.join(spec)}")
-    if card["max_cost_usd"] is not None or card["max_minutes"] is not None:
+    if not getattr(a, "json", False) and (card["max_cost_usd"] is not None or card["max_minutes"] is not None):
         lim = []
         if card["max_cost_usd"] is not None:
             lim.append(f"${card['max_cost_usd']:.2f}")
         if card["max_minutes"] is not None:
             lim.append(f"{card['max_minutes']} 分钟")
         print(f"  预算：{' / '.join(lim)}（超了会停下转阻塞）")
-    if card["blocked_by"]:
+    if not getattr(a, "json", False) and card["blocked_by"]:
         print(f"  依赖：{'、'.join(card['blocked_by'])}（没完成就不接）")
     # --json（2026-11-19，D-033）：给 AI 用。成功/失败都输出 JSON，方便脚本接。
     if getattr(a, "json", False):

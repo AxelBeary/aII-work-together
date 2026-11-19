@@ -25,6 +25,23 @@
       "cwd": ".",
       "schedule": "*/30 * * * *",
       "restart": "never"
+    },
+    {
+      "id": "board-autodispatch",
+      "cmd": [
+        "python",
+        "tools/autodispatch.py",
+        "run",
+        "--adapter",
+        "cli",
+        "--apply",
+        "--interval",
+        "20"
+      ],
+      "cwd": ".",
+      "restart": "on-failure",
+      "enabled": false,
+      "note": "默认关闭：启用前先确认 adapter（cli/cmd/http）指向哪个执行器；BBFF 无 CLI，需 http 桥或未来 CLI。"
     }
   ]
 }
