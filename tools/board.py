@@ -512,10 +512,13 @@ def claim(cid: str, seat: str, engine: str, model: str = None, effort: str = Non
     append_event(cid, {"type": "claim", "actor": "agent", "seat": seat,
                        "engine": engine, "model": model, "effort": effort,
                        "epoch": epoch, "lease_dir": LEASE_NAME,
-                       "pid": os.getpid()})
+                       "pid": os.getpid(),
+                       # 幂等（D-038）：同一 (卡, 席位, 代次) 重试只落一条 claim
+                       "idempotency_key": _idem("claim", cid, seat, epoch)})
     # B4：认领时给交付物拍快照（「before」），之后拍板的人不用自己跑 git diff
     append_event(cid, {"type": "baseline", "actor": "system", "seat": seat,
-                       "files": _snapshot_deliverables(card)})
+                       "files": _snapshot_deliverables(card),
+                       "idempotency_key": _idem("baseline", cid, seat, epoch)})
     return True
 
 
@@ -1231,6 +1234,198 @@ def card_view(cid, since=None):
     else:
         out["events_delta"] = [e for e in evs if e["seq"] > int(since)]
         out["seq"] = evs[-1]["seq"] if evs else 0
+    return out
+
+
+# ---------- 调度：五语义（2026-11-19，D-037）----------
+#
+# 为什么内核要有调度（而不是留在面板插件里）：
+#   DSH 停掉时，定时任务仍要能触发；否则「晚上跑一批」这件事就绑死在 GUI 上。
+# 五语义（对应 T0 缺口 A9，删 scheduler.ts 的前置条件）：
+#   ① 一次性任务触发后归一为「普通卡」，⛔ 不留有壳无触发的幽灵
+#   ② 错过窗口要留痕（事件 + 评论），⛔ 不静默丢
+#   ③ 死 cron 自动停用并留痕
+#   ④ 依赖/预算不满足时窗口作废并留痕
+#   ⑤ 触发失败（状态不对/卡不在）也留痕，不吞
+
+MISS_GRACE_MS = 3600 * 1000        # 超过 1 小时没跑＝错过窗口
+
+
+def _parse_every(spec: str) -> int:
+    """把 30s / 10m / 2h / 1d 解析成毫秒。"""
+    s = str(spec or "").strip().lower()
+    if not s:
+        raise ValueError("every 需要时长，如 30m / 2h / 1d")
+    mult = {"s": 1000, "m": 60 * 1000, "h": 3600 * 1000, "d": 24 * 3600 * 1000}
+    unit = s[-1]
+    if unit not in mult:
+        raise ValueError("时长单位只能是 s/m/h/d，收到：%s" % spec)
+    try:
+        n = float(s[:-1])
+    except ValueError:
+        raise ValueError("时长数值不合法：%s" % spec)
+    if n <= 0:
+        raise ValueError("时长必须大于 0")
+    return int(n * mult[unit])
+
+
+def _cron_field(spec: str, lo: int, hi: int) -> set:
+    """解析单个 cron 字段：* / */n / a-b / a,b / 数字。"""
+    out = set()
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        step = 1
+        if "/" in part:
+            part, step_s = part.split("/", 1)
+            step = int(step_s)
+            if step <= 0:
+                raise ValueError("cron 步长必须 > 0")
+        if part in ("*", ""):
+            a, b = lo, hi
+        elif "-" in part:
+            a_s, b_s = part.split("-", 1)
+            a, b = int(a_s), int(b_s)
+        else:
+            a = b = int(part)
+        if a < lo or b > hi or a > b:
+            raise ValueError("cron 值越界：%s（允许 %s-%s）" % (part, lo, hi))
+        out.update(range(a, b + 1, step))
+    if not out:
+        raise ValueError("cron 字段为空")
+    return out
+
+
+def _cron_next(expr: str, after_ms: int, max_days: int = 31):
+    """算下一次触发时刻（毫秒）。最多向后找 max_days 天，找不到返回 None。
+
+    ⚠️ 逐分钟扫描而不是字段跳跃：简单、可读、不会因夏令时/月长算错。
+       代价是 31 天上限（44640 次迭代，实测几十毫秒）。
+    """
+    fields = str(expr).split()
+    if len(fields) != 5:
+        raise ValueError("cron 要 5 个字段：分 时 日 月 周，收到 %d 个" % len(fields))
+    mins = _cron_field(fields[0], 0, 59)
+    hours = _cron_field(fields[1], 0, 23)
+    doms = _cron_field(fields[2], 1, 31)
+    months = _cron_field(fields[3], 1, 12)
+    dows = _cron_field(fields[4], 0, 6)
+    t = (int(after_ms) // 60000 + 1) * 60000      # 下一分钟整
+    limit = t + max_days * 24 * 3600 * 1000
+    while t <= limit:
+        dt = datetime.fromtimestamp(t / 1000.0)
+        if (dt.minute in mins and dt.hour in hours and dt.day in doms
+                and dt.month in months and (dt.weekday() + 1) % 7 in dows):
+            return t
+        t += 60000
+    return None
+
+
+def _next_fire(kind: str, spec: str, after_ms: int):
+    if kind == "every":
+        return int(after_ms) + _parse_every(spec)
+    if kind == "cron":
+        return _cron_next(spec, after_ms)
+    if kind == "once":
+        try:
+            dt = datetime.fromisoformat(str(spec))
+        except ValueError:
+            raise ValueError("once 的时间格式要 ISO，如 2026-11-20T09:00")
+        return int(dt.timestamp() * 1000)
+    raise ValueError("kind 只能是 once / cron / every")
+
+
+def set_schedule(cid, kind, spec, by="human", after_ms=None):
+    """给卡设/改一条调度。返回 (kind, spec, next_ms)。"""
+    require_card(cid)
+    now = after_ms if after_ms is not None else now_ms()
+    nxt = _next_fire(kind, spec, now)
+    if nxt is None:
+        raise ValueError("这个 cron 在未来 %d 天内没有触发点，拒绝写入" % 31)
+    _store().schedule_upsert(cid, kind, str(spec), nxt, by=by)
+    append_event(cid, {"type": "schedule-set", "actor": by, "kind": kind,
+                       "spec": str(spec), "next_ms": nxt,
+                       "idempotency_key": _idem("sched-set", cid, kind, spec, nxt)})
+    return kind, str(spec), nxt
+
+
+def clear_schedule(cid, by="human"):
+    n = _store().schedule_delete(cid)
+    if n:
+        append_event(cid, {"type": "schedule-clear", "actor": by,
+                           "idempotency_key": _idem("sched-clear", cid, now_ms())})
+    return n
+
+
+def tick(now=None):
+    """触发到点的调度。返回逐条结果（给 CLI/JSON 用）。
+
+    ⛔ 只发事件，不改卡状态：真正开工仍走 claim（租约红线）。
+    """
+    now = now if now is not None else now_ms()
+    out = []
+    for s in _store().schedules_due(now):
+        cid = s["card_id"]
+        card = get_card(cid)
+        base = {"card": cid, "kind": s["kind"], "spec": s["spec"],
+                "due_ms": s["next_ms"]}
+        if card is None:
+            _store().schedule_delete(cid)
+            out.append({**base, "result": "card-gone", "note": "卡已不存在，调度删除"})
+            continue
+        st = replay(cid)
+        missed = bool(now - int(s["next_ms"]) > MISS_GRACE_MS)
+        reason = None
+        if fold.is_trashed(load_journal(cid)):
+            reason = "卡在回收站"
+        elif st["state"] not in ("待认领", "待返工"):
+            reason = "状态「%s」不可开工" % st["state"]
+        else:
+            blocked = withholding(cid, card)
+            if blocked:
+                reason = "；".join(blocked)
+        if reason:
+            # 语义②④⑤：任何跳过都留痕，⛔ 不静默
+            append_event(cid, {
+                "type": "schedule-skipped", "actor": "system",
+                "reason": reason, "missed": missed,
+                "due_ms": int(s["next_ms"]),
+                "idempotency_key": _idem("sched-skip", cid, int(s["next_ms"]))})
+            if s["kind"] != "every":
+                add_comment(cid, "[系统] 定时到点但未执行：%s。" % reason,
+                            actor="system", system_key="sys.schedSkip",
+                            idempotency_key=_idem("sched-skip-c", cid, int(s["next_ms"])))
+            out.append({**base, "result": "skipped", "reason": reason, "missed": missed})
+        else:
+            # 语义①：一次性触发后归一为普通卡（删调度）；周期则推进
+            append_event(cid, {
+                "type": "schedule-due", "actor": "system",
+                "missed": missed, "due_ms": int(s["next_ms"]),
+                "idempotency_key": _idem("sched-due", cid, int(s["next_ms"]))})
+            if missed:
+                add_comment(cid, "[系统] 定时窗口已错过（超过 1 小时），本次仍触发。",
+                            actor="system", system_key="sys.schedMissed",
+                            idempotency_key=_idem("sched-missed", cid, int(s["next_ms"])))
+            out.append({**base, "result": "due", "missed": missed})
+        # 推进或消费
+        if s["kind"] == "once":
+            _store().schedule_delete(cid)          # ① 不留幽灵
+        else:
+            try:
+                nxt = _next_fire(s["kind"], s["spec"], now)
+            except ValueError:
+                nxt = None
+            if nxt is None:
+                _store().schedule_delete(cid)      # ③ 死 cron 停用
+                append_event(cid, {"type": "schedule-dead", "actor": "system",
+                                   "spec": s["spec"],
+                                   "idempotency_key": _idem("sched-dead", cid, now)})
+                add_comment(cid, "[系统] 定时表达式未来 31 天无触发点，已停用。",
+                            actor="system", system_key="sys.schedDead")
+                out[-1]["result"] = out[-1].get("result", "") + "+dead"
+            else:
+                _store().schedule_advance(cid, nxt, missed=1 if missed else 0)
     return out
 
 

@@ -744,10 +744,13 @@ def cmd_submit(a):
     ok4, p4, out4 = B.gate_l4(a.id, card)
     problems = p1 + p2 + p3 + p4
     verdict = "pass" if (ok1 and ok2 and ok3 and ok4) else "fail"
+    _sub_epoch = _lease_epoch(B.active_lease(a.id))
     B.append_event(a.id, {
         "type": "submit", "actor": "agent", "seat": a.seat, "note": a.note or "",
         "pid": os.getpid(),
-        "epoch": _lease_epoch(B.active_lease(a.id)),
+        # 幂等（D-038）：同一 (卡, 席位, 代次) 重复 submit 只落一条
+        "idempotency_key": B._idem("submit", a.id, a.seat, _sub_epoch),
+        "epoch": _sub_epoch,
         "gate": {"L1": ok1, "L2": ok2, "L3": ok3, "L4": ok4,
                  "problems": problems, "files": r1,
                  "check_tail": (out4 or "")[-800:]},
@@ -2111,6 +2114,72 @@ def cmd_revert(a):
     _jout(_ok(r, nexts=["board ls", "board show %s" % cid]), a.json)
     return 0
 
+
+def cmd_schedule(a):
+    """设/清/看调度（once / cron / every）。"""
+    cid = a.id
+    if not _need_card(cid, a.json):
+        return 1
+    if a.clear:
+        n = B.clear_schedule(cid)
+        _jout(_ok({"id": cid, "cleared": bool(n)}), a.json)
+        return 0
+    if not (a.at or a.cron or a.every):
+        s = B._store().schedule_get(cid)
+        if a.json:
+            _jout(_ok({"id": cid, "schedule": s}), True)
+        else:
+            if not s:
+                print("  （没有调度）")
+            else:
+                print("  %s %s  下次 %s" % (s["kind"], s["spec"],
+                                           datetime.fromtimestamp(s["next_ms"] / 1000.0)))
+        return 0
+    kind = "once" if a.at else ("cron" if a.cron else "every")
+    spec = a.at or a.cron or a.every
+    try:
+        k, sp, nxt = B.set_schedule(cid, kind, spec, by=a.by or "human")
+    except ValueError as e:
+        _jout(_err("invalid_input", str(e)), a.json)
+        return 1
+    _jout(_ok({"id": cid, "kind": k, "spec": sp, "next": nxt},
+              nexts=["board tick --json"]), a.json)
+    return 0
+
+
+def cmd_tick(a):
+    """触发到点的调度（给 cron/宿主定时调）。"""
+    try:
+        out = B.tick()
+    except Exception as e:
+        _jout(_err("internal", str(e)), a.json)
+        return 1
+    if a.json:
+        _jout(_ok({"fired": len(out), "items": out}), True)
+    else:
+        if not out:
+            print("  （没有到点的调度）")
+        for it in out:
+            print("  %-12s %-8s %s" % (it["card"], it.get("result"),
+                                       it.get("reason") or it.get("spec")))
+    return 0
+
+
+def cmd_schedules(a):
+    """列出所有调度。"""
+    rows = B._store().schedule_list()
+    if a.json:
+        _jout(_ok({"count": len(rows), "schedules": rows}), True)
+    else:
+        for r in rows:
+            print("  %-12s %-6s %-18s %s" % (
+                r["card_id"], r["kind"], r["spec"],
+                datetime.fromtimestamp(r["next_ms"] / 1000.0).strftime("%m-%d %H:%M")))
+        if not rows:
+            print("  （没有调度）")
+    return 0
+
+
 def cmd_comment(a):
     cid = a.id
     if not _need_card(cid, a.json):
@@ -2253,7 +2322,7 @@ _SCHEMA_CMDS = ["init", "project", "stats", "rm", "cost", "open", "do", "retry",
                 "consult", "review", "human", "token", "reclaim", "audit",
                 "doctor", "html", "overview", "inbox", "all", "msg",
                 "comment", "checklist", "exec", "events", "trash", "schema",
-                "edit", "move", "revert"]
+                "edit", "move", "revert", "schedule", "tick", "schedules"]
 
 
 def cmd_schema(a):
@@ -2575,6 +2644,24 @@ def main():
     s.set_defaults(f=cmd_all)
 
     # ---------- 事件流命令（2026-11-19，D-033）----------
+
+    s = sub.add_parser("schedule", help="⏰ 设定时/周期触发（once / cron / every）")
+    s.add_argument("id")
+    s.add_argument("--at", help="一次性时间，ISO 格式：2026-11-20T09:00")
+    s.add_argument("--cron", help="5 字段 cron：分 时 日 月 周")
+    s.add_argument("--every", help="间隔：30s / 10m / 2h / 1d")
+    s.add_argument("--clear", action="store_true", help="清掉这张卡的调度")
+    s.add_argument("--by", help="谁设的（默认 human）")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_schedule)
+
+    s = sub.add_parser("tick", help="⏱ 触发到点的调度（宿主/计划任务调它）")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_tick)
+
+    s = sub.add_parser("schedules", help="📋 列出所有调度")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_schedules)
 
     s = sub.add_parser("edit", help="✏️ 改卡字段（白名单 + --if-version 乐观锁）")
     s.add_argument("id")

@@ -604,3 +604,35 @@
 - **工程教训（写进 E-46）**：`tools.read` 默认只读 2000 行，大文件必须用 fs 或分段读；
   用它读全量再写回会**静默截断**（本会话把 `cli.py` 从 2285 行截成 1162 行，已用 git stash 恢复）。
 - 状态：**已定**。未做：调度五语义、KernelStore 适配器、submit/claim 的幂等键。
+
+
+## D-037 · 内核调度五语义（**已定** 2026-11-19）
+
+- 议题：删面板 `scheduler.ts` 的前置条件——内核必须自己能调度。
+- **已实装**：`schedules` 表（once / cron / every）+ `board schedule|tick|schedules` + HTTP `/api/card/schedule`、`/api/tick`、`/api/schedules`。
+- **五语义（逐条实测）**：
+  1. **一次性触发后调度删除**（⛔ 不留有壳无触发的幽灵）；
+  2. **错过窗口（>1h）留痕**：事件 `schedule-due missed=true` + 系统评论；
+  3. **死 cron 拒绝写入**（未来 31 天无触发点直接拒，不制造永不触发的调度）；
+  4. **依赖/预算不满足**：窗口跳过 + `schedule-skipped` 事件 + 系统评论；
+  5. **状态不可开工**（进行中/完成/回收站）：跳过而不是硬跑。
+- cron 实现：5 字段，支持 `*`/`*/n`/`a-b`/`a,b`，逐分钟扫描上限 31 天（实测几十毫秒）。
+- 依据：`tests/test_event_stream.py` 新增 5 组调度断言 + 1 组幂等断言，**60 条全过**；21 道闸全绿。
+- 未做：tick 只发事件不做派工（派工归编排器/BBFF Lead）；跨项目批量 tick。
+
+## D-038 · claim / submit 幂等键（**已定** 2026-11-19）
+
+- 结论：`claim`、`baseline`、`submit` 的事件都带 `idempotency_key`（卡+席位+代次）。
+- 为什么：agent 超时重试、宿主重启重放不会产生第二条 claim/submit —— 把「小心别重复」变成结构上不可能。
+- 实测：同卡 claim 两次（未释放）被租约挡住；submit 连续两次只落 1 条 `submit` 事件。
+
+
+## D-039 · BBFF 派工保留（**已定** 2026-11-19）
+
+用户明确「他这个派工我很喜欢，尽可能保留好」。结论：**BBFF 的派工是本体能力，不是可被内核替代的实现细节。**
+
+- 保留：Lead 当经理不当执行者、角色目录（explorer/librarian/oracle/designer/fixer/writer/laborer/tester）、角色任务书、工具层权限、模型分档、核心席/外包席、嵌套与并发上限、名册活动可观测。
+- 边界：BBFF 决定「谁去干」，内核决定「干了什么、算不算完成」。
+- 适配层只做三件：席位映射（保留 role id）、派工可见（`source.ref` 指回 Lead 会话）、结果回传（走内核证据协议，⛔ 不绕过 Lead 收口）。
+- ⛔ 不 vendor BBFF、不复制角色目录进内核、不让内核自己决定派谁。
+- 全文：`docs/design/20261119-integration-absorb/16_BBFF派工保留约束__发牌席__.md`

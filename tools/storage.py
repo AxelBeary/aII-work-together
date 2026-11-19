@@ -142,6 +142,21 @@ CREATE TABLE IF NOT EXISTS msg_wakes (
   at_ms   INTEGER,
   detail  TEXT
 );
+
+-- 定时/周期触发（2026-11-19，D-037）：内核唯一的调度表。
+-- ⛔ 不放在任务看板插件里：DSH 停掉时这里仍要能跑（board tick）。
+-- kind: once（一次）/ cron（周期，5 字段）/ every（间隔，秒）
+CREATE TABLE IF NOT EXISTS schedules (
+  card_id   TEXT PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+  kind      TEXT NOT NULL,
+  spec      TEXT NOT NULL,
+  next_ms   INTEGER NOT NULL,
+  last_ms   INTEGER,
+  misses    INTEGER DEFAULT 0,
+  created_at TEXT,
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_schedules_next ON schedules(next_ms);
 """
 
 
@@ -693,6 +708,45 @@ class Store:
         d = self.evidence_dir / cid
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    # ---------- 调度（2026-11-19，D-037）----------
+
+    def schedule_get(self, cid: str):
+        r = self._read_conn().execute("SELECT * FROM schedules WHERE card_id=?", (cid,)).fetchone()
+        return dict(r) if r else None
+
+    def schedule_upsert(self, cid: str, kind: str, spec: str, next_ms: int,
+                        by: str = None):
+        """写/改一条调度。主键冲突即覆盖（同一张卡只允许一条）。"""
+        with self.write() as c:
+            c.execute(
+                "INSERT INTO schedules(card_id,kind,spec,next_ms,last_ms,misses,"
+                "created_at,created_by) VALUES(?,?,?,?,NULL,0,?,?) "
+                "ON CONFLICT(card_id) DO UPDATE SET kind=excluded.kind,"
+                "spec=excluded.spec,next_ms=excluded.next_ms,created_by=excluded.created_by",
+                (cid, kind, spec, int(next_ms), _ts(), by or "human"))
+
+    def schedule_delete(self, cid: str):
+        with self.write() as c:
+            cur = c.execute("DELETE FROM schedules WHERE card_id=?", (cid,))
+            return cur.rowcount
+
+    def schedule_list(self):
+        rows = self._read_conn().execute(
+            "SELECT * FROM schedules ORDER BY next_ms").fetchall()
+        return [dict(r) for r in rows]
+
+    def schedules_due(self, now_ms: int):
+        rows = self._read_conn().execute(
+            "SELECT * FROM schedules WHERE next_ms <= ? ORDER BY next_ms",
+            (int(now_ms),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def schedule_advance(self, cid: str, next_ms: int, missed: int = 0):
+        with self.write() as c:
+            c.execute("UPDATE schedules SET last_ms=next_ms, next_ms=?, "
+                      "misses=COALESCE(misses,0)+? WHERE card_id=?",
+                      (int(next_ms), int(missed), cid))
 
     # ---------- 维护 ----------
 

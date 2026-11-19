@@ -182,3 +182,31 @@ board revert <卡号> --reason "引擎崩了" --json
 
 **结构化错误**（新接口）：`{"ok":false,"error":{"code","message","hint","retryable"}}`，
 code 闭集与 CLI 一致。老接口仍是 `{"error":"..."}`（不破坏既有前端）。
+
+---
+
+## 定时调度（2026-11-19）
+
+```bash
+board schedule <卡号> --every 30m          # 每 30 分钟
+board schedule <卡号> --cron "0 9 * * 1"   # 每周一 9 点
+board schedule <卡号> --at 2026-11-20T09:00 # 一次性
+board schedule <卡号>                      # 看这张卡的调度
+board schedule <卡号> --clear              # 清掉
+board schedules                            # 列全部
+board tick                                 # 触发到点的（宿主/计划任务每 30s 调）
+```
+
+**五条语义**（都有测试）：一次性触发后调度消失；错过窗口（>1h）留痕并仍触发；
+死 cron 拒绝写入；依赖不满足跳过并留痕；状态不可开工跳过。
+
+⛔ tick 只发事件、不改卡状态——真正开工仍走 claim（租约红线）。
+
+---
+
+## 界面（board open）
+
+卡详情现在直接显示：评论、验收清单（可点勾选）、执行记录、分支、回收站状态。
+底部按钮：**评论 / 改标题 / 回退 / 执行 / 删除 / 恢复**。
+
+对应接口：`POST /api/card/{comment,edit,revert,trash}`。

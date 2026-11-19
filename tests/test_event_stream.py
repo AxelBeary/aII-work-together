@@ -392,6 +392,104 @@ def t_json_purity():
         ck("add --json 输出纯净", False, "%s" % type(e).__name__)
 
 
+
+# ---------------------------------------------------------------- 调度（D-037）
+
+def t_sched_once_consumed():
+    """① 一次性触发后调度消失（⛔ 不留幽灵）。"""
+    d = tempfile.mkdtemp(prefix="sc1-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    # 过去时间 = 立刻到点
+    r = _board(["schedule", cid, "--at", "2020-01-01T00:00", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("once 设定成功", o["ok"], o.get("error"))
+    r = _board(["tick", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("once 被触发", o["value"]["fired"] == 1, str(o["value"]))
+    r = _board(["schedules", "--json"], d)
+    ck("once 触发后调度清空", json.loads(r.stdout)["value"]["count"] == 0)
+    r = _board(["events", cid, "--json"], d)
+    types = [e["type"] for e in json.loads(r.stdout)["value"]["events"]]
+    ck("留下 schedule-due 事件", "schedule-due" in types, str(types))
+
+
+def t_sched_missed_marks():
+    """② 错过窗口必须留痕（事件 missed + 系统评论）。"""
+    d = tempfile.mkdtemp(prefix="sc2-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    _board(["schedule", cid, "--at", "2020-01-01T00:00", "--json"], d)
+    _board(["tick", "--json"], d)
+    r = _board(["events", cid, "--json"], d)
+    evs = json.loads(r.stdout)["value"]["events"]
+    due = [e for e in evs if e["type"] == "schedule-due"]
+    ck("due 事件标 missed", bool(due) and due[0].get("missed") is True)
+    ck("错过有系统评论", any(e["type"] == "comment" for e in evs))
+
+
+def t_sched_dead_cron_rejected():
+    """③ 死 cron 拒绝写入（不制造永不触发的调度）。"""
+    d = tempfile.mkdtemp(prefix="sc3-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    r = _board(["schedule", cid, "--cron", "0 0 31 2 *", "--json"], d)
+    o = json.loads(r.stdout)
+    ck("死 cron 被拒", o["ok"] is False and o["error"]["code"] == "invalid_input",
+       o.get("error", {}).get("message"))
+    r = _board(["schedules", "--json"], d)
+    ck("被拒后没有留下调度", json.loads(r.stdout)["value"]["count"] == 0)
+
+
+def t_sched_skip_when_blocked():
+    """④ 依赖不满足：窗口跳过并留痕。"""
+    d = tempfile.mkdtemp(prefix="sc4-")
+    _board(["init"], d)
+    a = _mkcard(d, "被阻塞")
+    b = _mkcard(d, "依赖")
+    _board(["edit", a, "--blocked-by", b, "--json"], d)
+    _board(["schedule", a, "--at", "2020-01-01T00:00", "--json"], d)
+    r = _board(["tick", "--json"], d)
+    items = json.loads(r.stdout)["value"]["items"]
+    ck("依赖不满足被跳过", items and items[0]["result"] == "skipped",
+       str(items))
+    r = _board(["events", a, "--json"], d)
+    types = [e["type"] for e in json.loads(r.stdout)["value"]["events"]]
+    ck("跳过留了事件", "schedule-skipped" in types, str(types))
+
+
+def t_sched_skip_when_in_progress():
+    """⑤ 状态不可开工：跳过而不是硬跑。"""
+    d = tempfile.mkdtemp(prefix="sc5-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    _board(["claim", cid, "--seat", "w1", "--engine", "opencode"], d)
+    _board(["schedule", cid, "--at", "2020-01-01T00:00", "--json"], d)
+    r = _board(["tick", "--json"], d)
+    items = json.loads(r.stdout)["value"]["items"]
+    ck("进行中的卡不重复触发", items and items[0]["result"] == "skipped",
+       str(items))
+
+
+def t_claim_submit_idempotent():
+    """D-038：claim/submit 重放不产生重复事件。"""
+    d = tempfile.mkdtemp(prefix="idem-")
+    _board(["init"], d)
+    cid = _mkcard(d)
+    _board(["claim", cid, "--seat", "w1", "--engine", "opencode"], d)
+    _board(["beat", cid, "--seat", "w1"], d)
+    _board(["submit", cid, "--seat", "w1"], d)
+    _board(["submit", cid, "--seat", "w1"], d)
+    r = _board(["events", cid, "--json"], d)
+    evs = json.loads(r.stdout)["value"]["events"]
+    claims = [e for e in evs if e["type"] == "claim"]
+    submits = [e for e in evs if e["type"] == "submit"]
+    ck("claim 只 1 条", len(claims) == 1, "实际 %d" % len(claims))
+    ck("重复 submit 只 1 条", len(submits) == 1, "实际 %d" % len(submits))
+
+
+
+
 def main():
     print("=" * 70)
     print("事件流闸（第 21 道）")
@@ -418,6 +516,12 @@ def main():
         ("移动：转移守卫（反例）", t_move_guard),
         ("回退：只在进行中（反例）", t_revert_only_in_progress),
         ("CLI：--json 输出纯净（反例）", t_json_purity),
+        ("调度：once 消费（反例）", t_sched_once_consumed),
+        ("调度：错过留痕（反例）", t_sched_missed_marks),
+        ("调度：死 cron 拒绝（反例）", t_sched_dead_cron_rejected),
+        ("调度：依赖跳过（反例）", t_sched_skip_when_blocked),
+        ("调度：进行中跳过（反例）", t_sched_skip_when_in_progress),
+        ("幂等：claim/submit（反例）", t_claim_submit_idempotent),
     ]
     for name, fn in cases:
         try:

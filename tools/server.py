@@ -551,6 +551,39 @@ def api_card_trash(body):
                      reason=body.get("reason"))
     return {"ok": True, "id": cid, "trashed": True, "already": r.get("already", False)}
 
+
+@_structured
+def api_card_schedule(body):
+    """POST /api/card/schedule  设定/清除调度。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        raise ValueError("缺 id")
+    if body.get("clear"):
+        n = B.clear_schedule(cid, by=str(body.get("actor") or "human"))
+        return {"ok": True, "id": cid, "cleared": bool(n)}
+    kind = body.get("kind")
+    spec = body.get("spec")
+    if not kind or not spec:
+        raise ValueError("缺 kind 或 spec（kind: once/cron/every）")
+    k, sp, nxt = B.set_schedule(cid, kind, spec, by=str(body.get("actor") or "human"))
+    return {"ok": True, "id": cid, "kind": k, "spec": sp, "next": nxt}
+
+
+@_structured
+def api_tick(body):
+    """POST /api/tick  触发到点的调度（宿主/计划任务调它）。"""
+    _switch(body.get("project"))
+    out = B.tick()
+    return {"ok": True, "fired": len(out), "items": out}
+
+
+def api_schedules(q):
+    """GET /api/schedules  列出调度。"""
+    _switch(q.get("project", [None])[0])
+    rows = B._store().schedule_list()
+    return {"count": len(rows), "schedules": rows}
+
 def api_cost(q):
     _switch(q.get("project", [None])[0])
     total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
@@ -991,6 +1024,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/card": api_card,
             "/api/card/log": api_card_log,
             "/api/card/events": api_card_events,
+            "/api/schedules": api_schedules,
             "/api/cost": api_cost,
             "/api/run/log": api_run_log,
             "/api/messages": api_messages,
@@ -1034,6 +1068,8 @@ class Handler(BaseHTTPRequestHandler):
                  "/api/card/checklist": api_card_checklist,
                  "/api/card/exec": api_card_exec,
                  "/api/card/trash": api_card_trash,
+                 "/api/card/schedule": api_card_schedule,
+                 "/api/tick": api_tick,
                   "/api/run": api_run, "/api/bulk": api_bulk,
                   "/api/messages": api_message_send,
                   "/api/messages/ack": api_message_ack,

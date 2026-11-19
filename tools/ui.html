@@ -451,7 +451,14 @@ async function api(path, opt){
   }
   const r = await fetch(path, opt);
   const j = await r.json().catch(()=>({error:"返回不是 JSON"}));
-  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  if(!r.ok){
+    // 新接口返回 {ok:false,error:{code,message,hint}}；老接口是 {error:"..."}
+    const e = j.error;
+    const msg = (e && typeof e === "object") ? (e.message || e.code || "请求失败") : (e || ("HTTP "+r.status));
+    const err = new Error(msg);
+    if(e && typeof e === "object") { err.code = e.code; err.hint = e.hint; }
+    throw err;
+  }
   return j;
 }
 
@@ -634,6 +641,81 @@ function projOf(id){
   return (c && c.project_path) || CUR.project;
 }
 
+
+function foldHtml(c){
+  const out = [];
+  if(c.trashed_at){
+    out.push(`<div class="kvnote">🗑 已在回收站（${esc(String(c.trashed_at).slice(0,19))}）</div>`);
+  }
+  const cs = c.comments || [];
+  if(cs.length){
+    out.push('<label>评论（' + cs.length + '）</label><div class="msglist">' +
+      cs.slice(-8).map(x => `<div class="msg"><b>${esc(x.author||"")}</b> ${esc((x.body||"").slice(0,200))}</div>`).join("") +
+      '</div>');
+  }
+  const ks = c.checklist || [];
+  if(ks.length){
+    const done = ks.filter(x=>x.checked).length;
+    out.push('<label>验收清单（' + done + '/' + ks.length + '）</label><div>' +
+      ks.map(x => `<div class="ck"><span>${x.checked?"☑":"☐"}</span> ${esc(x.text)}` +
+        (x.checked ? '' : ` <button class="btn" data-check="${esc(x.id)}">勾选</button>`) + '</div>').join("") +
+      '</div>');
+  }
+  const es = c.executions || [];
+  if(es.length){
+    const last = es[es.length-1];
+    out.push(`<label>执行记录（${es.length}）</label><div class="kvnote">最近：${esc(last.outcome)} / ${esc(last.trigger||"")} ${last.error?("｜"+esc(String(last.error).slice(0,120))):""}</div>`);
+  }
+  if(c.branches && Object.keys(c.branches).length){
+    out.push('<label>分支</label><div class="kvnote">' +
+      Object.entries(c.branches).map(([k,v])=>esc((k||"root")+"="+v)).join("、") + '</div>');
+  }
+  return out.join("");
+}
+
+async function cardAction(id, path, body){
+  try{
+    await api(path, {method:"POST", headers:{"Content-Type":"application/json"},
+                     body: JSON.stringify(Object.assign({id}, body||{}))});
+    toast("已提交");
+    await openCard(id);
+  }catch(e){ toast(e.message || "失败", true); }
+}
+
+async function promptComment(id){
+  const body = prompt("评论内容（同一句重发不会产生第二条）");
+  if(!body) return;
+  await cardAction(id, "/api/card/comment", {body, actor:"human"});
+}
+async function promptEdit(id, ver){
+  const title = prompt("新标题（留空不改）");
+  if(!title) return;
+  await cardAction(id, "/api/card/edit", {fields:{title}, ifVersion:ver});
+}
+async function doRevert(id){
+  const reason = prompt("回退原因（退回待返工，不计返工次数）", "执行失败");
+  if(!reason) return;
+  await cardAction(id, "/api/card/revert", {reason, actor:"system"});
+}
+async function doTrash(id, remove){
+  if(remove && !confirm("移到回收站？事件流会保留，可恢复。")) return;
+  await cardAction(id, "/api/card/trash", {restore: !remove});
+}
+async function doRun(id){
+  try{
+    await api("/api/run" + q(), {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project: CUR.project, max:1, cards:[id]})});
+    toast("已开始执行");
+    dlgCard.close();
+  }catch(e){ toast(e.message || "执行失败", true); }
+}
+window.promptComment = promptComment;
+window.promptEdit = promptEdit;
+window.doRevert = doRevert;
+window.doTrash = doTrash;
+window.doRun = doRun;
+window.foldHtml = foldHtml;
+
 async function openCard(id){
   try{
     const proj = projOf(id);
@@ -704,6 +786,7 @@ async function openCard(id){
       kv.map(([k,v])=>kvHtml(k,v)).join("") + `</dl>
       ${logHtml}
       ${diffHtml}
+      ${foldHtml(c)}
       <label>经过</label>${events || '<div class="empty">—</div>'}`;
 
     // 长字段展开/收起（默认收起：凭据一整段，会把下面的实时输出挤出视野）
@@ -733,6 +816,13 @@ async function openCard(id){
       foot.push(`<button class="btn-err" id="btn-reject">驳回</button>`);
       foot.push(`<button class="btn-ok" id="btn-approve">批准</button>`);
     }
+    foot.push(`<button class="btn" onclick="promptComment('${esc(c.id)}')">评论</button>`);
+    foot.push(`<button class="btn" onclick="promptEdit('${esc(c.id)}', ${Number(c.version||1)})">改标题</button>`);
+    if(c.state === "进行中") foot.push(`<button class="btn-err" onclick="doRevert('${esc(c.id)}')">回退</button>`);
+    if(c.state === "待认领" || c.state === "待返工") foot.push(`<button class="btn" onclick="doRun('${esc(c.id)}')">执行</button>`);
+    if(!c.trashed_at && c.state !== "完成" && c.state !== "已取消")
+      foot.push(`<button class="btn-err" onclick="doTrash('${esc(c.id)}', true)">删除</button>`);
+    if(c.trashed_at) foot.push(`<button class="btn" onclick="doTrash('${esc(c.id)}', false)">恢复</button>`);
     foot.push(`<button class="btn" onclick="dlgCard.close()">关闭</button>`);
     $("c-foot").innerHTML = foot.join("");
     if(c.state === "拍板中"){
