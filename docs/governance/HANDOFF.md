@@ -66,13 +66,14 @@ board move <卡> --to 已取消
 board revert <卡> --reason "崩了"
 ```
 
-**DSH 面板已安装，等重启验收**（D-040）：
+**DSH 面板已换成 taskboard 原版界面（D-041），等重启验收**：
 
-- 插件位置：`faces/dsh-board`（源码）/ `~/.dsh/profiles/desktop/node_modules/dsh-board`（已装）
-- 已追加 bundles；备份 `package.json.bak-20261119-222011`
-- 重启后：侧栏「看板」→ 点卡 → 评论/改标题/回退/删除
-- 回滚：恢复备份 + 删 node_modules/dsh-board
-- 自测：`cd faces/dsh-board && BOARD_PORT=8781 BOARD_API_TOKEN=t1 node selftest.mjs`
+- 源码：`faces/dsh-taskboard`（`lib/client.js` 原版未改；`lib/index.js` 是内核适配宿主）
+- 已装：`~/.dsh/profiles/desktop/node_modules/dsh-taskboard`
+- profile：bundles 含 `dsh-taskboard`（已去掉 `dsh-board`），`cordis.patch.yml` 该条 `disabled: false`
+- 自测：`cd faces/dsh-taskboard && BOARD_PORT=8789 BOARD_API_TOKEN=t7 node selftest.mjs` → PASS
+- 重启后：侧栏原「任务看板」入口 → 应显示 taskboard 原版界面（数据来自内核）
+- 回滚：`package.json.bak3-20261120-030506` + `cordis.patch.yml.bak3-20261120-030506` + `dsh-taskboard.upstream-20261120-030053`
 
 **下一步**：
 

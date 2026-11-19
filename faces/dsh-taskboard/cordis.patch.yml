@@ -1,0 +1,5 @@
+# dsh-taskboard 内核适配版（2026-11-20，D-041）
+# 保留原版客户端，宿主路由改由 aII-work-together 内核提供。
+- insert:
+    - id: dsh-taskboard
+      name: dsh-taskboard

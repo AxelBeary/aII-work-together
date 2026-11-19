@@ -654,3 +654,18 @@
 - **验收**：重启 DSH 后侧栏出现「看板」；点卡 → 详情 → 评论/改标题/回退/删除。插件自测 `node selftest.mjs` 已过（代理 303ms）。
 - **回滚**：恢复上面两个备份 + 删 `node_modules/dsh-board`。
 - 未做：把 taskboard 的 cron/diff/worktree UI 搬过来（内核 API 已有，缺前端）。
+
+
+## D-041 · 面板改判：用 taskboard 原版界面 + 内核适配宿主（**已定** 2026-11-20）
+
+- 用户反馈：手写面板「又丑又瞎眼」，要求「直接用现成那个看板插件的代码去改造」。
+- **采纳**：
+  - `lib/client.js` 原样复制 taskboard 0.10.0 的预构建客户端（Apache-2.0，未改一行，见 `faces/dsh-taskboard/NOTICE`）；
+  - 新写 `lib/index.js` 宿主适配层，把 `/dsh-taskboard/*` 逐条映射到内核 HTTP；
+  - 包名沿用 `dsh-taskboard`，profile 里原条目 `disabled: true` → `false`，bundles 去掉上一版 `dsh-board`。
+- **为什么可行**：客户端只依赖 HTTP 契约，不依赖宿主内部实现；服务端换实现，界面完全不用重建。
+- **已实测（selftest）**：workspaces → state → 建卡 → 移动到进行中（按卡规格认领）→ 评论 → 详情回读 → 删除，全通。
+- **补偿改动**：内核 HTTP 新增 `POST /api/card/claim`；认领失败会带出内核真实理由（不再吞成「认领被拒：1」）。
+- **限制**：diff/worktree/模板/外部同步/定时 UI 未接；「完成」仍在内核 review/human 闸，面板不能直接 done。
+- **备份**：`package.json.bak3-20261120-030506`、`cordis.patch.yml.bak3-20261120-030506`、上游包 `dsh-taskboard.upstream-20261120-030053`。
+- 状态：**已定**，待重启验收。

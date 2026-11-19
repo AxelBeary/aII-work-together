@@ -1,0 +1,10 @@
+本目录包含来自第三方项目的代码：
+
+lib/client.js
+  来源：dsh-taskboard 0.10.0（Apache-2.0）
+  作者：cloader（https://github.com/cloader/dsh-taskboard）
+  修改：无。原样复制，未做任何改动。
+  许可证全文见同目录 LICENSE。
+
+其余文件（lib/index.js、cordis.patch.yml、selftest.mjs、README.md）
+为 aII-work-together 项目新增，MIT。

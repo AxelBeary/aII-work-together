@@ -1,5 +1,0 @@
-# dsh-board：把内核看板挂进 DSH 侧栏（2026-11-19，D-040）
-# 宿主半边起/复用内核 HTTP 服务并代理 /board/*；浏览器半边注册面板。
-- insert:
-    - id: dsh-board
-      name: dsh-board

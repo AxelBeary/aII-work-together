@@ -586,6 +586,30 @@ def api_schedules(q):
     rows = B._store().schedule_list()
     return {"count": len(rows), "schedules": rows}
 
+
+@_structured
+def api_card_claim(body):
+    """POST /api/card/claim  认领（面板/外部执行器用，带租约栅栏）。"""
+    _switch(body.get("project"))
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        raise ValueError("缺 id")
+    seat = str(body.get("seat") or "panel")
+    engine = str(body.get("engine") or "dsh")
+    import contextlib
+    import io
+    buf = io.StringIO()
+    try:
+        # B.claim 用 die() 打印 + SystemExit；这里把它的理由抓下来，别吞成「认领被拒：1」
+        with contextlib.redirect_stdout(buf):
+            B.claim(cid, seat, engine, body.get("model"), body.get("effort"))
+    except SystemExit:
+        msg = buf.getvalue().strip().replace("✗", "").strip()
+        raise ValueError(msg or "认领被拒（内核未给出理由）")
+    lease = B.active_lease(cid)
+    return {"ok": True, "id": cid, "seat": seat,
+            "epoch": int((lease or {}).get("epoch") or 0)}
+
 def api_cost(q):
     _switch(q.get("project", [None])[0])
     total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
@@ -1070,6 +1094,7 @@ class Handler(BaseHTTPRequestHandler):
                  "/api/card/checklist": api_card_checklist,
                  "/api/card/exec": api_card_exec,
                  "/api/card/trash": api_card_trash,
+                 "/api/card/claim": api_card_claim,
                  "/api/card/schedule": api_card_schedule,
                  "/api/tick": api_tick,
                   "/api/run": api_run, "/api/bulk": api_bulk,
