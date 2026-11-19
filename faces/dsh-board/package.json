@@ -1,0 +1,29 @@
+{
+  "name": "dsh-board",
+  "version": "0.1.0",
+  "description": "DSH 面板：把 aII-work-together 内核看板嵌进 DSH（事件流账本 + 租约 + 证据）",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web"
+    }
+  }
+}

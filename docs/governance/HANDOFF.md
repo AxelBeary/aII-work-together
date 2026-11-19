@@ -66,6 +66,14 @@ board move <卡> --to 已取消
 board revert <卡> --reason "崩了"
 ```
 
+**DSH 面板已安装，等重启验收**（D-040）：
+
+- 插件位置：`faces/dsh-board`（源码）/ `~/.dsh/profiles/desktop/node_modules/dsh-board`（已装）
+- 已追加 bundles；备份 `package.json.bak-20261119-222011`
+- 重启后：侧栏「看板」→ 点卡 → 评论/改标题/回退/删除
+- 回滚：恢复备份 + 删 node_modules/dsh-board
+- 自测：`cd faces/dsh-board && BOARD_PORT=8781 BOARD_API_TOKEN=t1 node selftest.mjs`
+
 **下一步**：
 
 1. **BBFF 派工保留**（D-039 / `16_BBFF派工保留约束`）：只写适配层，⛔ 不改 BBFF 本体。

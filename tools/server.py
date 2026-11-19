@@ -64,7 +64,9 @@ _run_log_path = ROOT / "board" / "ui-run.log"
 #   · 每个请求的 Host 必须是回环地址（挡 rebinding）；
 #   · 所有写接口（POST）必须带页面注入的会话令牌（挡跨站「简单请求」CSRF）；
 #   · 请求体上限 1MB、读超时 10s、池满回 503（挡慢连接把界面占死）。
-_TOKEN = secrets.token_urlsafe(24)
+# 插件/代理场景可用固定令牌（2026-11-19，D-040）：
+# 面板插件在宿主内起服务时，需要知道令牌才能代浏览器写；随机令牌它拿不到。
+_TOKEN = os.environ.get("BOARD_API_TOKEN") or secrets.token_urlsafe(24)
 _TOKEN_FILE = ROOT / "board" / "ui-server.tok"
 _MAX_BODY = 1 << 20
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}

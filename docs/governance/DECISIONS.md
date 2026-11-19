@@ -636,3 +636,21 @@
 - 适配层只做三件：席位映射（保留 role id）、派工可见（`source.ref` 指回 Lead 会话）、结果回传（走内核证据协议，⛔ 不绕过 Lead 收口）。
 - ⛔ 不 vendor BBFF、不复制角色目录进内核、不让内核自己决定派谁。
 - 全文：`docs/design/20261119-integration-absorb/16_BBFF派工保留约束__发牌席__.md`
+
+
+## D-040 · DSH 面板落地：代理式薄插件，不 fork taskboard（**已定** 2026-11-19）
+
+- 议题：把看板挂进 DSH（原计划是 fork taskboard + KernelStore 适配器）。
+- **改判理由**（实测）：
+  - taskboard 有 **52 处 `store.mutate` 写点 / 6 文件**，适配器要逐点映射；
+  - 发布包**没有构建链**（无 tsconfig/tsdown），fork 得先 clone 上游 + 装依赖 + 重建；
+  - 它绑 DSH 私有会话 API，升级即可能破。
+- **采用方案**：新写薄插件 `faces/dsh-board`（约 300 行，无构建链）：
+  - 宿主半边：确保内核 HTTP 在跑（不在就拉起，固定令牌）+ 把 `/board/*` 代理到内核；
+  - 浏览器半边：手写 `__ModuleLoader__` 模块，注册 `main` + `sidebar.panellist`，React 直接来自 loader；
+  - 所有读写走内核 HTTP，**浏览器不存账本副本**。
+- **代价（诚实）**：暂时没有 taskboard 的富 UI（diff 查看、worktree 合并、模板、外部同步）。这些可以后续按需增量补；内核 API 已具备对应能力。
+- **已安装**：`~/.dsh/profiles/desktop/node_modules/dsh-board`，bundles 已追加；备份 `package.json.bak-20261119-222011`、`cordis.patch.yml.bak-20261119-222011`。
+- **验收**：重启 DSH 后侧栏出现「看板」；点卡 → 详情 → 评论/改标题/回退/删除。插件自测 `node selftest.mjs` 已过（代理 303ms）。
+- **回滚**：恢复上面两个备份 + 删 `node_modules/dsh-board`。
+- 未做：把 taskboard 的 cron/diff/worktree UI 搬过来（内核 API 已有，缺前端）。
